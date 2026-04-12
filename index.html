@@ -1521,6 +1521,33 @@ function initUserUI() {
   }
   // Laad gebruikersinstellingen
   loadUserSettings();
+  // Push notifications registreren
+  registerPushNotifications();
+}
+
+async function registerPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) return; // al geregistreerd
+    // Haal VAPID key op
+    const { publicKey } = await api('/api/push/vapid-key').then(r => r?.json()) || {};
+    if (!publicKey) return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
+    console.log('Push notifications geregistreerd');
+  } catch (e) { console.warn('Push registratie mislukt:', e); }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
 // ── THEME ────────────────────────────────────────────────────────────────────

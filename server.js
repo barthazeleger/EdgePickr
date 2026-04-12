@@ -6,6 +6,7 @@ const fs             = require('fs');
 const { google }     = require('googleapis');
 const jwt            = require('jsonwebtoken');
 const bcrypt         = require('bcryptjs');
+const webpush        = require('web-push');
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,30 @@ const JWT_SECRET   = process.env.JWT_SECRET || 'bet-scanner-dev-secret-change-in
 const ADMIN_EMAIL  = (process.env.ADMIN_EMAIL || '').toLowerCase();
 const ADMIN_PASSW  = process.env.ADMIN_PASSWORD || '';
 const USER_TAB     = 'Users';
+
+// ── WEB PUSH CONFIG ────────────────────────────────────────────────────────
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || 'BEIocmzc02XFhLvUUDPcZyWAA1Vw3bJGDckDYzIyoqqh0pv1qOOPNF9C2SRvnEISxkjXGOOqStrrtpNn8Z4INqI';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'ko_u-RBo2io-Cdl6K6Ah0_d8zgOg72pIr_erb0iOEgw';
+const PUSH_SUBS_FILE = path.join(__dirname, 'push-subs.json');
+
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  webpush.setVapidDetails('mailto:noreply@betscanner.app', VAPID_PUBLIC, VAPID_PRIVATE);
+}
+
+function loadPushSubs() {
+  try { return JSON.parse(fs.readFileSync(PUSH_SUBS_FILE, 'utf8')); } catch { return []; }
+}
+function savePushSubs(subs) { fs.writeFileSync(PUSH_SUBS_FILE, JSON.stringify(subs)); }
+
+async function sendPushToAll(payload) {
+  const subs = loadPushSubs();
+  const dead = [];
+  for (const sub of subs) {
+    try { await webpush.sendNotification(sub, JSON.stringify(payload)); }
+    catch (e) { if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.endpoint); }
+  }
+  if (dead.length) savePushSubs(subs.filter(s => !dead.includes(s.endpoint)));
+}
 
 // Routes that don't require authentication (full paths)
 const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register']);
@@ -2170,6 +2195,29 @@ async function getUsersSheetGid() {
   return meta.data.sheets?.find(s => s.properties?.title === USER_TAB)?.properties?.sheetId ?? 1;
 }
 
+// ── PUSH NOTIFICATIONS ─────────────────────────────────────────────────────
+app.get('/api/push/vapid-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+  const sub = req.body;
+  if (!sub?.endpoint) return res.status(400).json({ error: 'Geen subscription' });
+  const subs = loadPushSubs();
+  if (!subs.find(s => s.endpoint === sub.endpoint)) {
+    subs.push(sub);
+    savePushSubs(subs);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/push/subscribe', (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (!endpoint) return res.status(400).json({ error: 'Geen endpoint' });
+  savePushSubs(loadPushSubs().filter(s => s.endpoint !== endpoint));
+  res.json({ ok: true });
+});
+
 // Prematch scan — SSE streaming (inclusief live check op moment van draaien)
 app.post('/api/prematch', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -3396,6 +3444,19 @@ function scheduleDailyResultsCheck() {
       if (!results.length) lines.push('Geen afgeronde wedstrijden gevonden voor open bets.');
       lines.push(`\n💰 Bankroll: €${stats.bankroll} | ROI: ${(stats.roi*100).toFixed(1)}%`);
       await tg(lines.join('\n')).catch(() => {});
+
+      // Push notificatie met dagelijks overzicht
+      const wCount = results.filter(r => r.uitkomst === 'W').length;
+      const lCount = results.filter(r => r.uitkomst === 'L').length;
+      const pushBody = results.length
+        ? `${wCount}W / ${lCount}L · Bankroll: €${stats.bankroll} · ROI: ${(stats.roi*100).toFixed(1)}%`
+        : `Geen afgeronde wedstrijden · Bankroll: €${stats.bankroll}`;
+      await sendPushToAll({
+        title: `📋 Dagelijks overzicht`,
+        body: pushBody,
+        tag: 'daily-results',
+        url: '/',
+      }).catch(() => {});
     } catch (e) {
       console.error('Daily check fout:', e);
       await tg(`⚠️ Dagelijkse check mislukt: ${e.message}`).catch(() => {});
