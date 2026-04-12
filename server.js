@@ -630,12 +630,46 @@ let lastLivePicks = [];
 const SCAN_HISTORY_FILE = path.join(__dirname, 'scan-history.json');
 const SCAN_HISTORY_MAX  = 10;
 
+// Scan history — opgeslagen in Google Sheets (persisteert over deploys)
+const SCAN_HISTORY_TAB = 'ScanHistory';
+let _scanHistoryCache = null;
+
+async function ensureScanHistoryTab() {
+  const sh = getSheetsClient();
+  const meta = await sh.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  if (!meta.data.sheets?.some(s => s.properties?.title === SCAN_HISTORY_TAB)) {
+    await sh.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: SCAN_HISTORY_TAB } } }] }
+    });
+  }
+}
+
 function loadScanHistory() {
+  // Sync fallback: return cache of file
+  if (_scanHistoryCache) return _scanHistoryCache;
   try { return JSON.parse(fs.readFileSync(SCAN_HISTORY_FILE, 'utf8')); } catch { return []; }
 }
-function saveScanEntry(picks, type = 'prematch', totalEvents = 0) {
-  const history = loadScanHistory();
-  history.unshift({
+
+async function loadScanHistoryFromSheets() {
+  try {
+    await ensureScanHistoryTab();
+    const sh = getSheetsClient();
+    const res = await sh.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID, range: `${SCAN_HISTORY_TAB}!A1:C${SCAN_HISTORY_MAX}`
+    });
+    const rows = res.data.values || [];
+    _scanHistoryCache = rows.filter(r => r[0]).map(r => {
+      try { return JSON.parse(r[2] || '{}'); } catch { return null; }
+    }).filter(Boolean);
+    // Schrijf ook naar lokaal bestand als cache
+    fs.writeFileSync(SCAN_HISTORY_FILE, JSON.stringify(_scanHistoryCache, null, 2));
+    return _scanHistoryCache;
+  } catch { return loadScanHistory(); }
+}
+
+async function saveScanEntry(picks, type = 'prematch', totalEvents = 0) {
+  const entry = {
     ts:          new Date().toISOString(),
     type,
     totalEvents,
@@ -646,8 +680,26 @@ function saveScanEntry(picks, type = 'prematch', totalEvents = 0) {
       kickoff: p.kickoff, scanType: p.scanType || type, bookie: p.bookie,
       signals: p.signals || [],
     })),
-  });
-  fs.writeFileSync(SCAN_HISTORY_FILE, JSON.stringify(history.slice(0, SCAN_HISTORY_MAX), null, 2));
+  };
+  // Lokaal opslaan
+  const history = loadScanHistory();
+  history.unshift(entry);
+  const trimmed = history.slice(0, SCAN_HISTORY_MAX);
+  _scanHistoryCache = trimmed;
+  fs.writeFileSync(SCAN_HISTORY_FILE, JSON.stringify(trimmed, null, 2));
+  // Google Sheets opslaan (async, niet-blokkerend)
+  try {
+    await ensureScanHistoryTab();
+    const sh = getSheetsClient();
+    // Schrijf alle entries opnieuw (simpel, max 10 rijen)
+    const rows = trimmed.map(e => [e.ts, e.type, JSON.stringify(e)]);
+    await sh.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `${SCAN_HISTORY_TAB}!A1:C${rows.length}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows }
+    });
+  } catch (e) { console.error('Scan history Sheets save fout:', e.message); }
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────────────────
@@ -2562,8 +2614,9 @@ app.get('/api/picks', (req, res) => {
 });
 
 // Scan history — laatste N scans met picks
-app.get('/api/scan-history', (req, res) => {
-  res.json(loadScanHistory());
+app.get('/api/scan-history', async (req, res) => {
+  const history = await loadScanHistoryFromSheets().catch(() => loadScanHistory());
+  res.json(history);
 });
 
 // API status — rate limits + service health
@@ -3263,6 +3316,7 @@ app.listen(PORT, () => {
   console.log(`   Live scan     : POST /api/live`);
   console.log(`   Bet tracker   : GET/POST /api/bets\n`);
   seedAdminUser().catch(e => console.error('Seed admin fout:', e.message));
+  loadScanHistoryFromSheets().then(h => console.log(`📜 Scan history geladen: ${h.length} entries`)).catch(() => {});
   scheduleDailyResultsCheck();
   scheduleDailyScan();
   scheduleOddsMonitor();

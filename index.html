@@ -84,18 +84,24 @@ nav::-webkit-scrollbar { display: none; }
 .bottom-nav { display: none; }
 @media (max-width: 680px) {
   nav { display: none; }
-  .bottom-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; width: 100%; background: var(--surface);
-    border-top: 1px solid var(--border); z-index: 200; padding: 4px 0; padding-bottom: max(4px, env(safe-area-inset-bottom));
+  .bottom-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; width: 100%;
+    background: color-mix(in srgb, var(--surface) 85%, transparent);
+    -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+    border-top: 0.5px solid var(--border); z-index: 200;
+    padding: 6px 0; padding-bottom: max(6px, env(safe-area-inset-bottom));
     box-sizing: border-box; }
-  .bnav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 0;
-    border: none; background: none; color: var(--muted); font-size: 9px; font-weight: 500; cursor: pointer; min-width: 0; }
+  .bnav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0;
+    border: none; background: none; color: var(--muted); font-size: 10px; font-weight: 500; cursor: pointer; min-width: 0;
+    -webkit-tap-highlight-color: transparent; }
   .bnav-btn.active { color: var(--accent); font-weight: 700; }
-  .bnav-btn .bnav-icon { font-size: 17px; line-height: 1; }
+  .bnav-btn .bnav-icon { font-size: 20px; line-height: 1; }
   .bnav-more { flex: 1; position: relative; display: flex; }
   .bnav-more > .bnav-btn { flex: 1; }
-  .bnav-menu { display: none; position: absolute; bottom: 100%; right: 4px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 12px; padding: 6px; min-width: 160px;
-    box-shadow: 0 -4px 20px rgba(0,0,0,.15); margin-bottom: 8px; }
+  .bnav-menu { display: none; position: absolute; bottom: 100%; right: 4px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+    border: 0.5px solid var(--border); border-radius: 14px; padding: 4px; min-width: 170px;
+    box-shadow: 0 -8px 30px rgba(0,0,0,.12); margin-bottom: 8px; }
   .bnav-menu.open { display: block; }
   .bnav-menu-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px;
     font-size: 13px; font-weight: 500; color: var(--text); cursor: pointer; border: none; background: none; width: 100%; }
