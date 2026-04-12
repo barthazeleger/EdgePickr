@@ -2996,31 +2996,52 @@ function updateDashStats(stats, bets) {
   if (bets) renderRecentBets(bets);
 }
 
-function renderRecentBets(bets) {
+async function renderRecentBets(bets) {
   const el = document.getElementById('rb-list');
   const liveOnly = document.getElementById('rb-live-only')?.checked;
+
+  // Haal live scores op als filter aan staat en we nog geen data hebben
+  if (liveOnly && (!liveEvts || !liveEvts.length)) {
+    try {
+      const d = await api('/api/live-scores').then(r => r?.json());
+      if (d) liveEvts = d.events || [];
+    } catch {}
+  }
 
   // Bouw live score lookup op basis van huidige liveEvts
   const liveScoreMap = new Map();
   for (const ev of (liveEvts||[])) {
     if (!ev.live) continue;
+    // Map op team naam (lowercase) EN op gedeeltelijke match
     liveScoreMap.set(ev.home.toLowerCase(), ev);
     liveScoreMap.set(ev.away.toLowerCase(), ev);
   }
 
+  function findLiveMatch(wedstrijd) {
+    const teams = wedstrijd.split(' vs ').map(t => t.trim().toLowerCase());
+    // Exacte match
+    const exact = teams.map(t => liveScoreMap.get(t)).find(Boolean);
+    if (exact) return exact;
+    // Fuzzy: check of een live event een team bevat
+    for (const ev of (liveEvts||[])) {
+      if (!ev.live) continue;
+      const h = ev.home.toLowerCase(), a = ev.away.toLowerCase();
+      const homeMatch = teams.some(t => h.includes(t) || t.includes(h.split(' ').pop()));
+      const awayMatch = teams.some(t => a.includes(t) || t.includes(a.split(' ').pop()));
+      if (homeMatch && awayMatch) return ev;
+    }
+    return null;
+  }
+
   let list = [...bets].reverse();
   if (liveOnly) {
-    list = list.filter(b => {
-      const teams = b.wedstrijd.split(' vs ').map(t => t.trim().toLowerCase());
-      return teams.some(t => liveScoreMap.has(t));
-    });
+    list = list.filter(b => b.uitkomst === 'Open' && findLiveMatch(b.wedstrijd));
   }
   list = list.slice(0, 6);
 
-  if (!list.length) { el.innerHTML = `<div class="rb-empty">${liveOnly ? 'Geen live bets.' : 'Nog geen bets.'}</div>`; return; }
+  if (!list.length) { el.innerHTML = `<div class="rb-empty">${liveOnly ? 'Geen bets nu live.' : 'Nog geen bets.'}</div>`; return; }
   el.innerHTML = list.map(b => {
-    const teams = b.wedstrijd.split(' vs ').map(t => t.trim().toLowerCase());
-    const liveEv = teams.map(t => liveScoreMap.get(t)).find(Boolean);
+    const liveEv = findLiveMatch(b.wedstrijd);
     const liveScore = liveEv
       ? `<span style="font-size:11px;color:#f87171;font-weight:700;margin-left:4px"><span class="live-dot"></span>${liveEv.scoreH}–${liveEv.scoreA} ${liveEv.minute||''}</span>`
       : '';
