@@ -675,7 +675,7 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}) {
   const picks     = [];  // standalone picks (odd >= MIN_ODDS)
   const combiPool = [];  // alle valide picks incl. lage odds (voor combi-legs)
 
-  const mkP = (match, league, label, odd, reason, prob, boost=0, kickoff=null, bookie=null, signals=null) => {
+  const mkP = (match, league, label, odd, reason, prob, boost=0, kickoff=null, bookie=null, signals=null, referee=null) => {
     if (!odd || odd < 1.10) return;            // absoluut minimum
     const ip = 1/odd;
     const ep = Math.min(0.88, ip + boost);
@@ -705,7 +705,7 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}) {
     const expectedEur = +(uNum * UNIT_EUR * (edge / 100)).toFixed(2);
     const pick = { match, league, label, odd, units: u, reason, prob, ep: +ep.toFixed(3),
                    strength: k*(odd-1)*vP*epW, kelly: hk, edge, expectedEur, kickoff, bookie,
-                   signals: signals || [] };
+                   signals: signals || [], referee: referee || null };
 
     combiPool.push(pick);            // altijd in combi-pool (ook lage odds)
     if (odd >= MIN_ODDS) picks.push(pick);  // alleen in singles als >= MIN_ODDS
@@ -1178,6 +1178,9 @@ async function runPrematch(emit) {
         const hmSt  = afStats[hmKey], awSt = afStats[awKey];
         const hmInj = afInj[hmKey] || [], awInj = afInj[awKey] || [];
         const refInfo = afCache.referees[`${hmKey} vs ${awKey}`];
+        // Extract referee name directly from fixture data
+        const fixtureRef = f.fixture?.referee || '';
+        const refereeName = refInfo?.name || (fixtureRef ? fixtureRef.replace(/, \w+$/, '') : null);
 
         // ── Positie-aanpassing (api-football rank) ──────────────────
         let posAdj = 0, posStr = '';
@@ -1225,7 +1228,7 @@ async function runPrematch(emit) {
           if (awInj.length) injNote += ` | ❌ ${aw.split(' ').pop()}: ${fmt(awInj)} (${awInj.length}x)`;
         }
 
-        const refNote = refInfo ? ` | 🟨 Ref: ${refInfo.name}` : '';
+        const refNote = refereeName ? ` | 🟨 Scheidsrechter: ${refereeName}` : '';
 
         let h2hAdj = 0, h2hNote = '';
         const hmId = hmSt?.teamId, awId = awSt?.teamId;
@@ -1271,13 +1274,13 @@ async function runPrematch(emit) {
         const reasonD = `Gelijkspel: ${((fp.draw||0)*100).toFixed(1)}% | ${bD?.bookie}: ${bD?.price}${sharedNotes} | ${ko}`;
 
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && bA.price > BLOWOUT_OPP_MAX)
-          mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price, reasonH, Math.round(adjHome2*100), homeEdge * 0.28 * (cm.home?.multiplier ?? 1), kickoffTime, bH.bookie, matchSignals);
+          mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price, reasonH, Math.round(adjHome2*100), homeEdge * 0.28 * (cm.home?.multiplier ?? 1), kickoffTime, bH.bookie, matchSignals, refereeName);
 
         if (awayEdge >= MIN_EDGE && bA.price >= 1.60 && bA.price <= MAX_WINNER_ODDS && bH.price > BLOWOUT_OPP_MAX)
-          mkP(`${hm} vs ${aw}`, league.name, `✈️ ${aw} wint`, bA.price, reasonA, Math.round(adjAway2*100), awayEdge * 0.28 * (cm.away?.multiplier ?? 1), kickoffTime, bA.bookie, matchSignals);
+          mkP(`${hm} vs ${aw}`, league.name, `✈️ ${aw} wint`, bA.price, reasonA, Math.round(adjAway2*100), awayEdge * 0.28 * (cm.away?.multiplier ?? 1), kickoffTime, bA.bookie, matchSignals, refereeName);
 
         if (drawEdge >= MIN_EDGE + 0.01 && bD?.price >= 1.60)
-          mkP(`${hm} vs ${aw}`, league.name, `🤝 Gelijkspel`, bD.price, reasonD, Math.round((adjDraw||0)*100), drawEdge * 0.22 * (cm.draw?.multiplier ?? 1), kickoffTime, bD?.bookie, matchSignals);
+          mkP(`${hm} vs ${aw}`, league.name, `🤝 Gelijkspel`, bD.price, reasonD, Math.round((adjDraw||0)*100), drawEdge * 0.22 * (cm.draw?.multiplier ?? 1), kickoffTime, bD?.bookie, matchSignals, refereeName);
 
         // ── O/U Goals 2.5 ─────────────────────────────────────────────
         const over  = analyseTotal(bookies, 'Over',  2.5);
@@ -1325,11 +1328,11 @@ async function runPrematch(emit) {
           if (overEdge >= MIN_EDGE)
             mkP(`${hm} vs ${aw}`, league.name, `⚽ Over 2.5 goals`, over.best.price,
               `O/U consensus: ${(overP*100).toFixed(1)}% over | ${over.best.bookie}: ${over.best.price}${tsNote}${predNote} | ${ko}`,
-              Math.round(overP*100), overEdge * 0.24 * (cm.over?.multiplier ?? 1), kickoffTime, over.best.bookie, ouSignals);
+              Math.round(overP*100), overEdge * 0.24 * (cm.over?.multiplier ?? 1), kickoffTime, over.best.bookie, ouSignals, refereeName);
           if (underEdge >= MIN_EDGE && under.best.price >= 1.60)
             mkP(`${hm} vs ${aw}`, league.name, `🔒 Under 2.5 goals`, under.best.price,
               `O/U consensus: ${((1-overP)*100).toFixed(1)}% under | ${under.best.bookie}: ${under.best.price}${tsNote} | ${ko}`,
-              Math.round((1-overP)*100), underEdge * 0.22 * (cm.under?.multiplier ?? 1), kickoffTime, under.best.bookie, ouSignals);
+              Math.round((1-overP)*100), underEdge * 0.22 * (cm.under?.multiplier ?? 1), kickoffTime, under.best.bookie, ouSignals, refereeName);
         }
 
         // ── BTTS (Both Teams To Score) ────────────────────────────────
@@ -1389,12 +1392,12 @@ async function runPrematch(emit) {
               if (bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60)
                 mkP(`${hm} vs ${aw}`, league.name, `🔥 BTTS Ja`, bestYes.price,
                   `BTTS: ${(bttsYesP*100).toFixed(1)}% | ${bestYes.bookie}: ${bestYes.price} | GF: ${hmGFAvg}/${awGFAvg} | ${ko}`,
-                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.over?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals);
+                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.over?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName);
 
               if (bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60)
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'} | ${ko}`,
-                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.under?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals);
+                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.under?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName);
             }
           }
         }
@@ -1429,12 +1432,12 @@ async function runPrematch(emit) {
             if (dnbHomeEdge >= MIN_EDGE && bestDnbH.price >= 1.30 && bestDnbH.price <= 2.50)
               mkP(`${hm} vs ${aw}`, league.name, `🏠 DNB ${hm}`, bestDnbH.price,
                 `Draw No Bet: ${(dnbHomeP*100).toFixed(1)}% | ${bestDnbH.bookie}: ${bestDnbH.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24, kickoffTime, bestDnbH.bookie, matchSignals);
+                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24, kickoffTime, bestDnbH.bookie, matchSignals, refereeName);
 
             if (dnbAwayEdge >= MIN_EDGE && bestDnbA.price >= 1.30 && bestDnbA.price <= 2.50)
               mkP(`${hm} vs ${aw}`, league.name, `✈️ DNB ${aw}`, bestDnbA.price,
                 `Draw No Bet: ${(dnbAwayP*100).toFixed(1)}% | ${bestDnbA.bookie}: ${bestDnbA.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals);
+                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals, refereeName);
           }
         }
 
@@ -1449,7 +1452,7 @@ async function runPrematch(emit) {
             if (sEdge >= MIN_EDGE + 0.01) {
               const pt = o.point !== undefined ? (o.point > 0 ? `+${o.point}` : `${o.point}`) : '';
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${o.name} ${pt}`, o.price,
-                `Handicap | ${bk.title}: ${o.price} | ${ko}`, Math.round(baseP*100), sEdge * 0.20, kickoffTime, bk.title);
+                `Handicap | ${bk.title}: ${o.price} | ${ko}`, Math.round(baseP*100), sEdge * 0.20, kickoffTime, bk.title, matchSignals, refereeName);
             }
           }
           break;
@@ -1573,7 +1576,8 @@ async function runPrematch(emit) {
   for (const [i, p] of finalPicks.entries()) {
     const star = i === 0 ? '⭐' : i === 1 ? '🔵' : '•';
     const typeTag = p.scanType === 'live' ? ' 🔴LIVE' : ' 🌅PRE';
-    const line = `${star} PICK ${i+1}${typeTag}: ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%\n📊 ${p.reason}\n\n`;
+    const refLine = p.referee ? `\n🟨 Scheidsrechter: ${p.referee}` : '';
+    const line = `${star} PICK ${i+1}${typeTag}: ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%${refLine}\n📊 ${p.reason}\n\n`;
     if ((msgs[cur]||'').length + line.length > 3900) { cur++; msgs.push(''); }
     msgs[cur] = (msgs[cur]||'') + line;
   }
@@ -2079,6 +2083,29 @@ app.get('/api/bets', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Correlated bets — groepen open bets op dezelfde wedstrijd
+app.get('/api/bets/correlations', async (req, res) => {
+  try {
+    const { bets } = await readBets();
+    const openBets = bets.filter(b => b.uitkomst === 'Open');
+    const groups = {};
+    openBets.forEach(b => {
+      const key = b.wedstrijd.toLowerCase().trim();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(b);
+    });
+    const correlated = Object.entries(groups)
+      .filter(([_, g]) => g.length > 1)
+      .map(([match, g]) => ({
+        match,
+        bets: g.map(b => ({ id: b.id, markt: b.markt, odds: b.odds, units: b.units })),
+        totalExposure: g.reduce((s, b) => s + b.inzet, 0),
+        warning: `${g.length} bets op dezelfde wedstrijd — gecorreleerd risico €${g.reduce((s,b) => s + b.inzet, 0).toFixed(2)}`
+      }));
+    res.json({ correlations: correlated });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Bet toevoegen
 // ── PRE-KICKOFF CHECK — 30 min voor aftrap ───────────────────────────────────
 // Haalt huidige odds op voor het specifieke event en vergelijkt met gelogde odds.
@@ -2352,7 +2379,27 @@ app.post('/api/bets', async (req, res) => {
     await writeBet(newBet);
     schedulePreKickoffCheck(newBet).catch(() => {}); // niet-blokkerend
     scheduleCLVCheck(newBet).catch(() => {}); // niet-blokkerend
-    res.json(await readBets());
+    const result = await readBets();
+    // Check for correlated bets on the same match
+    const newMatch = (newBet.wedstrijd || '').toLowerCase().trim();
+    if (newMatch) {
+      const openOnSame = result.bets.filter(b =>
+        b.uitkomst === 'Open' && b.id !== nextId &&
+        b.wedstrijd.toLowerCase().trim() === newMatch
+      );
+      if (openOnSame.length > 0) {
+        const allOnMatch = [newBet, ...openOnSame];
+        const totalExposure = allOnMatch.reduce((s, b) => s + (b.inzet || (b.units || 0) * 10), 0);
+        result.correlationWarning = {
+          match: newBet.wedstrijd,
+          count: allOnMatch.length,
+          bets: allOnMatch.map(b => ({ id: b.id, markt: b.markt || '', odds: b.odds || b.odd || 0 })),
+          totalExposure,
+          message: `${allOnMatch.length} bets op ${newBet.wedstrijd} — gecorreleerd risico €${totalExposure.toFixed(2)}`
+        };
+      }
+    }
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3062,6 +3109,52 @@ app.get('/api/signal-analysis', async (req, res) => {
     })).sort((a, b) => b.betsCount - a.betsCount);
 
     res.json({ signals: signalAnalysis });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Timing analyse — CLV per timing bucket (uren voor aftrap)
+app.get('/api/timing-analysis', async (req, res) => {
+  try {
+    const { bets } = await readBets();
+    const settled = bets.filter(b => b.clvPct != null && b.clvPct !== 0 && b.tijd);
+    const buckets = { 'Vroeg (>12h)': [], 'Medium (3-12h)': [], 'Laat (<3h)': [] };
+
+    for (const b of settled) {
+      // Parse bet datum + tijd → timestamp
+      // b.datum = "dd-mm-yyyy", b.tijd = "HH:MM"
+      if (!b.datum || !b.tijd) continue;
+      const [dd, mm, yyyy] = b.datum.split('-').map(Number);
+      const [hh, mi] = b.tijd.split(':').map(Number);
+      if (!dd || !mm || !yyyy || isNaN(hh) || isNaN(mi)) continue;
+      const betTime = new Date(yyyy, mm - 1, dd, hh, mi);
+
+      // Kickoff time: if we have a kickoffTime stored, use it. Otherwise use 15:00 as default.
+      // Many bets won't have kickoff stored, so try to infer from wedstrijd context
+      let kickoffTime = null;
+      if (b.kickoffTime) {
+        const [kh, km] = b.kickoffTime.split(':').map(Number);
+        if (!isNaN(kh) && !isNaN(km)) kickoffTime = new Date(yyyy, mm - 1, dd, kh, km);
+      }
+
+      if (!kickoffTime) {
+        // Use a reasonable default: if bet was logged the same day, assume kickoff at 20:45
+        kickoffTime = new Date(yyyy, mm - 1, dd, 20, 45);
+      }
+
+      const hoursBeforeKO = (kickoffTime.getTime() - betTime.getTime()) / 3600000;
+      if (hoursBeforeKO < 0) continue; // bet logged after kickoff, skip
+
+      if (hoursBeforeKO > 12) buckets['Vroeg (>12h)'].push(b);
+      else if (hoursBeforeKO >= 3) buckets['Medium (3-12h)'].push(b);
+      else buckets['Laat (<3h)'].push(b);
+    }
+
+    res.json({ buckets: Object.entries(buckets).map(([name, betsInBucket]) => ({
+      name,
+      count: betsInBucket.length,
+      avgCLV: betsInBucket.length ? +(betsInBucket.reduce((s, b) => s + b.clvPct, 0) / betsInBucket.length).toFixed(2) : 0,
+      hitRate: betsInBucket.length ? +(betsInBucket.filter(b => b.uitkomst === 'W').length / betsInBucket.length).toFixed(3) : 0
+    }))});
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

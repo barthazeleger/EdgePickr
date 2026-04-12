@@ -602,6 +602,8 @@ nav::-webkit-scrollbar { display: none; }
   </div>
   <div id="check-results-area" style="display:none;margin-bottom:14px"></div>
 
+  <div id="correlations-area" style="display:none;margin-bottom:14px"></div>
+
   <div class="card" style="margin-bottom:14px">
     <div class="collapse-hd">
       <div class="card-title">+ Bet toevoegen</div>
@@ -753,6 +755,12 @@ nav::-webkit-scrollbar { display: none; }
     <div class="chart-card" style="grid-column:span 2">
       <div class="chart-title">🧠 Signal Attribution <span style="font-size:11px;color:var(--muted);font-weight:400">— welke signalen werken?</span></div>
       <div id="signal-analysis" style="padding:8px 0"></div>
+    </div>
+
+    <!-- Timing Analyse -->
+    <div class="chart-card" style="grid-column:span 2">
+      <div class="chart-title">&#9200; Timing analyse <span style="font-size:11px;color:var(--muted);font-weight:400">— CLV per timing bucket</span></div>
+      <div id="timing-analysis" style="padding:8px 0"></div>
     </div>
   </div>
 </section>
@@ -1430,7 +1438,7 @@ function go(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', TAB_IDS[i] === name));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
-  if (name === 'tracker') loadBets();
+  if (name === 'tracker') { loadBets(); loadCorrelations(); }
   if (name === 'data')    loadBets().then(d => redrawCharts(d));
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
   if (name === 'analyse') refreshAnalyse();
@@ -1527,7 +1535,7 @@ function renderPicks(el, picks) {
     div.innerHTML = `
       <div style="flex:1;min-width:0">
         <div class="pick-name">${i===0?'⭐ ':i===1?'🔵 ':'• '}${p.label}${scanBadge}</div>
-        <div class="pick-meta">${p.match||''}${p.league?' · '+p.league:''}${p.kickoff ? ` · <span style="color:#fbbf24;font-weight:600">⏰ ${p.kickoff}</span>` : p.scanType==='live' ? ` · <span style="color:#f87171;font-weight:600">● nu bezig</span>` : ''}</div>
+        <div class="pick-meta">${p.match||''}${p.league?' · '+p.league:''}${p.kickoff ? ` · <span style="color:#fbbf24;font-weight:600">⏰ ${p.kickoff}</span>` : p.scanType==='live' ? ` · <span style="color:#f87171;font-weight:600">● nu bezig</span>` : ''}${p.referee ? ` · <span style="color:#fbbf24;font-size:11px">🟨 ${p.referee}</span>` : ''}</div>
         <div class="prob-row" style="margin-top:7px">
           <div class="prob-bar"><div class="prob-fill" style="width:${Math.min(prob,100)}%;background:${pc}"></div></div>
           <span class="prob-pct">${prob}% kans</span>
@@ -1801,7 +1809,12 @@ function addBet() {
     if(!d) return;
     betData = d; renderStats(d.stats); renderBetsTable(d.bets);
     clearForm();
-    showMsg('form-msg', '✅ Bet toegevoegd!', 'green');
+    if (d.correlationWarning) {
+      showMsg('form-msg', `⚠️ Bet toegevoegd — ${d.correlationWarning.message}`, '#f59e0b');
+    } else {
+      showMsg('form-msg', '✅ Bet toegevoegd!', 'green');
+    }
+    loadCorrelations();
   });
 }
 
@@ -1810,6 +1823,28 @@ function clearForm() {
   ['f-sport','f-tip','f-uitkomst'].forEach(id => document.getElementById(id).selectedIndex = 0);
   const now = new Date();
   document.getElementById('f-datum').value = pad(now.getDate())+'-'+pad(now.getMonth()+1)+'-'+now.getFullYear();
+}
+
+async function loadCorrelations() {
+  const area = document.getElementById('correlations-area');
+  if (!area) return;
+  try {
+    const d = await api('/api/bets/correlations').then(r => r?.json());
+    if (!d || !d.correlations || d.correlations.length === 0) {
+      area.style.display = 'none';
+      return;
+    }
+    area.style.display = 'block';
+    area.innerHTML = `<div class="card" style="border-left:3px solid #f59e0b">
+      <div class="card-title" style="color:#f59e0b">&#9888; Gecorreleerde bets</div>
+      ${d.correlations.map(c => `
+        <div style="margin:8px 0;font-size:13px;line-height:1.6">
+          <strong>${c.match}</strong> — ${c.bets.length} bets, exposure &#8364;${c.totalExposure.toFixed(2)}
+          <div style="font-size:11px;color:var(--muted)">${c.bets.map(b => `#${b.id} ${b.markt} @${b.odds}`).join(' | ')}</div>
+        </div>
+      `).join('')}
+    </div>`;
+  } catch { area.style.display = 'none'; }
 }
 
 async function backfillTimes() {
@@ -2104,6 +2139,38 @@ async function redrawCharts(data) {
     }
   } catch {
     sigEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Signal analyse laden mislukt.</div>';
+  }
+
+  // ── Timing Analyse ────────────────────────────────────────────────────
+  const timEl = document.getElementById('timing-analysis');
+  try {
+    const timData = await api('/api/timing-analysis').then(r => r?.json());
+    if (timData?.buckets?.length) {
+      const hasData = timData.buckets.some(b => b.count > 0);
+      if (hasData) {
+        timEl.innerHTML = timData.buckets.map(b => {
+          const clvCol = b.avgCLV > 0 ? '#34d399' : b.avgCLV < 0 ? '#f87171' : '#fbbf24';
+          const hitPct = Math.round(b.hitRate * 100);
+          const barW = Math.min(100, Math.abs(b.avgCLV) * 10 + 20);
+          return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+            <div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap">${b.name}</div>
+            <div style="flex:1;background:var(--surface2);border-radius:6px;height:24px;position:relative;overflow:hidden">
+              <div style="width:${barW}%;background:${clvCol}33;height:100%;border-radius:6px"></div>
+              <div style="position:absolute;inset:0;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:${clvCol}">
+                CLV ${b.avgCLV > 0 ? '+' : ''}${b.avgCLV}%
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);white-space:nowrap">${b.count} bets | ${hitPct}% hit</div>
+          </div>`;
+        }).join('');
+      } else {
+        timEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Timing data verschijnt zodra er settled bets met CLV en tijdstip zijn.</div>';
+      }
+    } else {
+      timEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Timing data verschijnt zodra er settled bets met CLV en tijdstip zijn.</div>';
+    }
+  } catch {
+    timEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Timing analyse laden mislukt.</div>';
   }
 
   chartsDone = true;
@@ -2570,8 +2637,14 @@ async function logModalBet() {
   if (!d) return;
 
   betData = d;
-  showMsg('modal-msg', '✅ Bet gelogd!', 'green');
-  setTimeout(closeModal, 1300);
+  if (d.correlationWarning) {
+    showMsg('modal-msg', `⚠️ Gelogd — ${d.correlationWarning.message}`, '#f59e0b');
+    setTimeout(closeModal, 2500);
+  } else {
+    showMsg('modal-msg', '✅ Bet gelogd!', 'green');
+    setTimeout(closeModal, 1300);
+  }
+  loadCorrelations();
 }
 
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
@@ -3132,6 +3205,7 @@ clearForm();
 startClock();
 setDailyQuote();
 loadBets();
+loadCorrelations();
 // Calibratie data voor model-status widget
 api('/api/notifications').then(r=>r?.json()).then(d => {
   if (d) window._calibData = d;
