@@ -1869,6 +1869,8 @@ app.post('/api/bets/recalculate', async (req, res) => {
     const { bets, _raw } = await readBets();
     const pf = v => parseFloat(String(v||'').replace(',','.')) || 0;
     let fixed = 0;
+    // Bouw een map van betIndex → gecorrigeerde wl
+    const corrections = new Map(); // betId → corrected wl
     for (let i = BET_START_ROW - 1; i < _raw.length; i++) {
       const row = _raw[i];
       if (!row || !row[0]) continue;
@@ -1877,19 +1879,29 @@ app.post('/api/bets/recalculate', async (req, res) => {
       const odds  = pf(row[5]);
       const units = pf(row[6]);
       const inzet = pf(row[7]) || +(units * UNIT_EUR).toFixed(2);
-      const wl    = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : -inzet;
+      const wl    = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : +(-inzet).toFixed(2);
       const currentWl = pf(row[10]);
-      if (Math.abs(currentWl - wl) < 0.01) continue; // al correct
+      if (Math.abs(currentWl - wl) < 0.01) continue;
       await sh.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: `${tab}!K${i+1}`,
         valueInputOption: 'RAW',
         requestBody: { values: [[wl]] },
       });
+      corrections.set(parseFloat(row[0]), wl);
       fixed++;
       await sleep(80);
     }
-    res.json({ fixed, ...(await readBets()) });
+    // Pas bets in-memory aan (niet opnieuw lezen — Sheets is soms traag)
+    const correctedBets = bets.map(b => {
+      if (corrections.has(b.id)) return { ...b, wl: corrections.get(b.id) };
+      return b;
+    });
+    const users = await loadUsers().catch(() => []);
+    const user  = users.find(u => u.id === req.user?.id);
+    const sb = user?.settings?.startBankroll ?? START_BANKROLL;
+    const ue = user?.settings?.unitEur       ?? UNIT_EUR;
+    res.json({ fixed, bets: correctedBets, stats: calcStats(correctedBets, sb, ue) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
