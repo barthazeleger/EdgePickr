@@ -955,9 +955,10 @@ async function runPrematch(emit) {
   let totalEvents = 0;
   let apiCallsUsed = 0;
 
-  // Datumbereik: vandaag + morgen
-  const dateFrom = new Date().toISOString().slice(0, 10);
-  const dateTo   = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  // Datumbereik: vandaag + morgen (Amsterdam-tijdzone)
+  const dateFrom = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const tomorrowDate = new Date(Date.now() + 2 * 86400000);
+  const dateTo   = tomorrowDate.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
 
   // ── STAP 3: Per competitie fixtures + odds + predictions ────────────────
   for (const league of AF_FOOTBALL_LEAGUES) {
@@ -1772,10 +1773,18 @@ async function schedulePreKickoffCheck(bet) {
     if (tijdStr.includes('T') || tijdStr.includes('-')) {
       kickoffMs = new Date(tijdStr).getTime();
     } else {
-      // "HH:MM" — combineer met datum van vandaag/morgen
+      // "HH:MM" in Amsterdam-tijd — converteer naar UTC
       const [h, m] = tijdStr.split(':').map(Number);
-      const d = new Date();
-      d.setHours(h, m, 0, 0);
+      const nowAms = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+      // Maak een ISO-string in Amsterdam-tijd en parse die correct
+      const amsIso = `${nowAms}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
+      // Bereken offset: verschil tussen UTC en Amsterdam
+      const probe = new Date();
+      const utcH = probe.getUTCHours();
+      const amsH = parseInt(probe.toLocaleTimeString('en-US', { hour:'numeric', hour12:false, timeZone:'Europe/Amsterdam' }));
+      const offsetMs = (amsH - utcH) * 3600000;
+      // Kickoff in UTC = Amsterdam-tijd minus offset
+      const d = new Date(new Date(amsIso + 'Z').getTime() - offsetMs);
       if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1); // morgen
       kickoffMs = d.getTime();
     }
@@ -2007,34 +2016,22 @@ async function checkOpenBetResults() {
   const openBets = bets.filter(b => b.uitkomst === 'Open');
   if (!openBets.length) return { checked: 0, updated: 0, results: [] };
 
-  const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';
-  const espnGet = url => fetch(url, { headers: { Accept: 'application/json' } }).then(r => r.json()).catch(() => ({}));
-
-  const sources = [
-    { url: `${ESPN}/soccer/eng.1/scoreboard` }, { url: `${ESPN}/soccer/esp.1/scoreboard` },
-    { url: `${ESPN}/soccer/ger.1/scoreboard` }, { url: `${ESPN}/soccer/ita.1/scoreboard` },
-    { url: `${ESPN}/soccer/fra.1/scoreboard` }, { url: `${ESPN}/soccer/ned.1/scoreboard` },
-    { url: `${ESPN}/soccer/por.1/scoreboard` }, { url: `${ESPN}/soccer/tur.1/scoreboard` },
-    { url: `${ESPN}/soccer/eng.2/scoreboard` },
-    { url: `${ESPN}/soccer/uefa.champions/scoreboard` }, { url: `${ESPN}/soccer/uefa.europa/scoreboard` },
-    { url: `${ESPN}/basketball/nba/scoreboard` },
-    { url: `${ESPN}/hockey/nhl/scoreboard` },
-    { url: `${ESPN}/baseball/mlb/scoreboard` },
-  ];
-
-  const raw = await Promise.all(sources.map(async src => {
-    const d = await espnGet(src.url);
-    return (d.events || []).map(ev => {
-      const comp = ev.competitions?.[0];
-      const home = comp?.competitors?.find(c => c.homeAway === 'home');
-      const away = comp?.competitors?.find(c => c.homeAway === 'away');
-      const status = ev.status?.type;
-      if (!home || !away || !status?.completed) return null;
-      return { home: home.team?.displayName||'', away: away.team?.displayName||'',
-               scoreH: parseInt(home.score||'0'), scoreA: parseInt(away.score||'0') };
-    }).filter(Boolean);
-  }));
-  const allFinished = raw.flat();
+  // Gebruik api-football voor uitslagen (vervangt ESPN)
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const [todayFixtures, yesterdayFixtures] = await Promise.all([
+    afGet('v3.football.api-sports.io', '/fixtures', { date: today }),
+    afGet('v3.football.api-sports.io', '/fixtures', { date: yesterday }),
+  ]);
+  const FINISHED_STATUSES = new Set(['FT','AET','PEN']);
+  const allFinished = [...(todayFixtures || []), ...(yesterdayFixtures || [])]
+    .filter(f => FINISHED_STATUSES.has(f.fixture?.status?.short))
+    .map(f => ({
+      home:   f.teams?.home?.name || '',
+      away:   f.teams?.away?.name || '',
+      scoreH: f.goals?.home ?? 0,
+      scoreA: f.goals?.away ?? 0,
+    }));
 
   const results = [];
   for (const bet of openBets) {
@@ -2088,14 +2085,15 @@ app.get('/api/check-results', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Live scores via ESPN public API (gratis, geen key nodig)
+// Live scores via api-football
 app.get('/api/live-scores', async (req, res) => {
   try {
     const knownLeagueIds = new Set(AF_FOOTBALL_LEAGUES.map(l => l.id));
     const leagueNames    = Object.fromEntries(AF_FOOTBALL_LEAGUES.map(l => [l.id, l.name]));
 
     // Live en vandaag geplande wedstrijden ophalen in parallel
-    const today = new Date().toISOString().slice(0, 10);
+    // Gebruik Amsterdam-datum zodat we rond middernacht de juiste dag tonen
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
     const [liveFixtures, todayFixtures] = await Promise.all([
       afGet('v3.football.api-sports.io', '/fixtures', { live: 'all' }),
       afGet('v3.football.api-sports.io', '/fixtures', { date: today }),
