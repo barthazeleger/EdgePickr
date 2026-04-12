@@ -981,7 +981,7 @@ async function runPrematch(emit) {
 
   // Datumbereik: vandaag + morgen (Amsterdam-tijdzone)
   const dateFrom = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-  const tomorrowDate = new Date(Date.now() + 2 * 86400000);
+  const tomorrowDate = new Date(Date.now() + 86400000);
   const dateTo   = tomorrowDate.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
 
   // ── STAP 3: Per competitie fixtures + odds + predictions ────────────────
