@@ -355,7 +355,7 @@ nav::-webkit-scrollbar { display: none; }
 </header>
 
 <!-- ══ PROFILE MODAL ════════════════════════════════════════════════════════ -->
-<div id="profile-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:none;align-items:center;justify-content:center">
+<div id="profile-modal" onclick="if(event.target===this) closeProfileModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:none;align-items:center;justify-content:center">
   <div style="background:var(--surface);border-radius:16px;padding:32px;width:90%;max-width:480px;max-height:85vh;overflow-y:auto;position:relative">
     <button onclick="closeProfileModal()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
     <div style="font-size:18px;font-weight:700;margin-bottom:24px">⚙️ Instellingen</div>
@@ -902,22 +902,13 @@ nav::-webkit-scrollbar { display: none; }
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
         <div>
-          <div style="font-weight:600">Claude Pro (Anthropic)</div>
-          <div style="color:var(--muted);font-size:12px;margin-top:2px">AI-assistent · bouwt &amp; onderhoudt de scanner, dashboard en logica</div>
+          <div style="font-weight:600">Claude Max (Anthropic)</div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">Onbeperkt AI-gebruik · bouwt &amp; onderhoudt scanner, dashboard en logica</div>
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:12px">
-          <div style="font-weight:700;color:var(--accent)">$20/mnd</div>
+          <div style="font-weight:700;color:var(--accent)">&euro;98/mnd</div>
           <div style="font-size:11px;color:var(--muted)">Start: 12-04-2026</div>
           <div style="font-size:11px;color:var(--muted)">Verlengt: 12-05-2026</div>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);opacity:0.55">
-        <div>
-          <div style="font-weight:600;text-decoration:line-through">Claude Max (Anthropic)</div>
-          <div style="color:var(--muted);font-size:12px;margin-top:2px">Onbeperkt gebruik — gedowngraded naar Pro</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0;margin-left:12px">
-          <div style="font-size:11px;color:var(--muted)">Opgezegd: 12-04-2026</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);opacity:0.55">
