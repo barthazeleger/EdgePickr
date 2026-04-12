@@ -337,6 +337,7 @@ nav::-webkit-scrollbar { display: none; }
     <button class="tab-btn" onclick="go('data')">📊 Data</button>
     <button class="tab-btn" onclick="go('live')">🔴 Live</button>
     <button class="tab-btn" onclick="go('analyse')">🔍 Analyse</button>
+    <button class="tab-btn" onclick="go('inbox')">📬 Inbox</button>
     <button class="tab-btn" onclick="go('info')">📖 Info</button>
   </nav>
 
@@ -797,6 +798,44 @@ nav::-webkit-scrollbar { display: none; }
   </div>
   <div id="analyse-out">
     <div class="empty-state"><div class="ico">🔍</div><div>Geen scandata beschikbaar. Start eerst een prematch scan.</div></div>
+  </div>
+</section>
+
+<!-- ══ INBOX ═══════════════════════════════════════════════════════════════ -->
+<section class="page" id="page-inbox">
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="card-title">📬 Inbox — Model Activity</div>
+      <div style="font-size:12px;color:var(--muted)" id="inbox-settled">—</div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm inbox-filter active" data-filter="all" onclick="filterInbox('all',this)">Alles</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="market_calibration" onclick="filterInbox('market_calibration',this)">📊 Markt</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="ep_calibration" onclick="filterInbox('ep_calibration',this)">🎯 EP</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="signal_tuning" onclick="filterInbox('signal_tuning',this)">🔧 Signals</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="milestone" onclick="filterInbox('milestone',this)">🏆 Milestones</button>
+    </div>
+    <div id="inbox-feed" style="font-size:13px">
+      <div style="color:var(--muted);padding:20px 0;text-align:center">Laden...</div>
+    </div>
+  </div>
+
+  <!-- Signal Weights -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="margin-bottom:14px">🔧 Huidige Signal Gewichten</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Gewichten worden automatisch aangepast op basis van prestaties. 1.0 = neutraal, >1.0 = versterkt, &lt;1.0 = afgezwakt.</div>
+    <div id="inbox-weights" style="font-size:13px">
+      <div style="color:var(--muted)">Nog geen signal data</div>
+    </div>
+  </div>
+
+  <!-- Market Multipliers -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:14px">📊 Markt Multipliers</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Calibratie per markttype na 8+ bets. Hoog = model vertrouwt deze markt meer.</div>
+    <div id="inbox-markets" style="font-size:13px">
+      <div style="color:var(--muted)">Nog geen calibratiedata</div>
+    </div>
   </div>
 </section>
 
@@ -1378,7 +1417,7 @@ function toggleDark() {
 }
 
 // ── NAVIGATION ───────────────────────────────────────────────────────────────
-const TAB_IDS = ['scans','tracker','data','live','analyse','info'];
+const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','info'];
 function go(name) {
   localStorage.setItem('activeTab', name);
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', TAB_IDS[i] === name));
@@ -1388,6 +1427,7 @@ function go(name) {
   if (name === 'data')    loadBets().then(d => redrawCharts(d));
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
   if (name === 'analyse') refreshAnalyse();
+  if (name === 'inbox')   loadInbox();
   if (name === 'info')    loadModelLog();
 }
 
@@ -2797,6 +2837,104 @@ async function adminAction(userId, status) {
     await api(`/api/admin/users/${userId}`, { method: 'PUT', body: { status } });
     loadAdminUsers();
   } catch {}
+}
+
+// ── INBOX — MODEL ACTIVITY FEED ───────────────────────────────────────────────
+let inboxData = null;
+let inboxFilter = 'all';
+
+async function loadInbox() {
+  try {
+    const d = await api('/api/model-feed').then(r => r?.json());
+    if (!d) return;
+    inboxData = d;
+    document.getElementById('inbox-settled').textContent = `${d.totalSettled} settled bets`;
+    renderInboxFeed(d.log);
+    renderInboxWeights(d.signalWeights);
+    renderInboxMarkets(d.markets);
+  } catch {}
+}
+
+function filterInbox(filter, btn) {
+  inboxFilter = filter;
+  document.querySelectorAll('.inbox-filter').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (inboxData) renderInboxFeed(inboxData.log);
+}
+
+function renderInboxFeed(log) {
+  const feed = document.getElementById('inbox-feed');
+  const filtered = inboxFilter === 'all' ? log : log.filter(e => e.type === inboxFilter);
+
+  if (!filtered.length) {
+    feed.innerHTML = `<div style="color:var(--muted);padding:32px 0;text-align:center">
+      <div style="font-size:28px;margin-bottom:8px">📭</div>
+      <div>Nog geen ${inboxFilter === 'all' ? 'model updates' : inboxFilter.replace('_',' ')} — het model leert na elke settled bet.</div>
+    </div>`;
+    return;
+  }
+
+  const icons = { market_calibration:'📊', ep_calibration:'🎯', signal_tuning:'🔧', milestone:'🏆' };
+  const labels = { market_calibration:'Markt calibratie', ep_calibration:'EP herweging', signal_tuning:'Signal tuning', milestone:'Milestone' };
+
+  feed.innerHTML = filtered.map(e => {
+    const icon = icons[e.type] || '🧠';
+    const label = labels[e.type] || 'Model update';
+    const ago = formatAgo(e.date);
+    const isMilestone = e.type === 'milestone';
+    return `<div style="display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--border);${isMilestone ? 'background:rgba(99,102,241,.04);margin:0 -16px;padding-left:16px;padding-right:16px;border-radius:8px' : ''}">
+      <div style="font-size:20px;flex-shrink:0;width:28px;text-align:center">${icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)">${label}</span>
+          <span style="font-size:11px;color:var(--muted)">${ago}</span>
+        </div>
+        <div style="line-height:1.6;color:var(--text)">${e.note || '—'}</div>
+        ${e.oldMult != null ? `<div style="margin-top:4px;font-size:12px;color:var(--muted)">${e.oldMult} → ${e.newMult} ${e.winRate != null ? `· ${e.winRate}% win rate` : ''} ${e.n ? `· ${e.n} bets` : ''}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderInboxWeights(weights) {
+  const el = document.getElementById('inbox-weights');
+  const names = { home_adv:'Thuisvoordeel', form:'Vorm', injuries:'Blessures', h2h:'Head-to-head',
+    position:'Positie', home_away_split:'Thuis/uit split', api_pred:'API predictie', lineup:'Opstelling',
+    team_stats:'Team stats', btts_scoring:'BTTS scoring', btts_cleansheet:'BTTS clean sheet' };
+  const keys = Object.keys(weights || {});
+  if (!keys.length) { el.innerHTML = '<div style="color:var(--muted)">Gewichten worden aangepast na 15+ bets per signal.</div>'; return; }
+  el.innerHTML = keys.sort((a,b) => (weights[b]||1) - (weights[a]||1)).map(k => {
+    const w = weights[k];
+    const name = names[k] || k;
+    const col = w > 1.05 ? '#34d399' : w < 0.95 ? '#f87171' : 'var(--muted)';
+    const barW = Math.min(100, w * 50);
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="width:120px;font-size:12px;font-weight:600">${name}</div>
+      <div style="flex:1;background:var(--surface2);border-radius:4px;height:18px;position:relative;overflow:hidden">
+        <div style="width:${barW}%;background:${col}33;height:100%;border-radius:4px"></div>
+      </div>
+      <div style="width:50px;text-align:right;font-weight:700;font-size:12px;color:${col}">${w.toFixed(2)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderInboxMarkets(markets) {
+  const el = document.getElementById('inbox-markets');
+  const keys = Object.keys(markets || {}).filter(k => markets[k].n > 0);
+  if (!keys.length) { el.innerHTML = '<div style="color:var(--muted)">Calibratie start na 8+ bets per markttype.</div>'; return; }
+  const mNames = { home:'🏠 Thuis wint', away:'✈️ Uit wint', draw:'🤝 Gelijkspel', over:'⚽ Over', under:'⚽ Under', btts:'⚽ BTTS', dnb:'⚽ Draw No Bet', other:'📋 Overig' };
+  el.innerHTML = keys.sort((a,b) => markets[b].multiplier - markets[a].multiplier).map(k => {
+    const m = markets[k];
+    const wr = m.n > 0 ? Math.round(m.w / m.n * 100) : 0;
+    const col = m.multiplier > 1.05 ? '#34d399' : m.multiplier < 0.95 ? '#f87171' : 'var(--muted)';
+    const profCol = m.profit >= 0 ? '#34d399' : '#f87171';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="width:140px;font-size:12px;font-weight:600">${mNames[k] || k}</div>
+      <div style="flex:1;font-size:12px;color:var(--muted)">${m.n} bets · ${wr}% win</div>
+      <div style="font-size:12px;font-weight:700;color:${profCol}">${m.profit >= 0 ? '+' : ''}€${m.profit.toFixed(2)}</div>
+      <div style="font-size:12px;font-weight:700;color:${col};width:45px;text-align:right">${m.multiplier.toFixed(2)}x</div>
+    </div>`;
+  }).join('');
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
