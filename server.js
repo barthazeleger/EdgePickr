@@ -258,6 +258,7 @@ function updateCalibration(bet) {
     const wr     = mk.w / mk.n;
     const entry  = {
       date:    new Date().toISOString(),
+      type:    'market_calibration',
       market:  mKey,
       oldMult: +oldMult.toFixed(3),
       newMult: +mk.multiplier.toFixed(3),
@@ -265,8 +266,10 @@ function updateCalibration(bet) {
       winRate: +(wr * 100).toFixed(1),
       note:    `${mKey} · ${dir} (${wr*100 < 50 ? '' : '+'}${((wr-0.5)*100).toFixed(0)}% winrate, ${mk.n} bets)`,
     };
-    c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 30);
+    c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 50);
     c.modelLastUpdated = entry.date;
+    // Telegram notificatie
+    tg(`🧠 MODEL UPDATE\n📊 ${mKey} multiplier: ${oldMult.toFixed(2)} → ${mk.multiplier.toFixed(2)}\n📈 Win rate: ${(wr*100).toFixed(0)}% (${mk.n} bets)\n${dir}`).catch(() => {});
   }
 
   // ── ep-bucket tracking (voor dynamische epW kalibratie) ──────────────────
@@ -294,6 +297,7 @@ function updateCalibration(bet) {
         const dir = eb.weight > oldW ? '↑' : '↓';
         const entry = {
           date:    new Date().toISOString(),
+          type:    'ep_calibration',
           market:  `epW bucket ${bk}`,
           oldMult: +oldW.toFixed(3),
           newMult: +eb.weight.toFixed(3),
@@ -301,8 +305,9 @@ function updateCalibration(bet) {
           winRate: +(actualWr*100).toFixed(1),
           note:    `epW [${bk}+] ${dir} bijgesteld — werkelijke hitrate ${(actualWr*100).toFixed(0)}% vs verwacht ${(expectedWr*100).toFixed(0)}% (${eb.n} bets)`,
         };
-        c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 30);
+        c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 50);
         c.modelLastUpdated = entry.date;
+        tg(`🧠 MODEL UPDATE\n🎯 EP bucket [${bk}+] gewicht: ${oldW.toFixed(2)} → ${eb.weight.toFixed(2)}\n📈 Hit rate: ${(actualWr*100).toFixed(0)}% vs verwacht ${(expectedWr*100).toFixed(0)}% (${eb.n} bets)`).catch(() => {});
       }
     }
     c.epBuckets[bk] = eb;
@@ -323,8 +328,95 @@ function updateCalibration(bet) {
   }
 
   c.lastUpdated = new Date().toISOString();
+
+  // ── Milestone checks ────────────────────────────────────────────────────
+  const milestones = [10, 25, 50, 100, 200];
+  if (milestones.includes(c.totalSettled)) {
+    const roi = c.totalProfit / Math.max(1, c.totalSettled * UNIT_EUR) * 100;
+    const wr = c.totalWins / c.totalSettled * 100;
+    const entry = {
+      date: new Date().toISOString(), type: 'milestone',
+      note: `🏆 ${c.totalSettled} bets milestone! Win rate: ${wr.toFixed(0)}% · ROI: ${roi.toFixed(1)}% · P/L: €${c.totalProfit.toFixed(2)}`
+    };
+    c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 50);
+    let msg = `🏆 MILESTONE: ${c.totalSettled} BETS\n📊 Win rate: ${wr.toFixed(0)}%\n💰 ROI: ${roi.toFixed(1)}%\n💵 P/L: €${c.totalProfit.toFixed(2)}`;
+    if (c.totalSettled === 50 && roi > 10) {
+      msg += `\n\n✅ ROI > 10% na 50 bets — overweeg unit verhoging naar €20`;
+    } else if (c.totalSettled === 50 && roi < 0) {
+      msg += `\n\n⚠️ Negatieve ROI — model review aanbevolen. Check signal attribution.`;
+    }
+    tg(msg).catch(() => {});
+  }
+
   saveCalib(c);
   return c;
+}
+
+// ── SIGNAL AUTO-TUNING ───────────────────────────────────────────────────────
+// Na 30+ bets per signaal: pas gewicht aan op basis van werkelijke hit rate
+const SIGNAL_WEIGHTS_FILE = path.join(__dirname, 'signal_weights.json');
+
+function loadSignalWeights() {
+  try { return JSON.parse(fs.readFileSync(SIGNAL_WEIGHTS_FILE, 'utf8')); }
+  catch { return {}; } // empty = all signals at 1.0 (default)
+}
+function saveSignalWeights(w) { fs.writeFileSync(SIGNAL_WEIGHTS_FILE, JSON.stringify(w, null, 2)); }
+
+async function autoTuneSignals() {
+  try {
+    const { bets } = await readBets();
+    const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
+    if (settled.length < 20) return; // te weinig data
+
+    const signalStats = {};
+    for (const b of settled) {
+      let sigs;
+      try { sigs = JSON.parse(b.signals || '[]'); } catch { continue; }
+      if (!Array.isArray(sigs)) continue;
+      for (const sig of sigs) {
+        const name = sig.split(':')[0];
+        if (!name) continue;
+        if (!signalStats[name]) signalStats[name] = { n: 0, w: 0 };
+        signalStats[name].n++;
+        if (b.uitkomst === 'W') signalStats[name].w++;
+      }
+    }
+
+    const weights = loadSignalWeights();
+    const c = loadCalib();
+    let changed = false;
+
+    for (const [name, stats] of Object.entries(signalStats)) {
+      if (stats.n < 15) continue; // te weinig data voor dit signaal
+      const hitRate = stats.w / stats.n;
+      const old = weights[name] || 1.0;
+
+      // Signals met hoge hit rate krijgen meer gewicht, lage minder
+      // Gradueel: max ±10% per tuning cycle
+      let newW = old;
+      if (hitRate > 0.55) newW = Math.min(1.5, old * 1.05);
+      else if (hitRate < 0.40) newW = Math.max(0.3, old * 0.92);
+      else newW = old * 0.98 + 0.02; // langzaam naar 1.0 als neutraal
+
+      if (Math.abs(newW - old) >= 0.03) {
+        weights[name] = +newW.toFixed(3);
+        changed = true;
+        const dir = newW > old ? '↑ verhoogd' : '↓ verlaagd';
+        const entry = {
+          date: new Date().toISOString(), type: 'signal_tuning',
+          note: `Signal "${name}" ${dir}: ${old.toFixed(2)} → ${newW.toFixed(2)} (${(hitRate*100).toFixed(0)}% hit rate, ${stats.n} bets)`
+        };
+        c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 50);
+        c.modelLastUpdated = entry.date;
+        tg(`🧠 SIGNAL TUNING\n🔧 "${name}" gewicht: ${old.toFixed(2)} → ${newW.toFixed(2)}\n📈 Hit rate: ${(hitRate*100).toFixed(0)}% (${stats.n} bets)\n${dir}`).catch(() => {});
+      }
+    }
+
+    if (changed) {
+      saveSignalWeights(weights);
+      saveCalib(c);
+    }
+  } catch (e) { console.error('autoTuneSignals fout:', e.message); }
 }
 
 // ── PORTFOLIO ANALYSE & UPGRADE AANBEVELINGEN ─────────────────────────────────
@@ -2373,6 +2465,20 @@ app.get('/api/version', (req, res) => {
   });
 });
 
+// Model activity feed — alle automatische wijzigingen
+app.get('/api/model-feed', (req, res) => {
+  const c = loadCalib();
+  const sw = loadSignalWeights();
+  res.json({
+    log: (c.modelLog || []).slice(0, 30),
+    lastUpdated: c.modelLastUpdated || null,
+    totalSettled: c.totalSettled || 0,
+    signalWeights: sw,
+    markets: c.markets || {},
+    epBuckets: c.epBuckets || {},
+  });
+});
+
 // Notifications — API alerts + calibratie inzichten
 app.get('/api/notifications', async (req, res) => {
   try {
@@ -3024,6 +3130,9 @@ function scheduleDailyResultsCheck() {
     } catch (e) {
       console.error('Dagelijkse live check fout:', e.message);
     }
+
+    // Auto-tune signalen na resultatencheck
+    await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
 
     scheduleDailyResultsCheck(); // plan volgende dag
   }, delay);
