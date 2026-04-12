@@ -866,8 +866,8 @@ nav::-webkit-scrollbar { display: none; }
         <div style="font-size:24px">🤖</div>
       </div>
       <p style="font-size:13px;color:var(--muted);line-height:1.75">
-        Bet Scanner combineert drie databronnen met een wiskundig model om dagelijkse value bets te vinden.
-        Het doel: systematisch edge vinden waar bookmakers het mis hebben, en via Kelly Criterion slim inzetten.
+        Bet Scanner combineert api-football Pro data met een zelflerend model (11 signalen) om dagelijkse value bets te vinden.
+        Het doel: systematisch edge vinden waar bookmakers het mis hebben, via Kelly Criterion slim inzetten, en met CLV tracking bewijzen dat het werkt.
       </p>
     </div>
   </div>
@@ -879,23 +879,28 @@ nav::-webkit-scrollbar { display: none; }
       <div style="font-size:13px;color:var(--muted);line-height:1.9">
         <div style="margin-bottom:10px"><strong style="color:var(--text)">1. No-vig kans berekening</strong><br>
         Alle bookmaker odds worden genormaliseerd (marge verwijderd). Het gemiddelde over alle books = consensuskans.</div>
-        <div style="margin-bottom:10px"><strong style="color:var(--text)">2. Data-aanpassingen</strong><br>
-        Op basis van api-sports.io + ESPN wordt de kans bijgesteld:
+        <div style="margin-bottom:10px"><strong style="color:var(--text)">2. 11 signalen (api-football Pro)</strong><br>
         <ul style="padding-left:18px;margin-top:6px">
-          <li>Vorm laatste 5 wedstrijden (gewicht 35%)</li>
-          <li>H2H record (gewicht 22%)</li>
-          <li>Competitiestand / druk (gewicht 12%)</li>
-          <li>Thuisvoordeel per sport (5–6%)</li>
-          <li>Sleutelblessures (negatief, gewicht 8%)</li>
-          <li>Momentum laatste 3 vs. vorige 3 (gewicht 10%)</li>
-          <li>Inzet van de wedstrijd (degradatie / titelrace)</li>
+          <li>Thuisvoordeel per competitie (2–6%)</li>
+          <li>Vorm laatste 5 wedstrijden</li>
+          <li>Head-to-head record + BTTS-rate</li>
+          <li>Competitiestand + positieverschil</li>
+          <li>Home/away goal splits (thuis- vs uitprestaties)</li>
+          <li>Team seizoensstatistieken (goals avg, clean sheet %)</li>
+          <li>Blessures (aantal + impact)</li>
+          <li>Opstelling/rotatie (als lineup beschikbaar)</li>
+          <li>api-football AI predictions</li>
+          <li>Scheidsrechter (data-verzameling)</li>
+          <li>Over/Under team scoring adjustments</li>
         </ul>
         </div>
-        <div style="margin-bottom:10px"><strong style="color:var(--text)">3. Kelly Criterion</strong><br>
+        <div style="margin-bottom:10px"><strong style="color:var(--text)">3. Kelly Criterion + sizing</strong><br>
         <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11.5px">k = (ep×(odd-1) − (1−ep)) / (odd-1)</code><br>
-        Alleen picks met k > 1.5% worden geselecteerd. Units schalen met k.</div>
-        <div><strong style="color:var(--text)">4. Calibratie (zelflerend)</strong><br>
-        Na elke afgeronde bet past het model zijn drempel per markttype aan. 8+ bets per categorie nodig voor recalibratie.</div>
+        Half-Kelly voor veiligheid. 6 markten: Match Winner, Over/Under, BTTS, Draw No Bet, Handicap, Gelijkspel.</div>
+        <div style="margin-bottom:10px"><strong style="color:var(--text)">4. Self-learning</strong><br>
+        Markt multipliers recalibreren na 8+ bets. Signal gewichten auto-tunen dagelijks. EP-bucket herweging na 100 bets. Alles zichtbaar in de 📬 Inbox tab.</div>
+        <div><strong style="color:var(--text)">5. CLV + Variance tracking</strong><br>
+        Slotodds ophalen bij aftrap → CLV% per bet. Variance tracker meet geluk vs skill (σ-afwijking). Timing analyse toont wanneer je de beste odds pakt.</div>
       </div>
     </div>
 
@@ -906,29 +911,36 @@ nav::-webkit-scrollbar { display: none; }
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <span style="font-size:20px">⚽</span>
           <div>
-            <div style="font-weight:600">The Odds API</div>
-            <div style="color:var(--muted);font-size:12px">Live odds van 40+ bookmakers per wedstrijd.<br>500 calls/maand gratis · ~21 calls per scan · max ~23 scans/maand</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-          <span style="font-size:20px">📊</span>
-          <div>
-            <div style="font-weight:600">api-sports.io</div>
-            <div style="color:var(--muted);font-size:12px">Teamstatistieken, H2H, blessures, scheidsrechters, standen.<br>100 calls/dag gratis · ~45 calls per prematch scan</div>
+            <div style="font-weight:600">api-football.com Pro <span style="font-size:10px;color:var(--accent);font-weight:700">PRIMAIR</span></div>
+            <div style="color:var(--muted);font-size:12px">Odds, fixtures, standings, H2H, blessures, lineups, predictions, team stats, scheidsrechters.<br>7.500 calls/dag · €19/mnd · 40 competities wereldwijd</div>
           </div>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <span style="font-size:20px">📺</span>
           <div>
-            <div style="font-weight:600">ESPN Scoreboard API</div>
-            <div style="color:var(--muted);font-size:12px">Live scores + standen voor 17+ competities.<br>Volledig gratis, geen key nodig</div>
+            <div style="font-weight:600">ESPN Scoreboard API <span style="font-size:10px;color:var(--green);font-weight:700">GRATIS</span></div>
+            <div style="color:var(--muted);font-size:12px">Live scores auto-refresh (elke 30s) op de Mijn Bets tab + uitslagen check.<br>Volledig gratis, onbeperkt, geen key nodig</div>
           </div>
         </div>
-        <div style="display:flex;align-items:flex-start;gap:10px">
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <span style="font-size:20px">📱</span>
+          <div>
+            <div style="font-weight:600">Telegram Bot API <span style="font-size:10px;color:var(--green);font-weight:700">GRATIS</span></div>
+            <div style="color:var(--muted);font-size:12px">Dagelijkse picks, pre-kickoff checks, CLV meldingen, odds alerts, model updates, milestones.<br>Volledig gratis, onbeperkt</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <span style="font-size:20px">📋</span>
+          <div>
+            <div style="font-weight:600">Google Sheets <span style="font-size:10px;color:var(--green);font-weight:700">GRATIS</span></div>
+            <div style="color:var(--muted);font-size:12px">Database voor bets, users, en instellingen. Persisteert over server restarts.<br>Gratis met Google service account</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;opacity:0.5">
           <span style="font-size:20px">🚀</span>
           <div>
-            <div style="font-weight:600">Sportmonks (toekomst)</div>
-            <div style="color:var(--muted);font-size:12px">Echte xG, line-ups, diepere stats. Aanbevolen bij ROI > 10% over 20+ bets.</div>
+            <div style="font-weight:600;text-decoration:line-through">The Odds API</div>
+            <div style="color:var(--muted);font-size:12px">Vervangen door api-football Pro (meer data, betere dekking)</div>
           </div>
         </div>
       </div>
