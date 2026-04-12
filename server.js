@@ -481,6 +481,67 @@ async function runPortfolioAnalysis() {
   }
 
   await tg(lines.join('\n')).catch(() => {});
+
+  // Log inzichten naar inbox
+  const inboxEntries = [];
+  if (c.totalSettled >= 10) {
+    inboxEntries.push({
+      date: new Date().toISOString(), type: 'performance',
+      note: `Portfolio: ${c.totalSettled} bets · ROI ${(roi*100).toFixed(1)}% · W/L ${c.totalWins}/${c.totalSettled-c.totalWins} · P/L €${profit.toFixed(2)}`
+    });
+  }
+  if (bankrollGrowth >= START_BANKROLL) {
+    inboxEntries.push({
+      date: new Date().toISOString(), type: 'upgrade_advice',
+      note: `💰 Bankroll +100% (€${bankroll.toFixed(0)}) — unit verhoging naar €${currentUnit*2} aanbevolen`
+    });
+  } else if (bankrollGrowth >= START_BANKROLL * 0.5) {
+    inboxEntries.push({
+      date: new Date().toISOString(), type: 'upgrade_advice',
+      note: `💰 Bankroll +50% (€${bankroll.toFixed(0)}) — overweeg unit van €${currentUnit} naar €${Math.round(currentUnit*1.5)}`
+    });
+  }
+  if (c.totalSettled >= 30 && roi > 0.10) {
+    inboxEntries.push({
+      date: new Date().toISOString(), type: 'recommendation',
+      note: `ROI ${(roi*100).toFixed(1)}% na ${c.totalSettled} bets — overwegen: unit verhoging, of api-sports All Sports upgrade`
+    });
+  }
+  // CLV inzicht
+  if (s.clvTotal >= 5) {
+    const clvMsg = s.avgCLV > 0
+      ? `CLV gemiddeld +${s.avgCLV.toFixed(1)}% — je pakt betere odds dan de markt bij aftrap. Dit is bewijs van edge.`
+      : `CLV gemiddeld ${s.avgCLV.toFixed(1)}% — je odds zijn slechter dan de slotlijn. Probeer eerder te loggen.`;
+    inboxEntries.push({ date: new Date().toISOString(), type: 'clv_insight', note: clvMsg });
+  }
+  // Timing inzicht
+  if (s.clvTotal >= 10) {
+    const { bets } = await readBets();
+    const early = bets.filter(b => b.clvPct > 0 && b.clvPct != null);
+    const late = bets.filter(b => b.clvPct < 0 && b.clvPct != null);
+    if (early.length > late.length * 1.5) {
+      inboxEntries.push({ date: new Date().toISOString(), type: 'timing_insight',
+        note: `${early.length} van ${early.length+late.length} bets met CLV data verslaan de closing line — je timing is goed.` });
+    } else if (late.length > early.length * 1.5) {
+      inboxEntries.push({ date: new Date().toISOString(), type: 'timing_insight',
+        note: `Maar ${early.length} van ${early.length+late.length} bets verslaan de closing line — overweeg bets eerder te plaatsen.` });
+    }
+  }
+  // Verliespatroon waarschuwing
+  if (c.lossLog?.length >= 5) {
+    const byMarket = {};
+    for (const l of c.lossLog.slice(0, 10)) byMarket[l.market] = (byMarket[l.market]||0) + 1;
+    const worst = Object.entries(byMarket).sort((a,b) => b[1]-a[1])[0];
+    if (worst?.[1] >= 4) {
+      inboxEntries.push({ date: new Date().toISOString(), type: 'insight',
+        note: `⚠️ Verliespatroon: ${worst[1]}x verlies in "${worst[0]}" picks uit laatste 10. Model drempel is automatisch verhoogd.` });
+    }
+  }
+  if (inboxEntries.length) {
+    c.modelLog = [...inboxEntries, ...(c.modelLog || [])].slice(0, 50);
+    c.modelLastUpdated = new Date().toISOString();
+    saveCalib(c);
+  }
 }
 
 const H = {
@@ -1821,6 +1882,13 @@ async function readBets() {
   if (readMs > 3000) {
     console.warn(`⚠️ Sheets read traag: ${readMs}ms`);
     tg(`⚠️ Google Sheets response time: ${readMs}ms (> 3s) — overweeg database migratie`).catch(() => {});
+    try {
+      const c = loadCalib();
+      c.modelLog = [{ date: new Date().toISOString(), type: 'sheets_slow',
+        note: `Google Sheets response: ${readMs}ms (> 3s). Bij aanhoudende traagheid → migratie naar Supabase aanbevolen.`
+      }, ...(c.modelLog || [])].slice(0, 50);
+      saveCalib(c);
+    } catch {}
   }
   const data = res.data.values || [];
 
