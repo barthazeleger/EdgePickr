@@ -482,6 +482,10 @@ nav::-webkit-scrollbar { display: none; }
         <div class="hero-stat-val" id="dh-sr">—%</div>
         <div class="hero-stat-lbl">Strike rate</div>
       </div>
+      <div class="hero-stat">
+        <div class="hero-stat-val" id="dh-clv">—</div>
+        <div class="hero-stat-lbl">Gem. CLV</div>
+      </div>
     </div>
   </div>
 
@@ -699,7 +703,7 @@ nav::-webkit-scrollbar { display: none; }
       <thead>
         <tr>
           <th>#</th><th>Datum</th><th>Aftrap</th><th>Sport</th><th>Wedstrijd</th><th>Bet</th>
-          <th>Odds</th><th>Units</th><th>Inzet</th><th>Score</th><th>Uitkomst</th><th>W/L</th><th></th>
+          <th>Odds</th><th>Units</th><th>Inzet</th><th>Score</th><th>Uitkomst</th><th>W/L</th><th>CLV</th><th></th>
         </tr>
       </thead>
       <tbody id="bets-body"></tbody>
@@ -730,6 +734,24 @@ nav::-webkit-scrollbar { display: none; }
     <div class="chart-card" style="grid-column:span 2">
       <div class="chart-title">🎲 Hit rate per markttype <span style="font-size:11px;color:var(--muted);font-weight:400">— welke markten presteren het best?</span></div>
       <div id="market-analysis" style="padding:8px 0"></div>
+    </div>
+
+    <!-- CLV Tracking -->
+    <div class="chart-card" style="grid-column:span 2">
+      <div class="chart-title">📉 Closing Line Value <span style="font-size:11px;color:var(--muted);font-weight:400">— versla je de markt?</span></div>
+      <div id="clv-analysis" style="padding:8px 0"></div>
+    </div>
+
+    <!-- Variance Tracker -->
+    <div class="chart-card" style="grid-column:span 2">
+      <div class="chart-title">🎲 Variance Tracker <span style="font-size:11px;color:var(--muted);font-weight:400">— geluk of skill?</span></div>
+      <div id="variance-analysis" style="padding:8px 0"></div>
+    </div>
+
+    <!-- Signal Attribution -->
+    <div class="chart-card" style="grid-column:span 2">
+      <div class="chart-title">🧠 Signal Attribution <span style="font-size:11px;color:var(--muted);font-weight:400">— welke signalen werken?</span></div>
+      <div id="signal-analysis" style="padding:8px 0"></div>
     </div>
   </div>
 </section>
@@ -949,7 +971,23 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v4.1</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v4.2</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">CLV tracking, signal attribution, variance tracker</div>
+          <div style="color:var(--muted);line-height:1.7">📉 Closing Line Value — slotodds ophalen bij aftrap, CLV% per bet en gemiddeld<br>
+          🧠 Signal attribution — welke modelsignalen dragen bij aan winnende picks?<br>
+          🎲 Variance tracker — geluk vs. skill meter (sigma-afwijking van verwachting)<br>
+          📈 Odds movement alerts — elk uur Telegram-waarschuwing bij >5% drift<br>
+          ⚽ BTTS + Draw No Bet markten toegevoegd aan de scanner<br>
+          🏠 Home/away splits + team seizoensstatistieken in het model</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v4.1</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
@@ -1645,7 +1683,7 @@ function renderBetsTable(bets) {
   const tbody = document.getElementById('bets-body');
   tbody.innerHTML = '';
   if (!bets.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">Nog geen bets geregistreerd.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="14">Nog geen bets geregistreerd.</td></tr>';
     return;
   }
   [...bets].reverse().forEach(b => {
@@ -1672,6 +1710,7 @@ function renderBetsTable(bets) {
         </select>
       </td>
       <td class="${wCls}">${b.wl !== 0 ? (b.wl>0?'+':'')+'€'+b.wl : b.uitkomst==='Open' ? `<span style="color:var(--muted);font-size:11px" title="Potentiële winst">+€${+((b.odds-1)*b.inzet).toFixed(2)}</span>` : '—'}</td>
+      <td>${b.clvPct != null && b.clvPct !== 0 ? `<span style="font-size:11px;font-weight:700;color:${b.clvPct>0?'#34d399':'#f87171'}">${b.clvPct>0?'+':''}${b.clvPct}%</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td><button class="del-btn" onclick="removeBet(${b.id})" title="Verwijderen">🗑</button></td>`;
     tbody.appendChild(tr);
   });
@@ -1898,6 +1937,126 @@ async function redrawCharts(data) {
     }).join('');
   } else {
     mktEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Nog geen settled bets om te analyseren.</div>';
+  }
+
+  // ── CLV Analyse ──────────────────────────────────────────────────────────
+  const clvEl = document.getElementById('clv-analysis');
+  const clvBets = bets.filter(b => b.clvPct != null && b.clvPct !== 0);
+  if (clvBets.length) {
+    const avgClv = +(clvBets.reduce((s,b) => s + b.clvPct, 0) / clvBets.length).toFixed(2);
+    const pos = clvBets.filter(b => b.clvPct > 0).length;
+    const neg = clvBets.length - pos;
+    const clvCol = avgClv >= 0 ? '#34d399' : '#f87171';
+    const pctPos = Math.round(pos / clvBets.length * 100);
+    clvEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+        <div style="background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:22px;font-weight:800;color:${clvCol}">${avgClv > 0 ? '+' : ''}${avgClv}%</div>
+          <div style="font-size:11px;color:var(--muted)">Gem. CLV</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:22px;font-weight:800;color:${pctPos >= 50 ? '#34d399' : '#f87171'}">${pctPos}%</div>
+          <div style="font-size:11px;color:var(--muted)">Bets die markt verslaan</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:22px;font-weight:800">${clvBets.length}</div>
+          <div style="font-size:11px;color:var(--muted)">CLV gemeten</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        ${avgClv > 0 ? '✅ Je logt bets tegen betere odds dan de slotlijn — dit is het sterkste bewijs van edge.' : '⚠️ Je odds zijn gemiddeld slechter dan de slotlijn. Probeer eerder te loggen of odds te vergelijken.'}
+        <br>CLV > 0 bij ${pos} bets, CLV < 0 bij ${neg} bets.
+      </div>
+      ${clvBets.length >= 3 ? `<div style="margin-top:12px">${clvBets.slice(-20).map(b => {
+        const c = b.clvPct >= 0 ? '#34d399' : '#f87171';
+        const w = Math.min(100, Math.abs(b.clvPct) * 8);
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+          <div style="width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${b.wedstrijd}">${b.wedstrijd}</div>
+          <div style="flex:1;background:var(--surface2);border-radius:4px;height:16px;position:relative;overflow:hidden">
+            <div style="width:${w}%;background:${c}44;height:100%;border-radius:4px"></div>
+          </div>
+          <div style="width:60px;text-align:right;font-weight:700;color:${c}">${b.clvPct > 0 ? '+' : ''}${b.clvPct}%</div>
+        </div>`;
+      }).join('')}</div>` : ''}`;
+  } else {
+    clvEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">CLV wordt gemeten bij aftrap — verschijnt na je eerste afgeronde bets.</div>';
+  }
+
+  // ── Variance Tracker ────────────────────────────────────────────────────
+  const varEl = document.getElementById('variance-analysis');
+  const s = data.stats || {};
+  if (s.expectedWins != null && (s.W + s.L) > 0) {
+    const settled = s.W + s.L;
+    const expW = s.expectedWins?.toFixed(1) ?? '?';
+    const luck = s.luckFactor?.toFixed(2) ?? '0';
+    const luckAbs = Math.abs(parseFloat(luck));
+    const luckCol = parseFloat(luck) >= 0 ? '#34d399' : '#f87171';
+    const luckLabel = parseFloat(luck) > 1.5 ? 'Significant geluk' : parseFloat(luck) < -1.5 ? 'Significant pech' : parseFloat(luck) >= 0 ? 'Binnen verwachting (licht geluk)' : 'Binnen verwachting (licht pech)';
+    const barCenter = 50;
+    const barOffset = Math.min(40, luckAbs * 15);
+    const barLeft = parseFloat(luck) >= 0 ? barCenter : barCenter - barOffset;
+    const barWidth = parseFloat(luck) >= 0 ? barOffset : barOffset;
+    varEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${s.W}</div>
+          <div style="font-size:10px;color:var(--muted)">Werkelijk W</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${expW}</div>
+          <div style="font-size:10px;color:var(--muted)">Verwacht W</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800;color:${luckCol}">${parseFloat(luck) > 0 ? '+' : ''}${luck}σ</div>
+          <div style="font-size:10px;color:var(--muted)">Luck factor</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${settled}</div>
+          <div style="font-size:10px;color:var(--muted)">Settled</div>
+        </div>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;height:28px;position:relative;overflow:hidden;margin-bottom:8px">
+        <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--muted);opacity:.3"></div>
+        <div style="position:absolute;left:${barLeft}%;width:${barWidth}%;top:4px;bottom:4px;background:${luckCol}44;border-radius:4px"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--muted)">${luckLabel}</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        ${settled < 30 ? '⏳ Na 30+ bets wordt de variance tracker betrouwbaar. Nu nog te vroeg om conclusies te trekken.' :
+          luckAbs < 1 ? '✅ Resultaten liggen binnen de verwachte range. Het model presteert consistent.' :
+          luckAbs < 2 ? '📊 Lichte afwijking — normaal bij deze sample size. Blijf monitoren.' :
+          parseFloat(luck) > 0 ? '🍀 Je draait boven verwachting. Geniet ervan, maar reken niet op deze rate.' :
+          '📉 Je draait onder verwachting. Als het model CLV-positief is, is dit waarschijnlijk pech.'}
+      </div>`;
+  } else {
+    varEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Variance tracker verschijnt na je eerste settled bets.</div>';
+  }
+
+  // ── Signal Attribution ──────────────────────────────────────────────────
+  const sigEl = document.getElementById('signal-analysis');
+  try {
+    const sigData = await api('/api/signal-analysis').then(r => r?.json());
+    if (sigData?.signals?.length) {
+      const sigNames = { home_adv:'Thuisvoordeel', form:'Vorm', injuries:'Blessures', h2h:'Head-to-head',
+        position:'Positie', home_away_split:'Thuis/uit split', api_pred:'API predictie', lineup:'Opstelling',
+        team_stats:'Team stats', btts_scoring:'BTTS scoring', btts_cleansheet:'BTTS clean sheet' };
+      sigEl.innerHTML = sigData.signals.sort((a,b) => b.hitRate - a.hitRate).map(sig => {
+        const hit = Math.round(sig.hitRate * 100);
+        const col = hit >= 60 ? '#34d399' : hit >= 50 ? '#fbbf24' : '#f87171';
+        const name = sigNames[sig.name] || sig.name;
+        return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+          <div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap">${name}</div>
+          <div style="flex:1;background:var(--surface2);border-radius:6px;height:20px;position:relative;overflow:hidden">
+            <div style="width:${hit}%;background:${col}33;height:100%;border-radius:6px"></div>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600">${hit}%</div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);white-space:nowrap">${sig.betsCount} bets</div>
+        </div>`;
+      }).join('');
+    } else {
+      sigEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Signal data verschijnt na picks met signal tracking (nieuwe scans).</div>';
+    }
+  } catch {
+    sigEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Signal analyse laden mislukt.</div>';
   }
 
   chartsDone = true;
@@ -2689,6 +2848,11 @@ function updateDashStats(stats, bets) {
   document.getElementById('dh-wl').textContent = `${stats.W}/${stats.L}`;
   document.getElementById('dh-open').textContent = stats.open;
   document.getElementById('dh-sr').textContent = stats.strikeRate + '%';
+  const clvEl = document.getElementById('dh-clv');
+  if (stats.avgCLV != null && stats.clvTotal > 0) {
+    clvEl.textContent = (stats.avgCLV > 0 ? '+' : '') + stats.avgCLV.toFixed(1) + '%';
+    clvEl.style.color = stats.avgCLV >= 0 ? 'var(--green)' : 'var(--red)';
+  } else { clvEl.textContent = '—'; }
 
   // Recente bets sidebar
   if (bets) renderRecentBets(bets);
