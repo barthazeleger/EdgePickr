@@ -2,9 +2,16 @@
 <html lang="nl" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bet Scanner">
+<meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f9fafb" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="/manifest.json">
 <title>Bet Scanner</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%235b5bf6'/><text y='72' x='50' text-anchor='middle' font-size='60' font-family='system-ui'>🎯</text></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%235b5bf6'/><text y='72' x='50' text-anchor='middle' font-size='60' font-family='system-ui'>🎯</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 /* ── THEME TOKENS ──────────────────────────────────────────────────────────── */
@@ -308,14 +315,32 @@ nav::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 680px) {
   .grid2, .charts-grid, .scan-panels { grid-template-columns: 1fr; }
-  header { padding: 0 14px; gap: 12px; }
-  .page { padding: 14px; }
-  .notif-dropdown { width: calc(100vw - 28px); right: -70px; }
-  .hero { padding: 20px; }
-  .hero-time { font-size: 30px; }
-  .hero-stats { flex-wrap: wrap; }
-  .hero-stat { min-width: 80px; padding: 10px 14px; }
+  header { padding: 0 10px; gap: 8px; }
+  .page { padding: 10px; }
+  .notif-dropdown { width: calc(100vw - 20px); right: -70px; }
+  .hero { padding: 16px; }
+  .hero-time { font-size: 26px; }
+  .hero-stats { flex-wrap: wrap; gap: 6px; }
+  .hero-stat { min-width: 70px; padding: 8px 10px; }
+  .hero-stat-val { font-size: 16px; }
   .hero-quote { display: none; }
+  .tab-btn { font-size: 12px; padding: 7px 10px; white-space: nowrap; }
+  .brand-name { font-size: 16px; }
+  .brand-sub { display: none; }
+  .stats-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .stat-box { padding: 8px 6px; }
+  .stat-val { font-size: 15px; }
+  .stat-lbl { font-size: 9px; }
+  .live-bar { flex-wrap: wrap; gap: 8px; }
+  .live-grid { grid-template-columns: 1fr; }
+  .card { padding: 14px; }
+  #userBtn span { display: none; }
+  .scan-panel { padding: 20px 16px !important; }
+}
+@media (max-width: 400px) {
+  .tab-btn { font-size: 11px; padding: 6px 8px; }
+  .hero-stat { min-width: 60px; padding: 6px 8px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
 </style>
 </head>
@@ -338,6 +363,7 @@ nav::-webkit-scrollbar { display: none; }
     <button class="tab-btn" onclick="go('live')">🎯 Mijn Bets</button>
     <button class="tab-btn" onclick="go('analyse')">🔍 Analyse</button>
     <button class="tab-btn" onclick="go('inbox')">📬 Inbox</button>
+    <button class="tab-btn" onclick="go('status')">🟢 Status</button>
     <button class="tab-btn" onclick="go('info')">📖 Info</button>
   </nav>
 
@@ -852,6 +878,25 @@ nav::-webkit-scrollbar { display: none; }
     <div id="inbox-markets" style="font-size:13px">
       <div style="color:var(--muted)">Nog geen calibratiedata</div>
     </div>
+  </div>
+</section>
+
+<!-- ══ STATUS ══════════════════════════════════════════════════════════════ -->
+<section class="page" id="page-status">
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div class="card-title">🟢 Service Status</div>
+      <div style="font-size:12px;color:var(--muted)" id="status-version">—</div>
+    </div>
+    <div id="status-services"></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="margin-bottom:14px">📊 API Budget</div>
+    <div id="status-api-budget"></div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:14px">🧠 Model Status</div>
+    <div id="status-model"></div>
   </div>
 </section>
 
@@ -1463,7 +1508,7 @@ function toggleDark() {
 }
 
 // ── NAVIGATION ───────────────────────────────────────────────────────────────
-const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','info'];
+const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','status','info'];
 function go(name) {
   localStorage.setItem('activeTab', name);
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', TAB_IDS[i] === name));
@@ -1474,6 +1519,7 @@ function go(name) {
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
   if (name === 'analyse') refreshAnalyse();
   if (name === 'inbox')   loadInbox();
+  if (name === 'status')  loadStatus();
   if (name === 'info')    loadModelLog();
 }
 
@@ -3124,6 +3170,84 @@ function renderInboxMarkets(markets) {
       <div style="font-size:12px;font-weight:700;color:${col};width:45px;text-align:right">${m.multiplier.toFixed(2)}x</div>
     </div>`;
   }).join('');
+}
+
+// ── STATUS PAGE ───────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const d = await api('/api/status').then(r => r?.json());
+    if (!d) return;
+
+    document.getElementById('status-version').textContent = `v${d.version} · uptime ${d.uptimeStr}`;
+
+    // Services
+    const svc = d.services || {};
+    const serviceNames = {
+      apiFootball: { icon: '⚽', name: 'api-football Pro', desc: 'Odds, fixtures, stats, predictions' },
+      espn: { icon: '📺', name: 'ESPN', desc: 'Live scores auto-refresh' },
+      googleSheets: { icon: '📋', name: 'Google Sheets', desc: 'Database' },
+      telegram: { icon: '📱', name: 'Telegram', desc: 'Notificaties' },
+      render: { icon: '☁️', name: 'Render', desc: 'Hosting' },
+    };
+    document.getElementById('status-services').innerHTML = Object.entries(svc).map(([k, s]) => {
+      const info = serviceNames[k] || { icon: '🔧', name: k, desc: '' };
+      const dot = s.status === 'active' ? '#34d399' : s.status === 'no key' ? '#f87171' : '#fbbf24';
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:18px">${info.icon}</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px">${info.name}</div>
+          <div style="font-size:11px;color:var(--muted)">${s.note || info.desc} · ${s.plan}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:8px;height:8px;border-radius:50%;background:${dot}"></div>
+          <span style="font-size:12px;font-weight:600;color:${dot}">${s.status}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    // API Budget
+    const af = svc.apiFootball || {};
+    const used = af.limit ? af.limit - (af.remaining || 0) : 0;
+    const pct = af.usedPct || 0;
+    const budgetCol = pct > 80 ? '#f87171' : pct > 50 ? '#fbbf24' : '#34d399';
+    document.getElementById('status-api-budget').innerHTML = `
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px">
+        <span>api-football: ${af.remaining ?? '?'} / ${af.limit || 7500} calls resterend</span>
+        <span style="font-weight:700;color:${budgetCol}">${pct}% gebruikt</span>
+      </div>
+      <div style="background:var(--surface2);border-radius:8px;height:24px;position:relative;overflow:hidden;margin-bottom:12px">
+        <div style="width:${pct}%;background:${budgetCol}44;height:100%;border-radius:8px;transition:.3s"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${used} van ${af.limit || 7500} calls vandaag</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">
+        Budget reset dagelijks om middernacht UTC. Gemiddeld verbruik: ~200-400 calls per scan.
+        ${pct > 80 ? '<br><strong style="color:#f87171">⚠️ Hoog verbruik — beperk handmatige rescans.</strong>' : ''}
+      </div>
+    `;
+
+    // Model
+    const m = d.model || {};
+    const wr = m.totalSettled > 0 ? Math.round(m.totalWins / m.totalSettled * 100) : 0;
+    document.getElementById('status-model').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${m.totalSettled}</div>
+          <div style="font-size:10px;color:var(--muted)">Settled bets</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${wr}%</div>
+          <div style="font-size:10px;color:var(--muted)">Win rate</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:800">${m.marketsTracked}</div>
+          <div style="font-size:10px;color:var(--muted)">Markten actief</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">
+        Laatste calibratie: ${m.lastCalibration ? new Date(m.lastCalibration).toLocaleString('nl-NL', { timeZone:'Europe/Amsterdam' }) : 'nog niet'}
+      </div>
+    `;
+  } catch { document.getElementById('status-services').innerHTML = '<div style="color:var(--muted)">Fout bij laden</div>'; }
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────

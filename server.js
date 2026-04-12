@@ -2566,13 +2566,36 @@ app.get('/api/scan-history', (req, res) => {
   res.json(loadScanHistory());
 });
 
-// API status — rate limits
+// API status — rate limits + service health
 app.get('/api/status', (req, res) => {
+  const uptime = process.uptime();
+  const c = loadCalib();
   res.json({
-    afKeySet:   !!AF_KEY,
-    remaining:  afRateLimit.remaining,
-    limit:      afRateLimit.limit,
-    updatedAt:  afRateLimit.updatedAt,
+    version:    APP_VERSION,
+    uptime:     Math.round(uptime),
+    uptimeStr:  uptime > 86400 ? `${Math.floor(uptime/86400)}d ${Math.floor((uptime%86400)/3600)}h`
+              : uptime > 3600 ? `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m`
+              : `${Math.floor(uptime/60)}m`,
+    services: {
+      apiFootball: {
+        status: !!AF_KEY ? 'active' : 'no key',
+        plan: 'Pro',
+        remaining: afRateLimit.remaining,
+        limit: afRateLimit.limit || 7500,
+        usedPct: afRateLimit.limit ? Math.round((1 - (afRateLimit.remaining || 0) / afRateLimit.limit) * 100) : null,
+        updatedAt: afRateLimit.updatedAt,
+      },
+      espn: { status: 'active', plan: 'Free', note: 'Onbeperkt — live scores auto-refresh' },
+      googleSheets: { status: 'active', plan: 'Free', note: 'Database voor bets + users' },
+      telegram: { status: 'active', plan: 'Free', note: 'Picks, alerts, model updates' },
+      render: { status: 'active', plan: 'Free', note: 'Hosting + keep-alive elke 14 min' },
+    },
+    model: {
+      totalSettled: c.totalSettled || 0,
+      totalWins: c.totalWins || 0,
+      lastCalibration: c.modelLastUpdated || null,
+      marketsTracked: Object.keys(c.markets || {}).filter(k => (c.markets[k]?.n || 0) > 0).length,
+    }
   });
 });
 
