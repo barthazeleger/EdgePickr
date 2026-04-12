@@ -69,6 +69,7 @@ header {
   top: 0;
   z-index: 100;
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 .brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .brand-icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
@@ -79,6 +80,27 @@ nav::-webkit-scrollbar { display: none; }
 .tab-btn { padding: 7px 14px; border-radius: 7px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
 .tab-btn:hover { background: var(--surface2); color: var(--text); }
 .tab-btn.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+/* Bottom nav voor mobiel */
+.bottom-nav { display: none; }
+@media (max-width: 680px) {
+  nav { display: none; }
+  .bottom-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface);
+    border-top: 1px solid var(--border); z-index: 200; padding: 4px 0; padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+  .bnav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0;
+    border: none; background: none; color: var(--muted); font-size: 10px; font-weight: 500; cursor: pointer; }
+  .bnav-btn.active { color: var(--accent); font-weight: 700; }
+  .bnav-btn .bnav-icon { font-size: 18px; line-height: 1; }
+  .bnav-more { position: relative; }
+  .bnav-menu { display: none; position: absolute; bottom: 100%; right: 0; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px; padding: 6px; min-width: 160px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,.15); margin-bottom: 8px; }
+  .bnav-menu.open { display: block; }
+  .bnav-menu-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px;
+    font-size: 13px; font-weight: 500; color: var(--text); cursor: pointer; border: none; background: none; width: 100%; }
+  .bnav-menu-item:hover { background: var(--surface2); }
+  .bnav-menu-item.active { color: var(--accent); font-weight: 600; }
+  main { padding-bottom: 70px; }
+}
 #darkBtn { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: border-color 0.15s; }
 #darkBtn:hover { border-color: var(--accent); }
 
@@ -376,8 +398,8 @@ nav::-webkit-scrollbar { display: none; }
   </div>
   <button id="darkBtn" onclick="toggleDark()">🌙</button>
   <button id="userBtn" onclick="openProfileModal()" title="Profiel & instellingen"
-          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px">
-    👤 <span id="user-email" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-shrink:0">
+    👤 <span id="user-email" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px"></span>
   </button>
 </header>
 
@@ -3542,7 +3564,51 @@ async function loadApiLimit() {
   } catch {}
 }
 loadApiLimit();
+
+// ── BOTTOM NAV (mobiel) ───────────────────────────────────────────────────
+function goMobile(name) {
+  go(name);
+  document.querySelectorAll('.bnav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  closeBnavMenu();
+}
+function toggleBnavMenu() {
+  document.getElementById('bnav-menu').classList.toggle('open');
+}
+function closeBnavMenu() {
+  document.getElementById('bnav-menu')?.classList.remove('open');
+}
+// Sluit menu bij klik buiten
+document.addEventListener('click', e => {
+  if (!e.target.closest('.bnav-more')) closeBnavMenu();
+});
 </script>
+
+<!-- Bottom nav voor mobiel -->
+<div class="bottom-nav">
+  <button class="bnav-btn active" data-tab="scans" onclick="goMobile('scans')">
+    <span class="bnav-icon">📡</span>Scans
+  </button>
+  <button class="bnav-btn" data-tab="live" onclick="goMobile('live')">
+    <span class="bnav-icon">🎯</span>Bets
+  </button>
+  <button class="bnav-btn" data-tab="tracker" onclick="goMobile('tracker')">
+    <span class="bnav-icon">📋</span>Tracker
+  </button>
+  <button class="bnav-btn" data-tab="data" onclick="goMobile('data')">
+    <span class="bnav-icon">📊</span>Data
+  </button>
+  <div class="bnav-more">
+    <button class="bnav-btn" onclick="toggleBnavMenu()">
+      <span class="bnav-icon">···</span>Meer
+    </button>
+    <div class="bnav-menu" id="bnav-menu">
+      <button class="bnav-menu-item" onclick="goMobile('analyse')">🔍 Analyse</button>
+      <button class="bnav-menu-item" onclick="goMobile('inbox')">📬 Inbox</button>
+      <button class="bnav-menu-item" onclick="goMobile('status')">🟢 Status</button>
+      <button class="bnav-menu-item" onclick="goMobile('info')">📖 Info</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
