@@ -979,10 +979,10 @@ async function runPrematch(emit) {
   let totalEvents = 0;
   let apiCallsUsed = 0;
 
-  // Datumbereik: vandaag + morgen (Amsterdam-tijdzone)
-  const dateFrom = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-  const tomorrowDate = new Date(Date.now() + 86400000);
-  const dateTo   = tomorrowDate.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  // Datumbereik: alleen vandaag (Amsterdam-tijdzone)
+  const today    = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const dateFrom = today;
+  const dateTo   = today;
 
   // ── STAP 3: Per competitie fixtures + odds + predictions ────────────────
   for (const league of AF_FOOTBALL_LEAGUES) {
