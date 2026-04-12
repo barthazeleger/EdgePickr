@@ -820,15 +820,16 @@ nav::-webkit-scrollbar { display: none; }
 <section class="page" id="page-inbox">
   <div class="card" style="margin-bottom:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div class="card-title">📬 Inbox — Model Activity</div>
+      <div class="card-title">📬 Inbox</div>
       <div style="font-size:12px;color:var(--muted)" id="inbox-settled">—</div>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm inbox-filter active" data-filter="all" onclick="filterInbox('all',this)">Alles</button>
-      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="market_calibration" onclick="filterInbox('market_calibration',this)">📊 Markt</button>
-      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="ep_calibration" onclick="filterInbox('ep_calibration',this)">🎯 EP</button>
-      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="signal_tuning" onclick="filterInbox('signal_tuning',this)">🔧 Signals</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="insight" onclick="filterInbox('insight',this)">💡 Inzichten</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="recommendation" onclick="filterInbox('recommendation',this)">🎯 Advies</button>
       <button class="btn btn-ghost btn-sm inbox-filter" data-filter="milestone" onclick="filterInbox('milestone',this)">🏆 Milestones</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="calibration" onclick="filterInbox('calibration',this)">🧠 Calibratie</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="system" onclick="filterInbox('system',this)">⚙️ Systeem</button>
     </div>
     <div id="inbox-feed" style="font-size:13px">
       <div style="color:var(--muted);padding:20px 0;text-align:center">Laden...</div>
@@ -3036,18 +3037,34 @@ function filterInbox(filter, btn) {
 
 function renderInboxFeed(log) {
   const feed = document.getElementById('inbox-feed');
-  const filtered = inboxFilter === 'all' ? log : log.filter(e => e.type === inboxFilter);
+  // Map oude types naar nieuwe categorieën voor filtering
+  const typeCategory = t => {
+    if (t === 'milestone') return 'milestone';
+    if (t === 'insight' || t === 'timing_insight' || t === 'clv_insight' || t === 'performance') return 'insight';
+    if (t === 'recommendation' || t === 'upgrade_advice' || t === 'strategy') return 'recommendation';
+    if (t === 'system' || t === 'sheets_slow' || t === 'api_warning') return 'system';
+    if (t === 'market_calibration' || t === 'ep_calibration' || t === 'signal_tuning') return 'calibration';
+    return 'calibration'; // fallback
+  };
+  const filtered = inboxFilter === 'all' ? log : log.filter(e => typeCategory(e.type) === inboxFilter);
 
   if (!filtered.length) {
+    const filterNames = { all:'berichten', insight:'inzichten', recommendation:'adviezen', milestone:'milestones', calibration:'calibratie updates', system:'systeemmeldingen' };
     feed.innerHTML = `<div style="color:var(--muted);padding:32px 0;text-align:center">
       <div style="font-size:28px;margin-bottom:8px">📭</div>
-      <div>Nog geen ${inboxFilter === 'all' ? 'model updates' : inboxFilter.replace('_',' ')} — het model leert na elke settled bet.</div>
+      <div>Nog geen ${filterNames[inboxFilter] || 'berichten'} — het systeem leert na elke settled bet.</div>
     </div>`;
     return;
   }
 
-  const icons = { market_calibration:'📊', ep_calibration:'🎯', signal_tuning:'🔧', milestone:'🏆' };
-  const labels = { market_calibration:'Markt calibratie', ep_calibration:'EP herweging', signal_tuning:'Signal tuning', milestone:'Milestone' };
+  const icons = { market_calibration:'📊', ep_calibration:'🎯', signal_tuning:'🔧', milestone:'🏆',
+    insight:'💡', timing_insight:'⏰', clv_insight:'📉', performance:'📈',
+    recommendation:'🎯', upgrade_advice:'💰', strategy:'🧭',
+    system:'⚙️', sheets_slow:'🐌', api_warning:'⚠️' };
+  const labels = { market_calibration:'Markt calibratie', ep_calibration:'EP herweging', signal_tuning:'Signal tuning', milestone:'Milestone',
+    insight:'Inzicht', timing_insight:'Timing inzicht', clv_insight:'CLV inzicht', performance:'Prestatie analyse',
+    recommendation:'Advies', upgrade_advice:'Upgrade advies', strategy:'Strategie',
+    system:'Systeem', sheets_slow:'Performance', api_warning:'API waarschuwing' };
 
   feed.innerHTML = filtered.map(e => {
     const icon = icons[e.type] || '🧠';
