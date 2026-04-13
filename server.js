@@ -3975,10 +3975,27 @@ function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
   }, 0)).toFixed(2);
   const luckFactor = varianceStdDev > 0 ? +(variance / varianceStdDev).toFixed(2) : 0;
 
+  // Potentiële dagwinst voor open bets van vandaag
+  const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const todayBets = bets.filter(b => {
+    if (b.uitkomst !== 'Open') return false;
+    // datum format: DD-MM-YYYY → YYYY-MM-DD
+    const d = b.datum;
+    if (!d) return false;
+    const parts = d.split('-');
+    if (parts.length !== 3) return false;
+    const iso = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    return iso === todayStr;
+  });
+  const potentialWin = +todayBets.reduce((s, b) => s + (b.odds - 1) * b.inzet, 0).toFixed(2);
+  const potentialLoss = +todayBets.reduce((s, b) => s + b.inzet, 0).toFixed(2);
+  const todayBetsCount = todayBets.length;
+
   return { total, W, L, open, wlEur: +wlEur.toFixed(2), roi: +roi.toFixed(4),
            bankroll: +bankroll.toFixed(2), startBankroll, avgOdds, avgUnits, strikeRate, winU, lossU,
            avgCLV, clvPositive, clvTotal,
-           expectedWins, actualWins, variance, varianceStdDev, luckFactor };
+           expectedWins, actualWins, variance, varianceStdDev, luckFactor,
+           potentialWin, potentialLoss, todayBetsCount };
 }
 
 async function readBets(userId = null) {
@@ -4462,8 +4479,8 @@ async function schedulePreKickoffCheck(bet) {
 
         if (Math.abs(drift) >= 0.08) {
           lines.push(`\n⚠️ ODDS GEDRIFT: ${loggedOdds} → ${currentOdds} (${driftStr})`);
-          if (drift < -0.08) lines.push(`📉 Odds gedaald · markt wordt zekerder van het ANDERE resultaat. Overweeg de bet te annuleren.`);
-          else lines.push(`📈 Odds gestegen · meer waarde dan verwacht. Bet ziet er goed uit.`);
+          if (drift > 0.08) lines.push(`📈 Odds gestegen · markt twijfelt aan jouw kant. Overweeg cashout of annuleren.`);
+          else lines.push(`📉 Odds gedaald · markt bevestigt jouw kant. Bet ziet er goed uit.`);
         } else {
           lines.push(`\n✅ Odds stabiel: ${loggedOdds} → ${currentOdds} (${driftStr}) · geen significante marktbeweging.`);
         }
@@ -5014,12 +5031,12 @@ app.get('/api/status', (req, res) => {
         usedPct: Math.round((afRateLimit.callsToday || 0) / (afRateLimit.limit || 7500) * 100),
         updatedAt: afRateLimit.updatedAt,
         perSport: {
-          football:            { callsToday: sportRateLimits.football.callsToday            || 0, limit: 7500 },
-          basketball:          { callsToday: sportRateLimits.basketball.callsToday          || 0, limit: 7500 },
-          hockey:              { callsToday: sportRateLimits.hockey.callsToday              || 0, limit: 7500 },
-          baseball:            { callsToday: sportRateLimits.baseball.callsToday            || 0, limit: 7500 },
-          'american-football': { callsToday: sportRateLimits['american-football'].callsToday || 0, limit: 7500 },
-          handball:            { callsToday: sportRateLimits.handball.callsToday            || 0, limit: 7500 },
+          football:            { calls: sportRateLimits.football?.callsToday            || 0, limit: 7500 },
+          basketball:          { calls: sportRateLimits.basketball?.callsToday          || 0, limit: 7500 },
+          hockey:              { calls: sportRateLimits.hockey?.callsToday              || 0, limit: 7500 },
+          baseball:            { calls: sportRateLimits.baseball?.callsToday            || 0, limit: 7500 },
+          'american-football': { calls: sportRateLimits['american-football']?.callsToday || 0, limit: 7500 },
+          handball:            { calls: sportRateLimits.handball?.callsToday            || 0, limit: 7500 },
         },
       },
       espn: { status: 'active', plan: 'Free', note: 'Onbeperkt · live scores auto-refresh' },
