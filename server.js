@@ -157,7 +157,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '6.3.0';
+const APP_VERSION    = '7.0.0';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -179,6 +179,8 @@ function defaultSettings() {
     scanTimes:     [10],
     scanEnabled:   true,
     twoFactorEnabled: false,
+    telegramChatId: null,
+    telegramEnabled: false,
   };
 }
 
@@ -764,7 +766,7 @@ async function loadScanHistoryFromSheets() {
   } catch { return loadScanHistory(); }
 }
 
-async function saveScanEntry(picks, type = 'prematch', totalEvents = 0) {
+async function saveScanEntry(picks, type = 'prematch', totalEvents = 0, userId = null) {
   const entry = {
     ts:          new Date().toISOString(),
     type,
@@ -776,12 +778,15 @@ async function saveScanEntry(picks, type = 'prematch', totalEvents = 0) {
       kickoff: p.kickoff, scanType: p.scanType || type, bookie: p.bookie,
       signals: p.signals || [],
     })),
+    user_id: userId || null,
   };
   _scanHistoryCache = null;
   try {
     await supabase.from('scan_history').insert(entry);
     // Trim to max entries
-    const { data: all } = await supabase.from('scan_history').select('id').order('ts', { ascending: false });
+    let trimQuery = supabase.from('scan_history').select('id').order('ts', { ascending: false });
+    if (userId) trimQuery = trimQuery.eq('user_id', userId);
+    const { data: all } = await trimQuery;
     if (all && all.length > SCAN_HISTORY_MAX) {
       const toDelete = all.slice(SCAN_HISTORY_MAX).map(r => r.id);
       await supabase.from('scan_history').delete().in('id', toDelete);
@@ -2356,8 +2361,10 @@ function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
            expectedWins, actualWins, variance, varianceStdDev, luckFactor };
 }
 
-async function readBets() {
-  const { data, error } = await supabase.from('bets').select('*').order('bet_id', { ascending: true });
+async function readBets(userId = null) {
+  let query = supabase.from('bets').select('*').order('bet_id', { ascending: true });
+  if (userId) query = query.eq('user_id', userId);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   const bets = (data || []).map(r => ({
     id: r.bet_id, datum: r.datum || '', sport: r.sport || '', wedstrijd: r.wedstrijd || '',
@@ -2370,7 +2377,7 @@ async function readBets() {
   return { bets, stats: calcStats(bets), _raw: data };
 }
 
-async function writeBet(bet) {
+async function writeBet(bet, userId = null) {
   const inzet = bet.units * UNIT_EUR;
   const wl = bet.uitkomst === 'W' ? +((bet.odds-1)*inzet).toFixed(2)
            : bet.uitkomst === 'L' ? -inzet : 0;
@@ -2379,24 +2386,31 @@ async function writeBet(bet) {
     markt: bet.markt, odds: bet.odds, units: bet.units, inzet, tip: bet.tip || 'Bet365',
     uitkomst: bet.uitkomst || 'Open', wl, tijd: bet.tijd || '', score: bet.score || null,
     signals: bet.signals || '',
+    user_id: userId || null,
   });
   if (error) throw new Error(error.message);
 }
 
-async function updateBetOutcome(id, uitkomst) {
-  const { data: row } = await supabase.from('bets').select('*').eq('bet_id', id).single();
+async function updateBetOutcome(id, uitkomst, userId = null) {
+  let query = supabase.from('bets').select('*').eq('bet_id', id);
+  if (userId) query = query.eq('user_id', userId);
+  const { data: row } = await query.single();
   if (!row) return;
   const odds = row.odds || 0;
   const units = row.units || 0;
   const inzet = row.inzet || +(units * UNIT_EUR).toFixed(2);
   const wl = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : uitkomst === 'L' ? -inzet : 0;
-  await supabase.from('bets').update({ uitkomst, wl }).eq('bet_id', id);
+  let updateQuery = supabase.from('bets').update({ uitkomst, wl }).eq('bet_id', id);
+  if (userId) updateQuery = updateQuery.eq('user_id', userId);
+  await updateQuery;
   updateCalibration({ datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
                       odds, units, uitkomst, wl });
 }
 
-async function deleteBet(id) {
-  await supabase.from('bets').delete().eq('bet_id', id);
+async function deleteBet(id, userId = null) {
+  let query = supabase.from('bets').delete().eq('bet_id', id);
+  if (userId) query = query.eq('user_id', userId);
+  await query;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2610,7 +2624,9 @@ app.post('/api/live', (req, res) => {
 // Bets ophalen
 app.get('/api/bets', async (req, res) => {
   try {
-    const { bets, _raw } = await readBets();
+    // Admin can see all data with ?all=true
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets, _raw } = await readBets(userId);
     // Gebruik user-specifieke instellingen voor stats
     const users = await loadUsers().catch(() => []);
     const user  = users.find(u => u.id === req.user?.id);
@@ -2624,7 +2640,8 @@ app.get('/api/bets', async (req, res) => {
 // Correlated bets — groepen open bets op dezelfde wedstrijd
 app.get('/api/bets/correlations', async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets } = await readBets(userId);
     const openBets = bets.filter(b => b.uitkomst === 'Open');
     const groups = {};
     openBets.forEach(b => {
@@ -2906,13 +2923,14 @@ async function scheduleCLVCheck(bet) {
 
 app.post('/api/bets', async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.id;
+    const { bets } = await readBets(userId);
     const nextId = bets.length > 0 ? Math.max(...bets.map(b => b.id)) + 1 : 1;
     const newBet = { ...req.body, id: nextId };
-    await writeBet(newBet);
+    await writeBet(newBet, userId);
     schedulePreKickoffCheck(newBet).catch(() => {}); // niet-blokkerend
     scheduleCLVCheck(newBet).catch(() => {}); // niet-blokkerend
-    const result = await readBets();
+    const result = await readBets(userId);
     // Check for correlated bets on the same match
     const newMatch = (newBet.wedstrijd || '').toLowerCase().trim();
     if (newMatch) {
@@ -2939,15 +2957,20 @@ app.post('/api/bets', async (req, res) => {
 // Uitkomst updaten
 app.put('/api/bets/:id', async (req, res) => {
   try {
+    const userId = req.user?.id;
     const { uitkomst, odds, units, tip } = req.body;
     const id = parseFloat(req.params.id);
     const updates = {};
     if (odds != null) updates.odds = parseFloat(odds);
     if (units != null) { updates.units = parseFloat(units); updates.inzet = +(parseFloat(units) * UNIT_EUR).toFixed(2); }
     if (tip) updates.tip = tip;
-    if (Object.keys(updates).length) await supabase.from('bets').update(updates).eq('bet_id', id);
-    if (uitkomst) await updateBetOutcome(id, uitkomst);
-    res.json(await readBets());
+    if (Object.keys(updates).length) {
+      let updateQuery = supabase.from('bets').update(updates).eq('bet_id', id);
+      if (userId) updateQuery = updateQuery.eq('user_id', userId);
+      await updateQuery;
+    }
+    if (uitkomst) await updateBetOutcome(id, uitkomst, userId);
+    res.json(await readBets(userId));
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
@@ -2955,7 +2978,11 @@ app.put('/api/bets/:id', async (req, res) => {
 app.post('/api/bets/recalculate', requireAdmin, async (req, res) => {
   try {
     let fixed = 0;
-    const { data: settledBets } = await supabase.from('bets').select('*').in('uitkomst', ['W', 'L']);
+    // Admin recalculate: filter by user unless ?all=true
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    let settledQuery = supabase.from('bets').select('*').in('uitkomst', ['W', 'L']);
+    if (userId) settledQuery = settledQuery.eq('user_id', userId);
+    const { data: settledBets } = await settledQuery;
     for (const bet of (settledBets || [])) {
       const inzet = bet.inzet || +(bet.units * UNIT_EUR).toFixed(2);
       const wl = bet.uitkomst === 'W' ? +((bet.odds-1)*inzet).toFixed(2) : +(-inzet).toFixed(2);
@@ -2964,7 +2991,7 @@ app.post('/api/bets/recalculate', requireAdmin, async (req, res) => {
         fixed++;
       }
     }
-    const { bets } = await readBets();
+    const { bets } = await readBets(userId);
     const users = await loadUsers().catch(() => []);
     const user  = users.find(u => u.id === req.user?.id);
     const sb = user?.settings?.startBankroll ?? START_BANKROLL;
@@ -2976,7 +3003,8 @@ app.post('/api/bets/recalculate', requireAdmin, async (req, res) => {
 // Debug: settled bets data (voor bankroll diagnose)
 app.get('/api/debug/wl', requireAdmin, async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets } = await readBets(userId);
     const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
     res.json({ settledCount: settled.length, bets: settled, stats: calcStats(bets) });
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
@@ -2984,7 +3012,11 @@ app.get('/api/debug/wl', requireAdmin, async (req, res) => {
 
 // Bet verwijderen
 app.delete('/api/bets/:id', async (req, res) => {
-  try { await deleteBet(req.params.id); res.json(await readBets()); }
+  try {
+    const userId = req.user?.id;
+    await deleteBet(req.params.id, userId);
+    res.json(await readBets(userId));
+  }
   catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
@@ -3008,7 +3040,8 @@ app.get('/api/potd', async (req, res) => {
     const pick = [...allPicks].sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0))[0];
 
     // Record ophalen
-    const { bets, stats } = await readBets();
+    const userId = req.user?.id;
+    const { bets, stats } = await readBets(userId);
     const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
     const W = settled.filter(b => b.uitkomst === 'W').length;
     const L = settled.filter(b => b.uitkomst === 'L').length;
@@ -3085,6 +3118,19 @@ app.get('/api/potd', async (req, res) => {
 
 // Scan history — laatste N scans met picks
 app.get('/api/scan-history', async (req, res) => {
+  const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+  if (userId) {
+    // Per-user scan history from Supabase
+    try {
+      const { data, error } = await supabase.from('scan_history').select('*')
+        .eq('user_id', userId).order('ts', { ascending: false }).limit(SCAN_HISTORY_MAX);
+      if (error) throw new Error(error.message);
+      const history = (data || []).map(r => ({
+        ts: r.ts, type: r.type, totalEvents: r.total_events, picks: r.picks || []
+      }));
+      return res.json(history);
+    } catch { /* fallback below */ }
+  }
   const history = await loadScanHistoryFromSheets().catch(() => loadScanHistory());
   res.json(history);
 });
@@ -3239,8 +3285,8 @@ app.get('/api/notifications', async (req, res) => {
 });
 
 // ── CHECK UITSLAGEN — standalone functie (gebruikt door route én dagelijkse cron) ──
-async function checkOpenBetResults() {
-  const { bets } = await readBets();
+async function checkOpenBetResults(userId = null) {
+  const { bets } = await readBets(userId);
   const openBets = bets.filter(b => b.uitkomst === 'Open');
   if (!openBets.length) return { checked: 0, updated: 0, results: [] };
 
@@ -3314,7 +3360,17 @@ async function checkOpenBetResults() {
       }
     }
 
-    if (uitkomst) await updateBetOutcome(bet.id, uitkomst);
+    if (uitkomst) {
+      await updateBetOutcome(bet.id, uitkomst);
+      // Push notification for bet result
+      const wlAmount = uitkomst === 'W' ? +((bet.odds-1)*bet.inzet).toFixed(2) : -bet.inzet;
+      await sendPushToAll({
+        title: uitkomst === 'W' ? '✅ Bet gewonnen!' : '❌ Bet verloren',
+        body: `${bet.wedstrijd}: ${ev.scoreH}-${ev.scoreA}\n${bet.markt} · ${uitkomst === 'W' ? '+' : ''}€${wlAmount}`,
+        tag: 'bet-result-' + bet.id,
+        url: '/',
+      }).catch(() => {});
+    }
     results.push({ id: bet.id, wedstrijd: bet.wedstrijd, markt: bet.markt,
                    score: `${ev.scoreH}-${ev.scoreA}`, uitkomst,
                    note: uitkomst ? null : 'Score gevonden — update handmatig' });
@@ -3326,8 +3382,9 @@ async function checkOpenBetResults() {
 // Check uitslagen route
 app.get('/api/check-results', async (req, res) => {
   try {
-    const result = await checkOpenBetResults();
-    const { bets, stats } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const result = await checkOpenBetResults(userId);
+    const { bets, stats } = await readBets(userId);
     res.json({ ...result, bets, stats });
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
@@ -3542,7 +3599,8 @@ app.get('/api/live-events/:id', async (req, res) => {
 // Eenmalig: kickofftijden invullen voor bets zonder tijd
 app.post('/api/backfill-times', requireAdmin, async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets } = await readBets(userId);
     const results = [];
 
     for (let i = 0; i < bets.length; i++) {
@@ -3724,7 +3782,8 @@ function scheduleOddsMonitor() {
 // ── SIGNAL ANALYSIS ENDPOINT ─────────────────────────────────────────────────
 app.get('/api/signal-analysis', async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets } = await readBets(userId);
     const settledWithSignals = bets.filter(b => (b.uitkomst === 'W' || b.uitkomst === 'L') && b.signals);
 
     const signalMap = {}; // signalName → { count, wins, totalEdge }
@@ -3761,7 +3820,8 @@ app.get('/api/signal-analysis', async (req, res) => {
 // Timing analyse — CLV per timing bucket (uren voor aftrap)
 app.get('/api/timing-analysis', async (req, res) => {
   try {
-    const { bets } = await readBets();
+    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
+    const { bets } = await readBets(userId);
     const settled = bets.filter(b => b.clvPct != null && b.clvPct !== 0 && b.tijd);
     const buckets = { 'Vroeg (>12h)': [], 'Medium (3-12h)': [], 'Laat (<3h)': [] };
 

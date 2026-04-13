@@ -339,6 +339,44 @@ nav::-webkit-scrollbar { display: none; }
 .result-score { font-size: 15px; font-weight: 700; color: var(--accent); flex-shrink: 0; min-width: 42px; text-align: center; }
 .result-note { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+/* ── PERIOD BTN ACTIVE STATE ────────────────────────────────────────────────── */
+.period-btn.active { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+
+/* ── DATE RANGE COMBINED INPUT ─────────────────────────────────────────────── */
+.date-range-combined {
+  display: inline-flex; align-items: center; gap: 0;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.date-range-combined input[type="date"] {
+  background: transparent; border: none; padding: 5px 8px; font-size: 12px; color: var(--text);
+  font-family: inherit; outline: none; width: auto; min-width: 0;
+}
+.date-range-combined .date-sep {
+  font-size: 12px; color: var(--muted); padding: 0 2px; flex-shrink: 0;
+}
+
+/* ── NOTIFICATION DETAIL MODAL ─────────────────────────────────────────────── */
+.notif-detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 10000; display: none; align-items: center; justify-content: center; }
+.notif-detail-overlay.open { display: flex; }
+.notif-detail-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: min(480px, calc(100vw - 28px)); max-height: 80vh; overflow-y: auto; box-shadow: var(--shadow-md); }
+.notif-detail-modal .ndm-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+.notif-detail-modal .ndm-body { font-size: 13px; line-height: 1.7; color: var(--muted); white-space: pre-wrap; word-break: break-word; margin-bottom: 16px; }
+.notif-detail-modal .ndm-time { font-size: 11px; color: var(--muted); opacity: .7; }
+
+/* ── SETTINGS PAGE ─────────────────────────────────────────────────────────── */
+#page-settings .settings-section { margin-bottom: 28px; }
+#page-settings .settings-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 12px; }
+#page-settings .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+#page-settings .settings-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-size: 13px; font-family: inherit; outline: none; }
+#page-settings .settings-input:focus { border-color: var(--accent); }
+#page-settings .settings-label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+#page-settings .settings-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+#page-settings .settings-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+#page-settings .settings-btn { width: 100%; padding: 10px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; border: none; font-family: inherit; transition: opacity .15s; }
+#page-settings .settings-btn:hover { opacity: .88; }
+#page-settings .settings-btn-primary { background: var(--accent); color: #fff; }
+#page-settings .settings-btn-ghost { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); }
+
 /* ── RESPONSIVE ─────────────────────────────────────────────────────────────── */
 @media (max-width: 860px) {
   .home-grid { grid-template-columns: 1fr; }
@@ -346,9 +384,24 @@ nav::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 680px) {
   .grid2, .charts-grid, .scan-panels { grid-template-columns: 1fr; }
+  /* Data page: charts single column, canvas responsive */
+  .charts-grid .chart-card { grid-column: span 1 !important; }
+  .charts-grid canvas { max-width: 100%; height: auto !important; }
+  /* Variance tracker grid: 4 cols -> 2 cols */
+  .variance-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  /* Analysis bars: compact on mobile */
+  .analysis-bar-row { gap: 6px !important; font-size: 11px !important; }
+  .analysis-bar-row > div:first-child { width: 50px !important; font-size: 11px !important; }
+  .analysis-bar-row > div:last-child { min-width: 40px !important; font-size: 11px !important; }
   header { padding: 0 10px; gap: 8px; }
   .page { padding: 10px; }
-  .notif-dropdown { width: calc(100vw - 20px); right: -70px; }
+  /* Notification dropdown: full-width overlay on mobile */
+  .notif-dropdown {
+    position: fixed !important; top: 58px !important; left: 0 !important; right: 0 !important;
+    width: 100% !important; max-height: calc(100vh - 58px - 70px) !important;
+    border-radius: 0 !important; border-left: none !important; border-right: none !important;
+    z-index: 9999 !important; overflow-y: auto !important;
+  }
   .hero { padding: 16px; }
   .hero-time { font-size: 26px; }
   .hero-stats { flex-wrap: wrap; gap: 6px; }
@@ -367,12 +420,38 @@ nav::-webkit-scrollbar { display: none; }
   .card { padding: 14px; }
   #userBtn span { display: none; }
   .scan-panel { padding: 20px 16px !important; }
+  /* Settings page responsive */
+  #page-settings .settings-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 400px) {
   .tab-btn { font-size: 11px; padding: 6px 8px; }
   .hero-stat { min-width: 60px; padding: 6px 8px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── HELP TOOLTIPS ─────────────────────────────────────────────────────────── */
+.help-tip { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--surface2);
+  color: var(--muted); font-size: 10px; text-align: center; line-height: 16px; cursor: help;
+  position: relative; margin-left: 4px; border: 1px solid var(--border); vertical-align: middle; }
+.help-tip:hover .help-text, .help-tip:focus .help-text { display: block; }
+.help-text { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+  font-size: 12px; color: var(--text); width: 220px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  z-index: 9999; font-weight: 400; line-height: 1.5; white-space: normal; }
+
+/* ── ONBOARDING TOUR ───────────────────────────────────────────────────────── */
+.tour-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 10000; display: none; }
+.tour-overlay.active { display: block; }
+.tour-spotlight { position: absolute; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0,0,0,.6); z-index: 10001; }
+.tour-tooltip { position: absolute; background: var(--surface); border-radius: 12px; padding: 20px;
+  max-width: 320px; box-shadow: 0 8px 32px rgba(0,0,0,.3); z-index: 10002; }
+.tour-tooltip h3 { font-size: 15px; margin-bottom: 8px; }
+.tour-tooltip p { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+.tour-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.tour-skip { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+.tour-next { background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.tour-step-count { font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -412,97 +491,7 @@ nav::-webkit-scrollbar { display: none; }
   </button>
 </header>
 
-<!-- ══ PROFILE MODAL ════════════════════════════════════════════════════════ -->
-<div id="profile-modal" onclick="if(event.target===this) closeProfileModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:none;align-items:center;justify-content:center">
-  <div style="background:var(--surface);border-radius:16px;padding:32px;width:90%;max-width:480px;max-height:85vh;overflow-y:auto;position:relative">
-    <button onclick="closeProfileModal()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">×</button>
-    <div style="font-size:18px;font-weight:700;margin-bottom:24px">⚙️ Instellingen</div>
-
-    <!-- Account -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">Account</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Ingelogd als <strong id="profile-email" style="color:var(--text)"></strong></div>
-
-    <!-- Bankroll & unit -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">Bankroll & inzet</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-      <div>
-        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Start bankroll (€)</label>
-        <input id="s-start-bankroll" type="number" min="10" max="100000" step="10"
-               style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px">
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Unit grootte (€)</label>
-        <input id="s-unit-eur" type="number" min="1" max="1000" step="1"
-               style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px">
-      </div>
-    </div>
-
-    <!-- Scan tijden -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">Dagelijkse scan-tijden</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Selecteer uren waarop de scan automatisch draait en picks naar Telegram stuurt</div>
-    <div id="scan-time-picker" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-      <!-- Gegenereerd door JS -->
-    </div>
-    <div style="margin-bottom:20px">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-        <input type="checkbox" id="s-scan-enabled" style="width:16px;height:16px;accent-color:var(--accent)">
-        Automatische scans ingeschakeld
-      </label>
-    </div>
-
-    <!-- 2FA -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px" data-i18n="prof_security">Beveiliging</div>
-    <div style="margin-bottom:20px">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-        <input type="checkbox" id="s-2fa-enabled" style="width:16px;height:16px;accent-color:var(--accent)">
-        <span data-i18n="prof_2fa_toggle">2FA inschakelen (email verificatie bij login)</span>
-      </label>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;margin-left:24px" data-i18n="prof_2fa_desc">Bij inloggen ontvang je een 6-cijferige code per email</div>
-    </div>
-
-    <!-- Taal -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">Taal & regio</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-      <div>
-        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Taal</label>
-        <select id="s-language" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px">
-          <option value="nl">🇳🇱 Nederlands</option>
-          <option value="en">🇬🇧 English</option>
-        </select>
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Tijdzone</label>
-        <select id="s-timezone" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px">
-          <option value="Europe/Amsterdam">Amsterdam (UTC+1/+2)</option>
-          <option value="Europe/London">London (UTC/+1)</option>
-          <option value="Europe/Berlin">Berlijn (UTC+1/+2)</option>
-          <option value="America/New_York">New York (UTC-5/-4)</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Wachtwoord wijzigen -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">Wachtwoord wijzigen</div>
-    <input id="s-cur-pw" type="password" placeholder="Huidig wachtwoord" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px;margin-bottom:8px">
-    <input id="s-new-pw" type="password" placeholder="Nieuw wachtwoord (min. 8 tekens)" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px;margin-bottom:16px">
-    <button onclick="changePassword()" style="width:100%;padding:9px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text);margin-bottom:20px">Wachtwoord wijzigen</button>
-
-    <div id="profile-msg" style="font-size:13px;text-align:center;padding:8px;border-radius:8px;display:none;margin-bottom:16px"></div>
-
-    <div style="display:flex;gap:10px">
-      <button onclick="saveSettings()" style="flex:1;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">Opslaan</button>
-      <button onclick="logout()" style="padding:10px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:13px;cursor:pointer;color:var(--muted)">Uitloggen</button>
-    </div>
-
-    <!-- Admin panel -->
-    <div class="admin-only" style="display:none;margin-top:28px;border-top:1px solid var(--border);padding-top:24px">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px">🔑 Admin — Gebruikers</div>
-      <div id="admin-users-list" style="font-size:13px">
-        <div style="color:var(--muted)">Laden...</div>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- Profile modal removed — settings now in #page-settings -->
 
 <div id="api-warning" style="display:none;background:#fef3c7;border-bottom:1px solid #f59e0b;padding:8px 20px;font-size:13px;color:#92400e;align-items:center;gap:8px;">
   <span>⚠️</span>
@@ -532,11 +521,11 @@ nav::-webkit-scrollbar { display: none; }
     <div class="hero-stats">
       <div class="hero-stat">
         <div class="hero-stat-val" id="dh-bankroll">€—</div>
-        <div class="hero-stat-lbl" data-i18n="hero_bankroll">Bankroll</div>
+        <div class="hero-stat-lbl" data-i18n="hero_bankroll">Bankroll</div><span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_bankroll">Je startbedrag plus alle winsten en verliezen</span></span>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val" id="dh-roi">—%</div>
-        <div class="hero-stat-lbl" data-i18n="hero_roi">ROI</div>
+        <div class="hero-stat-lbl" data-i18n="hero_roi">ROI</div><span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_roi">Return on Investment. Je winst als percentage van je totale inzet</span></span>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val" id="dh-wl">—/—</div>
@@ -548,11 +537,11 @@ nav::-webkit-scrollbar { display: none; }
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val" id="dh-sr">—%</div>
-        <div class="hero-stat-lbl" data-i18n="hero_sr">Strike rate</div>
+        <div class="hero-stat-lbl" data-i18n="hero_sr">Strike rate</div><span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_strike_rate">Percentage van je bets dat gewonnen is</span></span>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-val" id="dh-clv">—</div>
-        <div class="hero-stat-lbl" data-i18n="hero_clv">Gem. CLV</div>
+        <div class="hero-stat-lbl" data-i18n="hero_clv">Gem. CLV</div><span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_clv">Closing Line Value. Positief = je pakt betere odds dan de markt bij aftrap</span></span>
       </div>
     </div>
   </div>
@@ -652,12 +641,12 @@ nav::-webkit-scrollbar { display: none; }
 <section class="page" id="page-tracker">
 
   <div class="stats-grid">
-    <div class="stat-box"><div class="stat-val" id="s-bankroll">—</div><div class="stat-lbl">Bankroll</div></div>
-    <div class="stat-box"><div class="stat-val" id="s-roi">—</div><div class="stat-lbl">ROI</div></div>
+    <div class="stat-box"><div class="stat-val" id="s-bankroll">—</div><div class="stat-lbl">Bankroll <span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_bankroll">Je startbedrag plus alle winsten en verliezen</span></span></div></div>
+    <div class="stat-box"><div class="stat-val" id="s-roi">—</div><div class="stat-lbl">ROI <span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_roi">Return on Investment. Je winst als percentage van je totale inzet</span></span></div></div>
     <div class="stat-box"><div class="stat-val green" id="s-w">—</div><div class="stat-lbl">Gewonnen</div></div>
     <div class="stat-box"><div class="stat-val red" id="s-l">—</div><div class="stat-lbl">Verloren</div></div>
     <div class="stat-box"><div class="stat-val yellow" id="s-o">—</div><div class="stat-lbl">Open</div></div>
-    <div class="stat-box"><div class="stat-val" id="s-sr">—</div><div class="stat-lbl">Strike Rate</div></div>
+    <div class="stat-box"><div class="stat-val" id="s-sr">—</div><div class="stat-lbl">Strike Rate <span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_strike_rate">Percentage van je bets dat gewonnen is</span></span></div></div>
     <div class="stat-box"><div class="stat-val" id="s-wl">—</div><div class="stat-lbl">W/L (€)</div></div>
     <div class="stat-box"><div class="stat-val" id="s-odds">—</div><div class="stat-lbl">Gem. odds</div></div>
   </div>
@@ -742,18 +731,18 @@ nav::-webkit-scrollbar { display: none; }
   <!-- ── PERIODE FILTER ─────────────────────────────────────────────────── -->
   <div class="card" style="margin-bottom:14px;padding:12px 16px">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:8px">
-        <label style="font-size:12px;color:var(--muted);font-weight:600">Periode</label>
-        <input type="date" id="f-from" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--text);font-family:inherit" onchange="applyPeriodFilter()">
-        <span style="font-size:12px;color:var(--muted)">t/m</span>
-        <input type="date" id="f-to"   style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--text);font-family:inherit" onchange="applyPeriodFilter()">
-      </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm period-btn" onclick="setPeriod(1)">Vandaag</button>
-        <button class="btn btn-ghost btn-sm period-btn" onclick="setPeriod(7)">7d</button>
-        <button class="btn btn-ghost btn-sm period-btn" onclick="setPeriod(14)">14d</button>
-        <button class="btn btn-ghost btn-sm period-btn" onclick="setPeriod(30)">30d</button>
-        <button class="btn btn-ghost btn-sm period-btn" onclick="setPeriod(0)">Alles</button>
+        <button class="btn btn-ghost btn-sm period-btn" data-days="1" onclick="setPeriod(1, this)">Vandaag</button>
+        <button class="btn btn-ghost btn-sm period-btn" data-days="7" onclick="setPeriod(7, this)">7d</button>
+        <button class="btn btn-ghost btn-sm period-btn" data-days="14" onclick="setPeriod(14, this)">14d</button>
+        <button class="btn btn-ghost btn-sm period-btn" data-days="30" onclick="setPeriod(30, this)">30d</button>
+        <button class="btn btn-ghost btn-sm period-btn" data-days="0" onclick="setPeriod(0, this)">Alles</button>
+      </div>
+      <div class="date-range-combined">
+        <span style="font-size:14px;padding:0 4px 0 8px">📅</span>
+        <input type="date" id="f-from" onchange="applyPeriodFilter(); clearPeriodActive()">
+        <span class="date-sep">–</span>
+        <input type="date" id="f-to" onchange="applyPeriodFilter(); clearPeriodActive()">
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;margin-left:auto">
         <input type="checkbox" id="compare-toggle" onchange="applyPeriodFilter()">
@@ -835,7 +824,7 @@ nav::-webkit-scrollbar { display: none; }
 
     <!-- Variance Tracker -->
     <div class="chart-card" style="grid-column:span 2">
-      <div class="chart-title">🎲 Variance Tracker <span style="font-size:11px;color:var(--muted);font-weight:400">— geluk of skill?</span></div>
+      <div class="chart-title">🎲 Variance Tracker <span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_variance">Meet of je resultaten geluk of skill zijn. Binnen 1σ is normaal</span></span> <span style="font-size:11px;color:var(--muted);font-weight:400">— geluk of skill?</span></div>
       <div id="variance-analysis" style="padding:8px 0"></div>
     </div>
 
@@ -1175,6 +1164,15 @@ nav::-webkit-scrollbar { display: none; }
     <div id="model-log-body" style="font-size:13px;color:var(--muted)">Laden...</div>
   </div>
 
+  <!-- Tour restart -->
+  <div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+      <div class="card-title" style="margin-bottom:3px" data-i18n="tour_title">Rondleiding</div>
+      <div style="font-size:12px;color:var(--muted)" data-i18n="tour_desc">Bekijk een stap-voor-stap uitleg van alle functies</div>
+    </div>
+    <button class="btn btn-sm" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer" onclick="restartTour()" data-i18n="tour_start_btn">Start rondleiding</button>
+  </div>
+
   <!-- Changelog -->
   <div class="card">
     <div class="card-title" style="margin-bottom:16px">📝 Versiegeschiedenis</div>
@@ -1182,7 +1180,27 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v6.3</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v7.0</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">Multi-user, onboarding tour, help systeem, mobile redesign</div>
+          <div style="color:var(--muted);line-height:1.7">👥 User isolatie: elke gebruiker ziet alleen eigen bets en data<br>
+          🎓 Onboarding tour: interactieve rondleiding bij eerste login met spotlights<br>
+          ❓ Help tooltips: uitleg bij elke metric (hover over het ? icoon)<br>
+          📱 Mobile redesign: data tab, notifications en settings volledig responsive<br>
+          ⚙️ Settings naar eigen pagina (modal vervangen)<br>
+          🔔 Notificatie detail modal: klik voor volledige tekst<br>
+          🔗 Gecorreleerde picks: sterkste bovenaan, duplicaten gedimd met "Zie ook"<br>
+          📅 Datum picker gecombineerd + active state fix op periode knoppen<br>
+          📲 Push bij wedstrijd resultaat: Win/Loss melding op je telefoon<br>
+          💬 Telegram per-user voorbereid in user settings</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v6.3</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
@@ -1191,10 +1209,8 @@ nav::-webkit-scrollbar { display: none; }
           🔐 2FA: optionele email-verificatie bij login (6-cijferige code, 5 min geldig)<br>
           🔔 Notificatie dropdown: alle Telegram meldingen nu ook in-app zichtbaar<br>
           🌍 Volledige EN/NL vertaling: 200+ teksten, taalwissel in profiel + login<br>
-          ✍️ Teksten gehumaniseerd: geen AI-patronen meer, natuurlijk taalgebruik<br>
           🛡️ Security audit: 22 kwetsbaarheden gefixt (rate limiting, whitelist, input validatie)<br>
-          🧪 31 unit tests: Kelly, Poisson, scoring, rate limiter (npm test)<br>
-          📋 Sorteerbare tracker headers, editable odds/units/bookmaker per bet</div>
+          🧪 31 unit tests: Kelly, Poisson, scoring, rate limiter (npm test)</div>
         </div>
       </div>
 
@@ -1571,7 +1587,121 @@ nav::-webkit-scrollbar { display: none; }
   </div>
 </section>
 
+<!-- ══ SETTINGS PAGE ═══════════════════════════════════════════════════════ -->
+<section class="page" id="page-settings">
+  <div class="card" style="max-width:560px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+      <div style="font-size:18px;font-weight:700" data-i18n="settings_title">Instellingen</div>
+      <button class="btn btn-ghost btn-sm" onclick="goBack()" data-i18n="settings_back">Terug</button>
+    </div>
+
+    <!-- Account -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_account">Account</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px" data-i18n-html="prof_logged_in_as">Ingelogd als <strong id="settings-email" style="color:var(--text)"></strong></div>
+    </div>
+
+    <!-- Bankroll & unit -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_bankroll">Bankroll & inzet</div>
+      <div class="settings-grid">
+        <div>
+          <label class="settings-label" data-i18n="prof_start_bankroll">Start bankroll (&euro;)</label>
+          <input id="s-start-bankroll" type="number" min="10" max="100000" step="10" class="settings-input">
+        </div>
+        <div>
+          <label class="settings-label" data-i18n="prof_unit_size">Unit grootte (&euro;)</label>
+          <input id="s-unit-eur" type="number" min="1" max="1000" step="1" class="settings-input">
+        </div>
+      </div>
+    </div>
+
+    <!-- Scan tijden -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_scan_times">Dagelijkse scan-tijden</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px" data-i18n="prof_scan_times_desc">Selecteer uren waarop de scan automatisch draait en picks naar Telegram stuurt</div>
+      <div id="scan-time-picker" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+      <div style="margin-bottom:20px">
+        <label class="settings-check">
+          <input type="checkbox" id="s-scan-enabled">
+          <span data-i18n="prof_scan_enabled">Automatische scans ingeschakeld</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 2FA -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_security">Beveiliging</div>
+      <div style="margin-bottom:20px">
+        <label class="settings-check">
+          <input type="checkbox" id="s-2fa-enabled">
+          <span data-i18n="prof_2fa_toggle">2FA inschakelen (email verificatie bij login)</span>
+        </label>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;margin-left:24px" data-i18n="prof_2fa_desc">Bij inloggen ontvang je een 6-cijferige code per email</div>
+      </div>
+    </div>
+
+    <!-- Taal -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_lang_region">Taal & regio</div>
+      <div class="settings-grid">
+        <div>
+          <label class="settings-label" data-i18n="prof_language">Taal</label>
+          <select id="s-language" class="settings-input">
+            <option value="nl">Nederlands</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div>
+          <label class="settings-label" data-i18n="prof_timezone">Tijdzone</label>
+          <select id="s-timezone" class="settings-input">
+            <option value="Europe/Amsterdam">Amsterdam (UTC+1/+2)</option>
+            <option value="Europe/London">London (UTC/+1)</option>
+            <option value="Europe/Berlin">Berlijn (UTC+1/+2)</option>
+            <option value="America/New_York">New York (UTC-5/-4)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wachtwoord wijzigen -->
+    <div class="settings-section">
+      <div class="settings-section-title" data-i18n="prof_change_pw">Wachtwoord wijzigen</div>
+      <input id="s-cur-pw" type="password" placeholder="Huidig wachtwoord" class="settings-input" style="margin-bottom:8px" data-i18n-placeholder="prof_cur_pw">
+      <input id="s-new-pw" type="password" placeholder="Nieuw wachtwoord (min. 8 tekens)" class="settings-input" style="margin-bottom:16px" data-i18n-placeholder="prof_new_pw">
+      <button onclick="changePassword()" class="settings-btn settings-btn-ghost" style="margin-bottom:20px" data-i18n="prof_change_pw_btn">Wachtwoord wijzigen</button>
+    </div>
+
+    <div id="profile-msg" style="font-size:13px;text-align:center;padding:8px;border-radius:8px;display:none;margin-bottom:16px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button onclick="saveSettings()" class="settings-btn settings-btn-primary" style="flex:1" data-i18n="prof_save">Opslaan</button>
+      <button onclick="logout()" class="settings-btn settings-btn-ghost" style="padding:10px 16px" data-i18n="prof_logout">Uitloggen</button>
+    </div>
+
+    <!-- Admin panel -->
+    <div class="admin-only" style="display:none;margin-top:28px;border-top:1px solid var(--border);padding-top:24px">
+      <div class="settings-section-title">Admin — Gebruikers</div>
+      <div id="admin-users-list" style="font-size:13px">
+        <div style="color:var(--muted)">Laden...</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 </main>
+
+<!-- ══ NOTIFICATION DETAIL MODAL ═══════════════════════════════════════════ -->
+<div class="notif-detail-overlay" id="notif-detail-overlay" onclick="if(event.target===this) closeNotifDetail()">
+  <div class="notif-detail-modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="ndm-title" id="ndm-title"></div>
+      <button onclick="closeNotifDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);padding:2px 6px;border-radius:4px">×</button>
+    </div>
+    <div class="ndm-body" id="ndm-body"></div>
+    <div class="ndm-time" id="ndm-time"></div>
+  </div>
+</div>
 
 <!-- ══ MODAL: QUICK LOG PICK ════════════════════════════════════════════════ -->
 <div class="overlay" id="modal" onclick="closeOverlay(event)">
@@ -1709,8 +1839,100 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
+// ── TOUR AUTO-START HOOK ─────────────────────────────────────────────────────
+// Wrap initUserUI to trigger tour after first login without modifying the original
+const _origInitUserUI = initUserUI;
+initUserUI = function() {
+  _origInitUserUI();
+  if (!localStorage.getItem('ep_tour_done')) setTimeout(startTour, 2000);
+};
+
 // ── TRANSLATIONS ─────────────────────────────────────────────────────────────
 const LANG={nl:{nav_scans:'Scans',nav_tracker:'Tracker',nav_data:'Data',nav_bets:'Mijn Bets',nav_analyse:'Analyse',nav_inbox:'Inbox',nav_status:'Status',nav_info:'Info',nav_more:'Meer',bnav_bets:'Bets',brand_sub:'Picks & Bet Tracker',notif_title:'Notificaties',notif_tooltip:'Notificaties',hero_brand:'EdgePickr \u00b7 AI Betting Engine',hero_loading:'Laden...',hero_quote_tag:'Quote van de dag',hero_bankroll:'Bankroll',hero_roi:'ROI',hero_wl:'Win / Verlies',hero_open:'Open bets',hero_sr:'Strike rate',hero_clv:'Gem. CLV',scan_headline:'Vind de beste bets van dit moment',scan_desc:'Pre-match \u00b7 Live xG \u00b7 H2H \u00b7 Opstellingen \u00b7 Standen \u00b7 Predictions<br>16 competities \u00b7 singles + combi\'s \u00b7 half-Kelly \u00b7 max odds 4.0',scan_start:'Start scan',scan_api_label:'api-football.com',scan_api_loading:'laden...',scan_prev:'Vorige scans',scan_show:'\u25bc toon',scan_hide:'\u25b2 verberg',scan_no_prev:'Nog geen eerdere scans.',scan_restore:'herstel',scan_picks:'pick',scan_picks_plural:'picks',scan_matches:'wedstrijden',scan_no_picks:'Geen picks',potd_btn:'\ud83d\udcdd Genereer POTD post',potd_generating:'\u23f3 Genereren...',potd_reddit:'Reddit post',potd_x_post:'\ud835\udd4f Post',potd_copy:'\ud83d\udccb Kopieer',potd_copied:'\u2705 Gekopieerd!',potd_chars:'tekens',potd_error:'Fout',potd_network_error:'Netwerkfout',picks_none:'\ud83d\udeab Geen overtuigde picks vandaag',picks_found:'overtuigde pick',picks_found_plural:'overtuigde picks',picks_subtitle:'zet alleen deze',picks_chance:'kans',picks_analysis:'analyse',picks_hide_analysis:'\u25b2 analyse verbergen',picks_show_analysis:'\u25bc analyse tonen',picks_logged:'\u2713 Gelogd',picks_now_live:'\u25cf nu bezig',rb_title:'\ud83d\udccb Recente bets',rb_live:'live',rb_all:'Alle \u2192',rb_loading:'Laden...',rb_model_health:'Model gezondheid',rb_run_scan:'Run een scan voor model data.',rb_no_bets_live:'Geen bets nu live.',rb_no_bets:'Nog geen bets.',rb_no_calib:'Nog geen calibratie data.',rb_too_few:'Nog te weinig data per markt.',stat_bankroll:'Bankroll',stat_roi:'ROI',stat_won:'Gewonnen',stat_lost:'Verloren',stat_open:'Open',stat_sr:'Strike Rate',stat_wl:'W/L (\u20ac)',stat_avg_odds:'Gem. odds',tr_results_title:'\ud83d\udd04 Uitslagen ophalen',tr_results_desc:'Check open bets via ESPN \u2014 auto-update W/L waar mogelijk',tr_check:'\ud83d\udce1 Check uitslagen',tr_recalc:'\ud83d\udd27 Herbereken W/L',tr_recalc_busy:'\u23f3 Bezig...',tr_add_bet:'+ Bet toevoegen',tr_expand:'\u25bc Uitklappen',tr_collapse:'\u25b2 Inklappen',tr_add:'Toevoegen',tr_clear:'Wissen',form_datum:'Datum',form_sport:'Sport',form_match:'Wedstrijd',form_market:'Markt / Bet',form_odds:'Odds',form_units:'Units',form_tip:'Tip',form_outcome:'Uitkomst',form_kickoff:'Aftrap',form_fill_match:'\u26a0\ufe0f Vul wedstrijd, odds en units in.',form_bet_added:'\u2705 Bet toegevoegd!',form_bet_added_corr:'\u26a0\ufe0f Bet toegevoegd',sport_football:'Voetbal',sport_tennis:'Tennis',sport_basketball:'Basketball',sport_ice_hockey:'IJshockey',sport_baseball:'Honkbal',sport_rugby:'Rugby',sport_american_football:'American Football',sport_volleyball:'Volleybal',sport_table_tennis:'Tafeltennis',sport_snooker:'Snooker',sport_darts:'Darts',sport_mma:'MMA',sport_boxing:'Boksen',sport_other:'Anders',period_label:'Periode',period_to:'t/m',period_today:'Vandaag',period_all:'Alles',period_compare:'Vergelijk vorige periode',period_backfill:'\u23f0 Tijden invullen',period_backfill_busy:'\u23f3 Bezig...',period_current:'Huidige periode',period_previous:'Vorige periode',period_prev_suffix:'(vorige periode)',period_bets:'Bets',th_nr:'#',th_datum:'Datum',th_kickoff:'Aftrap',th_sport:'Sport',th_match:'Wedstrijd',th_bet:'Bet',th_odds:'Odds',th_units:'Units',th_stake:'Inzet',th_score:'Score',th_outcome:'Uitkomst',th_wl:'W/L',th_clv:'CLV',tbl_no_bets:'Nog geen bets geregistreerd.',tbl_delete:'Verwijderen',tbl_confirm_delete:'Bet #%d verwijderen?',chart_bankroll:'\ud83d\udcc8 Bankroll verloop',chart_outcomes:'\ud83c\udfaf Uitkomsten',chart_sports:'\u26bd Per sport',chart_score:'\ud83d\udcca Hit rate per score (5\u201310)',chart_score_sub:'\u2014 hoe vaak converteert elk cijfer?',chart_market:'\ud83c\udfb2 Hit rate per markttype',chart_market_sub:'\u2014 welke markten presteren het best?',chart_clv:'\ud83d\udcc9 Closing Line Value',chart_clv_sub:'\u2014 versla je de markt?',chart_variance:'\ud83c\udfb2 Variance Tracker',chart_variance_sub:'\u2014 geluk of skill?',chart_signal:'\ud83e\udde0 Signal Attribution',chart_signal_sub:'\u2014 welke signalen werken?',chart_timing:'\u23f0 Timing analyse',chart_timing_sub:'\u2014 CLV per timing bucket',bankroll_label:'Bankroll (\u20ac)',pie_won:'Gewonnen',pie_lost:'Verloren',pie_open:'Open',data_no_score:'Nog geen settled bets met score \u2014 log nieuwe picks via de scan.',data_no_market:'Nog geen settled bets om te analyseren.',data_clv_none:'CLV wordt gemeten bij aftrap \u2014 verschijnt na je eerste afgeronde bets.',data_clv_good:'\u2705 Je logt bets tegen betere odds dan de slotlijn \u2014 dit is het sterkste bewijs van edge.',data_clv_bad:'\u26a0\ufe0f Je odds zijn gemiddeld slechter dan de slotlijn. Probeer eerder te loggen of odds te vergelijken.',data_clv_beat:'Bets die markt verslaan',data_clv_measured:'CLV gemeten',data_avg_clv:'Gem. CLV',data_var_none:'Variance tracker verschijnt na je eerste settled bets.',data_var_actual:'Werkelijk W',data_var_expected:'Verwacht W',data_var_luck:'Luck factor',data_var_settled:'Settled',data_var_luck_pos:'Significant geluk',data_var_luck_neg:'Significant pech',data_var_luck_slight_pos:'Binnen verwachting (licht geluk)',data_var_luck_slight_neg:'Binnen verwachting (licht pech)',data_var_early:'\u23f3 Na 30+ bets wordt de variance tracker betrouwbaar. Nu nog te vroeg om conclusies te trekken.',data_var_ok:'\u2705 Resultaten liggen binnen de verwachte range. Het model presteert consistent.',data_var_slight:'\ud83d\udcca Lichte afwijking \u2014 normaal bij deze sample size. Blijf monitoren.',data_var_above:'\ud83c\udf40 Je draait boven verwachting. Geniet ervan, maar reken niet op deze rate.',data_var_below:'\ud83d\udcc9 Je draait onder verwachting. Als het model CLV-positief is, is dit waarschijnlijk pech.',data_sig_none:'Signal data verschijnt na picks met signal tracking (nieuwe scans).',data_sig_fail:'Signal analyse laden mislukt.',data_tim_none:'Timing data verschijnt zodra er settled bets met CLV en tijdstip zijn.',data_tim_fail:'Timing analyse laden mislukt.',sig_home_adv:'Thuisvoordeel',sig_form:'Vorm',sig_injuries:'Blessures',sig_h2h:'Head-to-head',sig_position:'Positie',sig_home_away_split:'Thuis/uit split',sig_api_pred:'API predictie',sig_lineup:'Opstelling',sig_team_stats:'Team stats',sig_btts_scoring:'BTTS scoring',sig_btts_cleansheet:'BTTS clean sheet',mkt_over:'Over X goals',mkt_under:'Under X goals',mkt_winner:'Wedstrijd winnaar',mkt_draw:'Gelijkspel',mkt_btts:'Beide scoren',mkt_other:'Overig',live_refresh:'Vernieuwen',live_only:'Alleen live',live_my_bets:'Alleen mijn bets',live_auto:'Auto-refresh (10s)',live_loading:'Jouw bets laden...',live_loading_short:'Laden...',live_error:'Fout bij ophalen',live_no_bets:'Geen wedstrijden gevonden voor jouw open bets.',live_no_live:'Geen live wedstrijden op dit moment.',live_click_refresh:'Klik "Vernieuwen" om scores te laden.',live_events:'\u26a1 Gebeurtenissen',live_events_close:'\u26a1 Sluiten',live_events_loading:'Laden\u2026',live_events_none:'Nog geen gebeurtenissen.',live_events_no_data:'Geen data beschikbaar.',live_your_bet:'\u2b50 JOUW BET',live_goals_scored:'goals gescoord',live_line:'lijn',analyse_title:'\ud83d\udd0d Zoek in laatste scan resultaten',analyse_placeholder:'Zoek op team, markt of competitie...',analyse_search:'Zoeken',analyse_hint:'Toont alle picks uit de laatste prematch scan inclusief volledige redenering. Start een scan om data te laden.',analyse_no_data:'Geen scandata beschikbaar. Start eerst een prematch scan.',analyse_no_data_short:'Geen scandata. Start eerst een prematch scan.',analyse_no_results:'Geen resultaten voor',inbox_title:'\ud83d\udcec Inbox',inbox_all:'Alles',inbox_insights:'\ud83d\udca1 Inzichten',inbox_advice:'\ud83c\udfaf Advies',inbox_milestones:'\ud83c\udfc6 Milestones',inbox_calibration:'\ud83e\udde0 Calibratie',inbox_system:'\u2699\ufe0f Systeem',inbox_signal_weights:'\ud83d\udd27 Huidige Signal Gewichten',inbox_signal_desc:'Gewichten worden automatisch aangepast op basis van prestaties. 1.0 = neutraal, >1.0 = versterkt, <1.0 = afgezwakt.',inbox_no_signals:'Nog geen signal data',inbox_signal_after:'Gewichten worden aangepast na 15+ bets per signal.',inbox_market_mult:'\ud83d\udcca Markt Multipliers',inbox_market_desc:'Calibratie per markttype na 8+ bets. Hoog = model vertrouwt deze markt meer.',inbox_no_markets:'Nog geen calibratiedata',inbox_market_after:'Calibratie start na 8+ bets per markttype.',inbox_no_messages:'berichten',inbox_no_insights:'inzichten',inbox_no_advice:'adviezen',inbox_no_milestones:'milestones',inbox_no_calibration:'calibratie updates',inbox_no_system:'systeemmeldingen',inbox_empty_prefix:'Nog geen',inbox_empty_suffix:'\u2014 het systeem leert na elke settled bet.',feed_market_calibration:'Markt calibratie',feed_ep_calibration:'EP herweging',feed_signal_tuning:'Signal tuning',feed_milestone:'Milestone',feed_insight:'Inzicht',feed_timing_insight:'Timing inzicht',feed_clv_insight:'CLV inzicht',feed_performance:'Prestatie analyse',feed_recommendation:'Advies',feed_upgrade_advice:'Upgrade advies',feed_strategy:'Strategie',feed_system:'Systeem',feed_sheets_slow:'Performance',feed_api_warning:'API waarschuwing',feed_model_update:'Model update',mm_home:'\ud83c\udfe0 Thuis wint',mm_away:'\u2708\ufe0f Uit wint',mm_draw:'\ud83e\udd1d Gelijkspel',mm_over:'\u26bd Over',mm_under:'\u26bd Under',mm_btts:'\u26bd BTTS',mm_dnb:'\u26bd Draw No Bet',mm_other:'\ud83d\udccb Overig',status_title:'\ud83d\udfe2 Service Status',status_api:'\ud83d\udcca API Budget',status_model:'\ud83e\udde0 Model Status',status_settled:'Settled bets',status_winrate:'Win rate',status_markets_active:'Markten actief',status_last_calib:'Laatste calibratie',status_not_yet:'nog niet',status_budget_reset:'Budget reset dagelijks om middernacht UTC. Gemiddeld verbruik: ~200-400 calls per scan.',status_budget_high:'\u26a0\ufe0f Hoog verbruik \u2014 beperk handmatige rescans.',status_calls_remaining:'calls resterend',status_used:'gebruikt',status_calls_today:'calls vandaag',status_load_error:'Fout bij laden',info_title:'\ud83c\udfaf EdgePickr \u2014 hoe het werkt',info_sub:'Data-gedreven sportsbetting',info_version:'versie',info_desc:'EdgePickr combineert api-football Pro data met een zelflerend model (11 signalen) om dagelijkse value bets te vinden. Het doel: systematisch edge vinden waar bookmakers het mis hebben, via Kelly Criterion slim inzetten, en met CLV tracking bewijzen dat het werkt.',info_model_title:'\ud83e\udde0 Het model uitgelegd',info_model_1_title:'1. No-vig kans berekening',info_model_1_desc:'Alle bookmaker odds worden genormaliseerd (marge verwijderd). Het gemiddelde over alle books = consensuskans.',info_model_2_title:'2. 11 signalen (api-football Pro)',info_sig_1:'Thuisvoordeel per competitie (2\u20136%)',info_sig_2:'Vorm laatste 5 wedstrijden',info_sig_3:'Head-to-head record + BTTS-rate',info_sig_4:'Competitiestand + positieverschil',info_sig_5:'Home/away goal splits (thuis- vs uitprestaties)',info_sig_6:'Team seizoensstatistieken (goals avg, clean sheet %)',info_sig_7:'Blessures (aantal + impact)',info_sig_8:'Opstelling/rotatie (als lineup beschikbaar)',info_sig_9:'api-football AI predictions',info_sig_10:'Scheidsrechter (data-verzameling)',info_sig_11:'Over/Under team scoring adjustments',info_model_3_title:'3. Kelly Criterion + sizing',info_model_3_desc:'Half-Kelly voor veiligheid. 6 markten: Match Winner, Over/Under, BTTS, Draw No Bet, Handicap, Gelijkspel.',info_model_4_title:'4. Self-learning',info_model_4_desc:'Markt multipliers recalibreren na 8+ bets. Signal gewichten auto-tunen dagelijks. EP-bucket herweging na 100 bets. Alles zichtbaar in de \ud83d\udcec Inbox tab.',info_model_5_title:'5. CLV + Variance tracking',info_model_5_desc:'Slotodds ophalen bij aftrap \u2192 CLV% per bet. Variance tracker meet geluk vs skill (\u03c3-afwijking). Timing analyse toont wanneer je de beste odds pakt.',info_sources_title:'\ud83d\udce1 Databronnen',info_src_primary:'PRIMAIR',info_src_free:'GRATIS',info_src_api_desc:'Odds, fixtures, standings, H2H, blessures, lineups, predictions, team stats, scheidsrechters.',info_src_api_detail:'7.500 calls/dag \u00b7 \u20ac19/mnd \u00b7 40 competities wereldwijd',info_src_espn_desc:'Live scores auto-refresh (elke 30s) op de Mijn Bets tab + uitslagen check.',info_src_espn_detail:'Volledig gratis, onbeperkt, geen key nodig',info_src_tg_desc:'Dagelijkse picks, pre-kickoff checks, CLV meldingen, odds alerts, model updates, milestones.',info_src_tg_detail:'Volledig gratis, onbeperkt',info_src_sheets_desc:'Database voor bets, users, en instellingen. Persisteert over server restarts.',info_src_sheets_detail:'Gratis met Google service account',info_src_odds_replaced:'Vervangen door api-football Pro (meer data, betere dekking)',info_staking_title:'\ud83d\udcb0 Inzetstrategie',info_stake_03:'Kelly < 4% \u00b7 \u20ac3 \u00b7 voorzichtig',info_stake_05:'Kelly 4\u20138% \u00b7 \u20ac5 \u00b7 normaal',info_stake_10:'Kelly 8\u201318% \u00b7 \u20ac10 \u00b7 sterk',info_stake_20:'Kelly > 18% \u00b7 \u20ac20 \u00b7 uitzonderlijk',info_stake_desc:'Startkapitaal \u20ac100 \u00b7 1 unit = \u20ac10 \u00b7 max 5 picks/dag \u00b7 min odds 1.60 \u00b7 min edge 5.5% \u00b7 min trefkans 28%',info_subs_title:'\ud83d\udcb3 Abonnementen',info_sub_api_desc:'7500 req/dag \u00b7 fixtures \u00b7 odds \u00b7 opstellingen \u00b7 predictions \u00b7 xG \u00b7 H2H \u00b7 statistieken',info_sub_claude_desc:'Onbeperkt AI-gebruik \u00b7 bouwt & onderhoudt scanner, dashboard en logica',info_sub_odds_desc:'Odds aggregator \u2014 opgezegd (vervangen door api-football.com)',info_sub_allsports_desc:'NBA \u00b7 NHL \u00b7 NFL \u00b7 MLB + alle voetbalcompetities \u2014 beschikbaar als ROI > 10%',info_sub_start:'Start',info_sub_renews:'Verlengt',info_sub_cancelled:'Opgezegd',info_sub_inactive:'Inactief',info_model_updates:'\ud83e\udde0 Model updates',info_model_new:'nieuw',info_model_no_updates:'Nog geen model updates \u2014 het model leert zodra bets worden afgerond.',info_model_error:'Fout bij ophalen model log.',info_changelog:'\ud83d\udcdd Versiegeschiedenis',cl_v410:'POTD generator, modal herberekening, push fix',cl_v48:'PWA, push notificaties, status pagina, mobile-first',cl_v45:'Mijn Bets tab, correlatie-check, live ESPN, self-learning',cl_v42:'CLV tracking, signal attribution, variance tracker',cl_v41:'Login systeem + account instellingen',cl_v36:'Score & markt analyse + bankroll fix',cl_v35:'Periode filter + vergelijken',cl_v34:'api-football live scores + 40 competities',cl_v33:'Render deploy + dagelijkse scan + bugs + meer competities',cl_v32:'EdgePickr \u2014 volledig herontworpen scanlogica + live dashboard',cl_v31:'Live tab \u2014 gebeurtenissen, stats & xG',cl_v30:'Scanlogica herschreven \u2014 expectedEur + score + history',cl_v29:'Pick cards uitgebreid \u2014 bookmaker, kickoff, payout',cl_v28:'Unified scanner \u2014 pre-match + live in \u00e9\u00e9n pool',cl_v27:'api-football.com migratie + live scan in dagelijkse check',cl_v26:'Pick kwaliteitsfilters + model-update tracking',cl_v25:'Dashboard redesign + Google Sheets + cloud-ready',cl_v24:'Notifications + automatische uitslag check',cl_v23:'Calibratie & zelflerende multipliers',cl_v22:'api-sports.io integratie + live scan rewrite',cl_v21:'The Odds API + pick cards + dashboard',cl_v10:'Eerste versie \u2014 Sofascore + Telegram',prof_settings:'\u2699\ufe0f Instellingen',prof_account:'Account',prof_logged_in:'Ingelogd als',prof_bankroll:'Bankroll & inzet',prof_start_bankroll:'Start bankroll (\u20ac)',prof_unit_size:'Unit grootte (\u20ac)',prof_scan_times:'Dagelijkse scan-tijden',prof_scan_desc:'Selecteer uren waarop de scan automatisch draait en picks naar Telegram stuurt',prof_scan_enabled:'Automatische scans ingeschakeld',prof_lang_region:'Taal & regio',prof_language:'Taal',prof_timezone:'Tijdzone',prof_tz_berlin:'Berlijn (UTC+1/+2)',prof_change_pw:'Wachtwoord wijzigen',prof_current_pw:'Huidig wachtwoord',prof_new_pw:'Nieuw wachtwoord (min. 8 tekens)',prof_change_pw_btn:'Wachtwoord wijzigen',prof_pw_fill:'Vul huidig en nieuw wachtwoord in',prof_pw_changed:'\u2705 Wachtwoord gewijzigd',prof_save:'Opslaan',prof_logout:'Uitloggen',prof_saved:'\u2705 Instellingen opgeslagen',prof_error:'Fout',prof_conn_error:'Verbindingsfout',prof_admin:'\ud83d\udd11 Admin \u2014 Gebruikers',prof_admin_loading:'Laden...',prof_admin_none:'Geen gebruikers',prof_admin_load_error:'Fout bij laden',prof_admin_approve:'\u2713 Goed',prof_admin_active:'\u2713 Actief',prof_admin_blocked:'Geblokkeerd',prof_admin_block:'Blokkeer',prof_admin_registered:'aangemeld',modal_title:'\u2795 Pick loggen als bet',modal_match:'Wedstrijd',modal_market:'Markt',modal_odds:'Odds',modal_odds_adjustable:'(aanpasbaar)',modal_units:'Units',modal_sport:'Sport',modal_kickoff:'Aftrap',modal_kickoff_hint:'(HH:MM \u00b7 voor pre-kickoff check)',modal_datum:'Datum',modal_stake:'Inzet',modal_payout:'Uitbetaling',modal_profit:'winst',modal_log:'Bet loggen',modal_cancel:'Annuleren',modal_fill_odds:'\u26a0\ufe0f Vul odds in.',modal_logged:'\u2705 Bet gelogd!',modal_logged_corr:'\u26a0\ufe0f Gelogd',modal_recommended:'aanbevolen',notif_ok:'\u2705 Alles in orde \u2014 geen meldingen.',notif_error:'Fout bij ophalen notificaties.',notif_model_bets:'bets in model',notif_model_updated:'model bijgewerkt',notif_updated:'bijgewerkt',notif_no_data:'nog geen data',check_loading:'Ophalen...',check_no_open:'\u2705 Geen open bets.',check_no_finished:'open bets \u2014 geen afgeronde wedstrijden gevonden (te vroeg?).',check_updated:'automatisch bijgewerkt',check_scores_found:'\ud83d\udccb Scores gevonden \u2014 zie hieronder',check_results_title:'\ud83d\udccb Gevonden resultaten',check_recalc_done:'W/L waarden herberekend',check_error:'Fout',check_network_error:'Netwerkfout',corr_title:'\u26a0 Gecorreleerde bets',corr_bets:'bets',corr_exposure:'exposure',bf_updated:'bijgewerkt',bf_not_found:'niet gevonden',bf_error:'Fout',bf_network:'Netwerkfout',conn_error:'Verbindingsfout',day_sun:'zondag',day_mon:'maandag',day_tue:'dinsdag',day_wed:'woensdag',day_thu:'donderdag',day_fri:'vrijdag',day_sat:'zaterdag',mon_jan:'jan',mon_feb:'feb',mon_mar:'mrt',mon_apr:'apr',mon_may:'mei',mon_jun:'jun',mon_jul:'jul',mon_aug:'aug',mon_sep:'sep',mon_oct:'okt',mon_nov:'nov',mon_dec:'dec',ago_just_now:'zojuist',ago_min:'min geleden',ago_hour:'uur geleden',ago_day:'dag geleden',hit_rate:'hit rate',mc_own_goal:'Eigen doelpunt',mc_xg:'xG (schatting)',mc_possession:'Balbezit %',mc_shots:'Schoten',mc_shots_on:'Op doel',mc_blocked:'Geblokt',mc_corners:'Hoekschoppen',mc_fouls:'Overtredingen',mc_yellows:'Gele kaarten',mc_reds:'Rode kaarten',mc_offsides:'Buitenspel',mc_saves:'Reddingen',quote_1:'Het huis wint altijd \u2014 tenzij je een edge hebt.',quote_2:'In God we trust. All others must bring data.',quote_3:'Value is not in the odds, it\'s in the edge.',quote_4:'Discipline beats conviction every single time.',quote_5:'Een verlies is data. Twee op rij ook. Drie op rij: kijk naar het model.',quote_6:'De bookmaker heeft een marge. Wij hebben een algoritme.',quote_7:'Geduld is geen passiviteit \u2014 het is strategisch wachten.',quote_8:'Kleine edges, consistent toegepast, winnen van geluk op de lange termijn.',quote_9:'Bet with your head, not over it.',quote_10:'Statistics are the grammar of science.',quote_11:'Het model heeft geen gevoel. Dat is het voordeel.',quote_12:'ROI over 50 bets zegt meer dan ROI over 5.',notif_just_now:'zojuist',notif_notification:'Notificatie',notif_model_alerts:'Model alerts',notif_more_info:'Meer info \u2192',notif_all_clear:'\u2705 Alles in orde \u2014 geen meldingen.',notif_error:'Fout bij ophalen notificaties.',prof_security:'Beveiliging',prof_2fa_toggle:'2FA inschakelen (email verificatie bij login)',prof_2fa_desc:'Bij inloggen ontvang je een 6-cijferige code per email'},en:{nav_scans:'Scans',nav_tracker:'Tracker',nav_data:'Data',nav_bets:'My Bets',nav_analyse:'Analysis',nav_inbox:'Inbox',nav_status:'Status',nav_info:'Info',nav_more:'More',bnav_bets:'Bets',brand_sub:'Picks & Bet Tracker',notif_title:'Notifications',notif_tooltip:'Notifications',hero_brand:'EdgePickr \u00b7 AI Betting Engine',hero_loading:'Loading...',hero_quote_tag:'Quote of the day',hero_bankroll:'Bankroll',hero_roi:'ROI',hero_wl:'Win / Loss',hero_open:'Open bets',hero_sr:'Strike rate',hero_clv:'Avg. CLV',scan_headline:'Find the best bets<br>right now',scan_desc:'Pre-match \u00b7 Live xG \u00b7 H2H \u00b7 Lineups \u00b7 Standings \u00b7 Predictions<br>16 leagues \u00b7 singles + combos \u00b7 half-Kelly \u00b7 max odds 4.0',scan_start:'Start scan',scan_api_label:'api-football.com',scan_api_loading:'loading...',scan_prev:'Previous scans',scan_show:'\u25bc show',scan_hide:'\u25b2 hide',scan_no_prev:'No previous scans yet.',scan_restore:'restore',scan_picks:'pick',scan_picks_plural:'picks',scan_matches:'matches',scan_no_picks:'No picks',potd_btn:'\ud83d\udcdd Generate POTD post',potd_generating:'\u23f3 Generating...',potd_reddit:'Reddit post',potd_x_post:'\ud835\udd4f Post',potd_copy:'\ud83d\udccb Copy',potd_copied:'\u2705 Copied!',potd_chars:'chars',potd_error:'Error',potd_network_error:'Network error',picks_none:'\ud83d\udeab No confident picks today',picks_found:'confident pick',picks_found_plural:'confident picks',picks_subtitle:'bet only these',picks_chance:'chance',picks_analysis:'analysis',picks_hide_analysis:'\u25b2 hide analysis',picks_show_analysis:'\u25bc show analysis',picks_logged:'\u2713 Logged',picks_now_live:'\u25cf live now',rb_title:'\ud83d\udccb Recent bets',rb_live:'live',rb_all:'All \u2192',rb_loading:'Loading...',rb_model_health:'Model health',rb_run_scan:'Run a scan for model data.',rb_no_bets_live:'No bets currently live.',rb_no_bets:'No bets yet.',rb_no_calib:'No calibration data yet.',rb_too_few:'Not enough data per market yet.',stat_bankroll:'Bankroll',stat_roi:'ROI',stat_won:'Won',stat_lost:'Lost',stat_open:'Open',stat_sr:'Strike Rate',stat_wl:'P/L (\u20ac)',stat_avg_odds:'Avg. odds',tr_results_title:'\ud83d\udd04 Fetch results',tr_results_desc:'Check open bets via ESPN \u2014 auto-update P/L where possible',tr_check:'\ud83d\udce1 Check results',tr_recalc:'\ud83d\udd27 Recalculate P/L',tr_recalc_busy:'\u23f3 Working...',tr_add_bet:'+ Add bet',tr_expand:'\u25bc Expand',tr_collapse:'\u25b2 Collapse',tr_add:'Add',tr_clear:'Clear',form_datum:'Date',form_sport:'Sport',form_match:'Match',form_market:'Market / Bet',form_odds:'Odds',form_units:'Units',form_tip:'Tip',form_outcome:'Outcome',form_kickoff:'Kick-off',form_fill_match:'\u26a0\ufe0f Fill in match, odds and units.',form_bet_added:'\u2705 Bet added!',form_bet_added_corr:'\u26a0\ufe0f Bet added',sport_football:'Football',sport_tennis:'Tennis',sport_basketball:'Basketball',sport_ice_hockey:'Ice Hockey',sport_baseball:'Baseball',sport_rugby:'Rugby',sport_american_football:'American Football',sport_volleyball:'Volleyball',sport_table_tennis:'Table Tennis',sport_snooker:'Snooker',sport_darts:'Darts',sport_mma:'MMA',sport_boxing:'Boxing',sport_other:'Other',period_label:'Period',period_to:'to',period_today:'Today',period_all:'All',period_compare:'Compare previous period',period_backfill:'\u23f0 Fill in times',period_backfill_busy:'\u23f3 Working...',period_current:'Current period',period_previous:'Previous period',period_prev_suffix:'(previous period)',period_bets:'Bets',th_nr:'#',th_datum:'Date',th_kickoff:'Kick-off',th_sport:'Sport',th_match:'Match',th_bet:'Bet',th_odds:'Odds',th_units:'Units',th_stake:'Stake',th_score:'Score',th_outcome:'Outcome',th_wl:'P/L',th_clv:'CLV',tbl_no_bets:'No bets registered yet.',tbl_delete:'Delete',tbl_confirm_delete:'Delete bet #%d?',chart_bankroll:'\ud83d\udcc8 Bankroll history',chart_outcomes:'\ud83c\udfaf Outcomes',chart_sports:'\u26bd By sport',chart_score:'\ud83d\udcca Hit rate per score (5\u201310)',chart_score_sub:'\u2014 how often does each score convert?',chart_market:'\ud83c\udfb2 Hit rate per market type',chart_market_sub:'\u2014 which markets perform best?',chart_clv:'\ud83d\udcc9 Closing Line Value',chart_clv_sub:'\u2014 are you beating the market?',chart_variance:'\ud83c\udfb2 Variance Tracker',chart_variance_sub:'\u2014 luck or skill?',chart_signal:'\ud83e\udde0 Signal Attribution',chart_signal_sub:'\u2014 which signals work?',chart_timing:'\u23f0 Timing analysis',chart_timing_sub:'\u2014 CLV per timing bucket',bankroll_label:'Bankroll (\u20ac)',pie_won:'Won',pie_lost:'Lost',pie_open:'Open',data_no_score:'No settled bets with score yet \u2014 log new picks via the scanner.',data_no_market:'No settled bets to analyze yet.',data_clv_none:'CLV is measured at kick-off \u2014 appears after your first settled bets.',data_clv_good:'\u2705 You are logging bets at better odds than the closing line \u2014 this is the strongest proof of edge.',data_clv_bad:'\u26a0\ufe0f Your odds are on average worse than the closing line. Try logging earlier or comparing odds.',data_clv_beat:'Bets beating the market',data_clv_measured:'CLV measured',data_avg_clv:'Avg. CLV',data_var_none:'Variance tracker appears after your first settled bets.',data_var_actual:'Actual W',data_var_expected:'Expected W',data_var_luck:'Luck factor',data_var_settled:'Settled',data_var_luck_pos:'Significant luck',data_var_luck_neg:'Significant bad luck',data_var_luck_slight_pos:'Within expectations (slight luck)',data_var_luck_slight_neg:'Within expectations (slight bad luck)',data_var_early:'\u23f3 After 30+ bets the variance tracker becomes reliable. Too early to draw conclusions.',data_var_ok:'\u2705 Results are within the expected range. The model is performing consistently.',data_var_slight:'\ud83d\udcca Slight deviation \u2014 normal at this sample size. Keep monitoring.',data_var_above:'\ud83c\udf40 You are running above expectation. Enjoy it, but don\'t count on this rate.',data_var_below:'\ud83d\udcc9 You are running below expectation. If the model is CLV-positive, this is likely just bad luck.',data_sig_none:'Signal data appears after picks with signal tracking (new scans).',data_sig_fail:'Failed to load signal analysis.',data_tim_none:'Timing data appears once there are settled bets with CLV and timestamps.',data_tim_fail:'Failed to load timing analysis.',sig_home_adv:'Home advantage',sig_form:'Form',sig_injuries:'Injuries',sig_h2h:'Head-to-head',sig_position:'Position',sig_home_away_split:'Home/away split',sig_api_pred:'API prediction',sig_lineup:'Lineup',sig_team_stats:'Team stats',sig_btts_scoring:'BTTS scoring',sig_btts_cleansheet:'BTTS clean sheet',mkt_over:'Over X goals',mkt_under:'Under X goals',mkt_winner:'Match winner',mkt_draw:'Draw',mkt_btts:'Both teams to score',mkt_other:'Other',live_refresh:'Refresh',live_only:'Live only',live_my_bets:'My bets only',live_auto:'Auto-refresh (10s)',live_loading:'Loading your bets...',live_loading_short:'Loading...',live_error:'Error fetching data',live_no_bets:'No matches found for your open bets.',live_no_live:'No live matches at this time.',live_click_refresh:'Click "Refresh" to load scores.',live_events:'\u26a1 Events',live_events_close:'\u26a1 Close',live_events_loading:'Loading\u2026',live_events_none:'No events yet.',live_events_no_data:'No data available.',live_your_bet:'\u2b50 YOUR BET',live_goals_scored:'goals scored',live_line:'line',analyse_title:'\ud83d\udd0d Search latest scan results',analyse_placeholder:'Search by team, market or league...',analyse_search:'Search',analyse_hint:'Shows all picks from the latest prematch scan including full reasoning. Start a scan to load data.',analyse_no_data:'No scan data available. Start a prematch scan first.',analyse_no_data_short:'No scan data. Start a prematch scan first.',analyse_no_results:'No results for',inbox_title:'\ud83d\udcec Inbox',inbox_all:'All',inbox_insights:'\ud83d\udca1 Insights',inbox_advice:'\ud83c\udfaf Advice',inbox_milestones:'\ud83c\udfc6 Milestones',inbox_calibration:'\ud83e\udde0 Calibration',inbox_system:'\u2699\ufe0f System',inbox_signal_weights:'\ud83d\udd27 Current Signal Weights',inbox_signal_desc:'Weights are automatically adjusted based on performance. 1.0 = neutral, >1.0 = amplified, <1.0 = dampened.',inbox_no_signals:'No signal data yet',inbox_signal_after:'Weights are adjusted after 15+ bets per signal.',inbox_market_mult:'\ud83d\udcca Market Multipliers',inbox_market_desc:'Calibration per market type after 8+ bets. High = model trusts this market more.',inbox_no_markets:'No calibration data yet',inbox_market_after:'Calibration starts after 8+ bets per market type.',inbox_no_messages:'messages',inbox_no_insights:'insights',inbox_no_advice:'advice',inbox_no_milestones:'milestones',inbox_no_calibration:'calibration updates',inbox_no_system:'system messages',inbox_empty_prefix:'No',inbox_empty_suffix:'yet \u2014 the system learns after each settled bet.',feed_market_calibration:'Market calibration',feed_ep_calibration:'EP reweighting',feed_signal_tuning:'Signal tuning',feed_milestone:'Milestone',feed_insight:'Insight',feed_timing_insight:'Timing insight',feed_clv_insight:'CLV insight',feed_performance:'Performance analysis',feed_recommendation:'Advice',feed_upgrade_advice:'Upgrade advice',feed_strategy:'Strategy',feed_system:'System',feed_sheets_slow:'Performance',feed_api_warning:'API warning',feed_model_update:'Model update',mm_home:'\ud83c\udfe0 Home wins',mm_away:'\u2708\ufe0f Away wins',mm_draw:'\ud83e\udd1d Draw',mm_over:'\u26bd Over',mm_under:'\u26bd Under',mm_btts:'\u26bd BTTS',mm_dnb:'\u26bd Draw No Bet',mm_other:'\ud83d\udccb Other',status_title:'\ud83d\udfe2 Service Status',status_api:'\ud83d\udcca API Budget',status_model:'\ud83e\udde0 Model Status',status_settled:'Settled bets',status_winrate:'Win rate',status_markets_active:'Markets active',status_last_calib:'Last calibration',status_not_yet:'not yet',status_budget_reset:'Budget resets daily at midnight UTC. Average usage: ~200-400 calls per scan.',status_budget_high:'\u26a0\ufe0f High usage \u2014 limit manual rescans.',status_calls_remaining:'calls remaining',status_used:'used',status_calls_today:'calls today',status_load_error:'Error loading',info_title:'\ud83c\udfaf EdgePickr \u2014 how it works',info_sub:'Data-driven sportsbetting',info_version:'version',info_desc:'EdgePickr combines api-football Pro data with a self-learning model (11 signals) to find daily value bets. The goal: systematically find edge where bookmakers are wrong, size bets smartly via Kelly Criterion, and prove it works with CLV tracking.',info_model_title:'\ud83e\udde0 The model explained',info_model_1_title:'1. No-vig probability calculation',info_model_1_desc:'All bookmaker odds are normalized (margin removed). The average across all books = consensus probability.',info_model_2_title:'2. 11 signals (api-football Pro)',info_sig_1:'Home advantage per league (2\u20136%)',info_sig_2:'Form last 5 matches',info_sig_3:'Head-to-head record + BTTS rate',info_sig_4:'League standings + position difference',info_sig_5:'Home/away goal splits (home vs away performance)',info_sig_6:'Team season statistics (goals avg, clean sheet %)',info_sig_7:'Injuries (count + impact)',info_sig_8:'Lineup/rotation (when lineup available)',info_sig_9:'api-football AI predictions',info_sig_10:'Referee (data collection)',info_sig_11:'Over/Under team scoring adjustments',info_model_3_title:'3. Kelly Criterion + sizing',info_model_3_desc:'Half-Kelly for safety. 6 markets: Match Winner, Over/Under, BTTS, Draw No Bet, Handicap, Draw.',info_model_4_title:'4. Self-learning',info_model_4_desc:'Market multipliers recalibrate after 8+ bets. Signal weights auto-tune daily. EP-bucket reweighting after 100 bets. All visible in the \ud83d\udcec Inbox tab.',info_model_5_title:'5. CLV + Variance tracking',info_model_5_desc:'Closing odds fetched at kick-off \u2192 CLV% per bet. Variance tracker measures luck vs skill (\u03c3-deviation). Timing analysis shows when you get the best odds.',info_sources_title:'\ud83d\udce1 Data sources',info_src_primary:'PRIMARY',info_src_free:'FREE',info_src_api_desc:'Odds, fixtures, standings, H2H, injuries, lineups, predictions, team stats, referees.',info_src_api_detail:'7,500 calls/day \u00b7 \u20ac19/mo \u00b7 40 leagues worldwide',info_src_espn_desc:'Live scores auto-refresh (every 30s) on the My Bets tab + results check.',info_src_espn_detail:'Completely free, unlimited, no key needed',info_src_tg_desc:'Daily picks, pre-kickoff checks, CLV alerts, odds alerts, model updates, milestones.',info_src_tg_detail:'Completely free, unlimited',info_src_sheets_desc:'Database for bets, users, and settings. Persists across server restarts.',info_src_sheets_detail:'Free with Google service account',info_src_odds_replaced:'Replaced by api-football Pro (more data, better coverage)',info_staking_title:'\ud83d\udcb0 Staking strategy',info_stake_03:'Kelly < 4% \u00b7 \u20ac3 \u00b7 cautious',info_stake_05:'Kelly 4\u20138% \u00b7 \u20ac5 \u00b7 normal',info_stake_10:'Kelly 8\u201318% \u00b7 \u20ac10 \u00b7 strong',info_stake_20:'Kelly > 18% \u00b7 \u20ac20 \u00b7 exceptional',info_stake_desc:'Starting capital \u20ac100 \u00b7 1 unit = \u20ac10 \u00b7 max 5 picks/day \u00b7 min odds 1.60 \u00b7 min edge 5.5% \u00b7 min hit rate 28%',info_subs_title:'\ud83d\udcb3 Subscriptions',info_sub_api_desc:'7500 req/day \u00b7 fixtures \u00b7 odds \u00b7 lineups \u00b7 predictions \u00b7 xG \u00b7 H2H \u00b7 statistics',info_sub_claude_desc:'Unlimited AI usage \u00b7 builds & maintains scanner, dashboard and logic',info_sub_odds_desc:'Odds aggregator \u2014 cancelled (replaced by api-football.com)',info_sub_allsports_desc:'NBA \u00b7 NHL \u00b7 NFL \u00b7 MLB + all football leagues \u2014 available when ROI > 10%',info_sub_start:'Start',info_sub_renews:'Renews',info_sub_cancelled:'Cancelled',info_sub_inactive:'Inactive',info_model_updates:'\ud83e\udde0 Model updates',info_model_new:'new',info_model_no_updates:'No model updates yet \u2014 the model learns once bets are settled.',info_model_error:'Failed to load model log.',info_changelog:'\ud83d\udcdd Version history',cl_v410:'POTD generator, modal recalculation, push fix',cl_v48:'PWA, push notifications, status page, mobile-first',cl_v45:'My Bets tab, correlation check, live ESPN, self-learning',cl_v42:'CLV tracking, signal attribution, variance tracker',cl_v41:'Login system + account settings',cl_v36:'Score & market analysis + bankroll fix',cl_v35:'Period filter + comparison',cl_v34:'api-football live scores + 40 leagues',cl_v33:'Render deploy + daily scan + bugs + more leagues',cl_v32:'EdgePickr \u2014 fully redesigned scan logic + live dashboard',cl_v31:'Live tab \u2014 events, stats & xG',cl_v30:'Scan logic rewritten \u2014 expectedEur + score + history',cl_v29:'Pick cards expanded \u2014 bookmaker, kickoff, payout',cl_v28:'Unified scanner \u2014 pre-match + live in one pool',cl_v27:'api-football.com migration + live scan in daily check',cl_v26:'Pick quality filters + model-update tracking',cl_v25:'Dashboard redesign + Google Sheets + cloud-ready',cl_v24:'Notifications + automatic results check',cl_v23:'Calibration & self-learning multipliers',cl_v22:'api-sports.io integration + live scan rewrite',cl_v21:'The Odds API + pick cards + dashboard',cl_v10:'First version \u2014 Sofascore + Telegram',prof_settings:'\u2699\ufe0f Settings',prof_account:'Account',prof_logged_in:'Logged in as',prof_bankroll:'Bankroll & staking',prof_start_bankroll:'Start bankroll (\u20ac)',prof_unit_size:'Unit size (\u20ac)',prof_scan_times:'Daily scan times',prof_scan_desc:'Select hours when the scan runs automatically and sends picks to Telegram',prof_scan_enabled:'Automatic scans enabled',prof_lang_region:'Language & region',prof_language:'Language',prof_timezone:'Timezone',prof_tz_berlin:'Berlin (UTC+1/+2)',prof_change_pw:'Change password',prof_current_pw:'Current password',prof_new_pw:'New password (min. 8 chars)',prof_change_pw_btn:'Change password',prof_pw_fill:'Fill in current and new password',prof_pw_changed:'\u2705 Password changed',prof_save:'Save',prof_logout:'Log out',prof_saved:'\u2705 Settings saved',prof_error:'Error',prof_conn_error:'Connection error',prof_admin:'\ud83d\udd11 Admin \u2014 Users',prof_admin_loading:'Loading...',prof_admin_none:'No users',prof_admin_load_error:'Error loading',prof_admin_approve:'\u2713 Approve',prof_admin_active:'\u2713 Active',prof_admin_blocked:'Blocked',prof_admin_block:'Block',prof_admin_registered:'registered',modal_title:'\u2795 Log pick as bet',modal_match:'Match',modal_market:'Market',modal_odds:'Odds',modal_odds_adjustable:'(adjustable)',modal_units:'Units',modal_sport:'Sport',modal_kickoff:'Kick-off',modal_kickoff_hint:'(HH:MM \u00b7 for pre-kickoff check)',modal_datum:'Date',modal_stake:'Stake',modal_payout:'Payout',modal_profit:'profit',modal_log:'Log bet',modal_cancel:'Cancel',modal_fill_odds:'\u26a0\ufe0f Fill in odds.',modal_logged:'\u2705 Bet logged!',modal_logged_corr:'\u26a0\ufe0f Logged',modal_recommended:'recommended',notif_ok:'\u2705 All good \u2014 no notifications.',notif_error:'Error loading notifications.',notif_model_bets:'bets in model',notif_model_updated:'model updated',notif_updated:'updated',notif_no_data:'no data yet',check_loading:'Fetching...',check_no_open:'\u2705 No open bets.',check_no_finished:'open bets \u2014 no finished matches found (too early?).',check_updated:'automatically updated',check_scores_found:'\ud83d\udccb Scores found \u2014 see below',check_results_title:'\ud83d\udccb Found results',check_recalc_done:'P/L values recalculated',check_error:'Error',check_network_error:'Network error',corr_title:'\u26a0 Correlated bets',corr_bets:'bets',corr_exposure:'exposure',bf_updated:'updated',bf_not_found:'not found',bf_error:'Error',bf_network:'Network error',conn_error:'Connection error',day_sun:'Sunday',day_mon:'Monday',day_tue:'Tuesday',day_wed:'Wednesday',day_thu:'Thursday',day_fri:'Friday',day_sat:'Saturday',mon_jan:'Jan',mon_feb:'Feb',mon_mar:'Mar',mon_apr:'Apr',mon_may:'May',mon_jun:'Jun',mon_jul:'Jul',mon_aug:'Aug',mon_sep:'Sep',mon_oct:'Oct',mon_nov:'Nov',mon_dec:'Dec',ago_just_now:'just now',ago_min:'min ago',ago_hour:'hours ago',ago_day:'days ago',hit_rate:'hit rate',mc_own_goal:'Own goal',mc_xg:'xG (estimate)',mc_possession:'Possession %',mc_shots:'Shots',mc_shots_on:'On target',mc_blocked:'Blocked',mc_corners:'Corners',mc_fouls:'Fouls',mc_yellows:'Yellow cards',mc_reds:'Red cards',mc_offsides:'Offsides',mc_saves:'Saves',quote_1:'The house always wins \u2014 unless you have an edge.',quote_2:'In God we trust. All others must bring data.',quote_3:'Value is not in the odds, it\'s in the edge.',quote_4:'Discipline beats conviction every single time.',quote_5:'A loss is data. Two in a row, too. Three in a row: check the model.',quote_6:'The bookmaker has a margin. We have an algorithm.',quote_7:'Patience is not passivity \u2014 it is strategic waiting.',quote_8:'Small edges, consistently applied, beat luck in the long run.',quote_9:'Bet with your head, not over it.',quote_10:'Statistics are the grammar of science.',quote_11:'The model has no feelings. That is the advantage.',quote_12:'ROI over 50 bets says more than ROI over 5.',notif_just_now:'just now',notif_notification:'Notification',notif_model_alerts:'Model alerts',notif_more_info:'More info \u2192',notif_all_clear:'\u2705 All good \u2014 no notifications.',notif_error:'Error loading notifications.',prof_security:'Security',prof_2fa_toggle:'Enable 2FA (email verification on login)',prof_2fa_desc:'You will receive a 6-digit code via email when logging in'}};
+
+// ── Extra translations ──
+Object.assign(LANG.nl, {
+  picks_none: 'Geen overtuigde picks vandaag',
+  picks_count: 'overtuigde pick',
+  picks_only_these: 'zet alleen deze',
+  picks_see_also: 'Zie ook:',
+  notif_detail_title: 'Notificatie',
+  settings_title: 'Instellingen',
+  settings_back: 'Terug',
+  nav_settings: 'Instellingen',
+  prof_account: 'Account',
+  prof_logged_in_as: 'Ingelogd als',
+  prof_bankroll: 'Bankroll & inzet',
+  prof_start_bankroll: 'Start bankroll (€)',
+  prof_unit_size: 'Unit grootte (€)',
+  prof_scan_times: 'Dagelijkse scan-tijden',
+  prof_scan_times_desc: 'Selecteer uren waarop de scan automatisch draait en picks naar Telegram stuurt',
+  prof_scan_enabled: 'Automatische scans ingeschakeld',
+  prof_lang_region: 'Taal & regio',
+  prof_language: 'Taal',
+  prof_timezone: 'Tijdzone',
+  prof_change_pw: 'Wachtwoord wijzigen',
+  prof_cur_pw: 'Huidig wachtwoord',
+  prof_new_pw: 'Nieuw wachtwoord (min. 8 tekens)',
+  prof_change_pw_btn: 'Wachtwoord wijzigen',
+  prof_save: 'Opslaan',
+  prof_logout: 'Uitloggen',
+  help_bankroll: 'Je startbedrag plus alle winsten en verliezen',
+  help_roi: 'Return on Investment. Je winst als percentage van je totale inzet',
+  help_strike_rate: 'Percentage van je bets dat gewonnen is',
+  help_clv: 'Closing Line Value. Positief = je pakt betere odds dan de markt bij aftrap',
+  help_score: 'Confidence score op basis van Kelly criterion. 10 = hoogste vertrouwen',
+  help_edge: 'Het verschil tussen de geschatte werkelijke kans en de bookmaker-kans',
+  help_kelly: 'Wiskundige formule die de optimale inzet berekent op basis van je edge',
+  help_variance: 'Meet of je resultaten geluk of skill zijn. Binnen 1\u03c3 is normaal',
+  tour_title: 'Rondleiding',
+  tour_desc: 'Bekijk een stap-voor-stap uitleg van alle functies',
+  tour_start_btn: 'Start rondleiding',
+  tour_next: 'Volgende',
+  tour_done: 'Klaar!',
+  tour_skip: 'Skip',
+});
+Object.assign(LANG.en, {
+  picks_none: 'No confident picks today',
+  picks_count: 'confident pick',
+  picks_only_these: 'bet only these',
+  picks_see_also: 'See also:',
+  notif_detail_title: 'Notification',
+  settings_title: 'Settings',
+  settings_back: 'Back',
+  nav_settings: 'Settings',
+  prof_account: 'Account',
+  prof_logged_in_as: 'Logged in as',
+  prof_bankroll: 'Bankroll & stake',
+  prof_start_bankroll: 'Start bankroll (€)',
+  prof_unit_size: 'Unit size (€)',
+  prof_scan_times: 'Daily scan times',
+  prof_scan_times_desc: 'Select hours when the scan runs automatically and sends picks to Telegram',
+  prof_scan_enabled: 'Automatic scans enabled',
+  prof_lang_region: 'Language & region',
+  prof_language: 'Language',
+  prof_timezone: 'Timezone',
+  prof_change_pw: 'Change password',
+  prof_cur_pw: 'Current password',
+  prof_new_pw: 'New password (min. 8 chars)',
+  prof_change_pw_btn: 'Change password',
+  prof_save: 'Save',
+  prof_logout: 'Log out',
+  help_bankroll: 'Your starting balance plus all wins and losses',
+  help_roi: 'Return on Investment. Your profit as a percentage of total stakes',
+  help_strike_rate: 'Percentage of your bets that won',
+  help_clv: 'Closing Line Value. Positive = you got better odds than the market at kickoff',
+  help_score: 'Confidence score based on Kelly criterion. 10 = highest confidence',
+  help_edge: 'The difference between the estimated true probability and the bookmaker odds',
+  help_kelly: 'Mathematical formula that calculates optimal stake based on your edge',
+  help_variance: 'Measures whether your results are luck or skill. Within 1\u03c3 is normal',
+  tour_title: 'Guided Tour',
+  tour_desc: 'View a step-by-step explanation of all features',
+  tour_start_btn: 'Start tour',
+  tour_next: 'Next',
+  tour_done: 'Done!',
+  tour_skip: 'Skip',
+});
 
 function t(key) {
   const lang = userSettings?.language || 'nl';
@@ -1759,10 +1981,11 @@ function toggleDark() {
 // ── NAVIGATION ───────────────────────────────────────────────────────────────
 const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','status','info'];
 function go(name) {
-  localStorage.setItem('activeTab', name);
+  if (name !== 'settings') localStorage.setItem('activeTab', name);
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', TAB_IDS[i] === name));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
+  const pageEl = document.getElementById('page-' + name);
+  if (pageEl) pageEl.classList.add('active');
   if (name === 'tracker') { loadBets().then(() => { setPeriodToday(); }); loadCorrelations(); }
   if (name === 'data')    loadBets().then(d => redrawCharts(d));
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
@@ -1830,11 +2053,33 @@ function addLog(el, text, cls) {
 }
 
 function renderPicks(el, picks) {
-  const hdrText = picks.length === 0
-    ? '🚫 Geen overtuigde picks vandaag'
-    : `✅ ${picks.length} overtuigde pick${picks.length !== 1 ? 's' : ''} — zet alleen deze`;
+  // ── Deduplication: group by match, show strongest as primary ──
+  const matchGroups = {};
+  picks.forEach(p => {
+    const key = (p.match || '').toLowerCase().trim();
+    if (!matchGroups[key]) matchGroups[key] = [];
+    matchGroups[key].push(p);
+  });
+  // Sort each group by expectedEur descending, keep primary + secondary
+  const dedupedPicks = [];
+  const secondaryMap = new Map(); // primary index -> array of secondary picks
+  Object.values(matchGroups).forEach(group => {
+    group.sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0));
+    const primary = group[0];
+    dedupedPicks.push(primary);
+    if (group.length > 1) {
+      secondaryMap.set(primary, group.slice(1));
+    }
+  });
+  // Re-sort deduped picks by expectedEur descending
+  dedupedPicks.sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0));
+
+  const totalCount = picks.length;
+  const hdrText = totalCount === 0
+    ? `🚫 ${t('picks_none')}`
+    : `✅ ${totalCount} ${t('picks_count')}${totalCount !== 1 ? 's' : ''} — ${t('picks_only_these')}`;
   el.innerHTML = `<div class="picks-hdr">${hdrText}</div>`;
-  picks.forEach((p, i) => {
+  dedupedPicks.forEach((p, i) => {
     const prob  = p.prob || 0;
     const pc    = prob >= 65 ? '#34d399' : prob >= 50 ? '#fbbf24' : '#f87171';
 
@@ -1844,12 +2089,13 @@ function renderPicks(el, picks) {
     const score = Math.min(10, Math.max(5, Math.round((hk2 - 0.015) / 0.135 * 5) + 5));
     const scoreCol = score >= 8 ? '#34d399' : score >= 5 ? '#fbbf24' : '#f87171';
     const scoreBadge = score != null
-      ? `<span class="edge-badge" style="background:${score>=8?'rgba(52,211,153,0.15)':score>=5?'rgba(251,191,36,0.15)':'rgba(248,113,113,0.15)'};color:${scoreCol};font-size:12px;font-weight:800;padding:2px 8px">${score}/10</span>`
+      ? `<span class="edge-badge" style="background:${score>=8?'rgba(52,211,153,0.15)':score>=5?'rgba(251,191,36,0.15)':'rgba(248,113,113,0.15)'};color:${scoreCol};font-size:12px;font-weight:800;padding:2px 8px">${score}/10</span><span class="help-tip" tabindex="0" style="border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">?<span class="help-text">${t('help_score')}</span></span>`
       : '';
 
     const edgeVal  = p.edge != null ? p.edge : null;
+    const edgeHelpTip = `<span class="help-tip" tabindex="0" style="border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">?<span class="help-text">${t('help_edge')}</span></span>`;
     const reasonHtml = p.reason
-      ? `<div class="pick-reason" id="reason-${i}" style="display:none;font-size:11px;color:rgba(255,255,255,0.5);margin-top:8px;line-height:1.6;border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">${edgeVal!=null?`<span style="color:#fbbf24;font-weight:600">Edge +${edgeVal}%</span> · `:''} ${p.reason}</div>
+      ? `<div class="pick-reason" id="reason-${i}" style="display:none;font-size:11px;color:rgba(255,255,255,0.5);margin-top:8px;line-height:1.6;border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">${edgeVal!=null?`<span style="color:#fbbf24;font-weight:600">Edge +${edgeVal}%</span>${edgeHelpTip} · `:''} ${p.reason}</div>
          <button class="reason-toggle" onclick="toggleReason(${i})" style="background:none;border:none;cursor:pointer;font-size:11px;color:rgba(255,255,255,0.45);padding:4px 0 0 0">▼ analyse</button>`
       : '';
 
@@ -1885,8 +2131,24 @@ function renderPicks(el, picks) {
         })()}</div>
       </div>`;
     el.appendChild(div);
+
+    // ── Secondary picks (correlated, same match) ──
+    const secondaries = secondaryMap.get(p);
+    if (secondaries && secondaries.length > 0) {
+      secondaries.forEach(sp => {
+        const secDiv = document.createElement('div');
+        secDiv.className = 'pick-card';
+        secDiv.style.cssText = 'opacity:0.55;border-left:2px dashed rgba(255,255,255,0.15);padding:8px 14px;margin-bottom:4px;font-size:12px';
+        secDiv.innerHTML = `
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:rgba(255,255,255,0.4);font-weight:600">${t('picks_see_also')} ${sp.label}</div>
+            <div style="font-size:10.5px;color:rgba(255,255,255,0.35);margin-top:2px">${sp.odd||sp.odds||'?'} · ${sp.units} · ${sp.prob||0}%</div>
+          </div>`;
+        el.appendChild(secDiv);
+      });
+    }
   });
-  el._picks = picks;
+  el._picks = dedupedPicks;
 }
 
 function toggleReason(i) {
@@ -1984,18 +2246,22 @@ function formatPeriodStats(s, prefix = '') {
     </div>`;
 }
 
+function clearPeriodActive() {
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+}
+
 function setPeriodToday() {
   // Vandaag = zelfde datum voor from en to, gesorteerd op aftrap
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   document.getElementById('f-from').value = todayStr;
   document.getElementById('f-to').value   = todayStr;
-  document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.textContent.trim() === 'Vandaag'));
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.days === '1'));
   currentSort = { field: 'tijd', dir: 'asc' }; // sorteer op aftrap
   applyPeriodFilter();
 }
 
-function setPeriod(days) {
+function setPeriod(days, btn) {
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   if (days === 1) { // Vandaag
@@ -2009,7 +2275,7 @@ function setPeriod(days) {
   }
   // highlight active button
   document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (btn) btn.classList.add('active');
   applyPeriodFilter();
 }
 
@@ -2367,7 +2633,7 @@ async function redrawCharts(data) {
       const col = hit >= 60 ? '#34d399' : hit >= 50 ? '#fbbf24' : '#f87171';
       const wlStr = wl >= 0 ? '+€' + wl : '-€' + Math.abs(wl);
       const wlCol = wl >= 0 ? '#34d399' : '#f87171';
-      return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      return `<div class="analysis-bar-row" style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
         <div style="width:32px;text-align:right;font-weight:700;font-size:13px">${s}/10</div>
         <div style="flex:1;background:var(--surface2);border-radius:6px;height:22px;position:relative;overflow:hidden">
           <div style="width:${barW}%;background:${col}33;height:100%;border-radius:6px;transition:.3s"></div>
@@ -2411,7 +2677,7 @@ async function redrawCharts(data) {
       const col = hit >= 60 ? '#34d399' : hit >= 50 ? '#fbbf24' : '#f87171';
       const wlStr = wl >= 0 ? '+€' + wl : '-€' + Math.abs(wl);
       const wlCol = wl >= 0 ? '#34d399' : '#f87171';
-      return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      return `<div class="analysis-bar-row" style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
         <div style="width:140px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${cat}</div>
         <div style="flex:1;background:var(--surface2);border-radius:6px;height:22px;position:relative;overflow:hidden">
           <div style="width:${hit}%;background:${col}33;height:100%;border-radius:6px;transition:.3s"></div>
@@ -2456,7 +2722,7 @@ async function redrawCharts(data) {
       ${clvBets.length >= 3 ? `<div style="margin-top:12px">${clvBets.slice(-20).map(b => {
         const c = b.clvPct >= 0 ? '#34d399' : '#f87171';
         const w = Math.min(100, Math.abs(b.clvPct) * 8);
-        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+        return `<div class="analysis-bar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
           <div style="width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${b.wedstrijd}">${b.wedstrijd}</div>
           <div style="flex:1;background:var(--surface2);border-radius:4px;height:16px;position:relative;overflow:hidden">
             <div style="width:${w}%;background:${c}44;height:100%;border-radius:4px"></div>
@@ -2483,7 +2749,7 @@ async function redrawCharts(data) {
     const barLeft = parseFloat(luck) >= 0 ? barCenter : barCenter - barOffset;
     const barWidth = parseFloat(luck) >= 0 ? barOffset : barOffset;
     varEl.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      <div class="variance-stats-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
         <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
           <div style="font-size:18px;font-weight:800">${s.W}</div>
           <div style="font-size:10px;color:var(--muted)">Werkelijk W</div>
@@ -2529,7 +2795,7 @@ async function redrawCharts(data) {
         const hit = Math.round(sig.hitRate * 100);
         const col = hit >= 60 ? '#34d399' : hit >= 50 ? '#fbbf24' : '#f87171';
         const name = sigNames[sig.name] || sig.name;
-        return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        return `<div class="analysis-bar-row" style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
           <div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap">${name}</div>
           <div style="flex:1;background:var(--surface2);border-radius:6px;height:20px;position:relative;overflow:hidden">
             <div style="width:${hit}%;background:${col}33;height:100%;border-radius:6px"></div>
@@ -2556,7 +2822,7 @@ async function redrawCharts(data) {
           const clvCol = b.avgCLV > 0 ? '#34d399' : b.avgCLV < 0 ? '#f87171' : '#fbbf24';
           const hitPct = Math.round(b.hitRate * 100);
           const barW = Math.min(100, Math.abs(b.avgCLV) * 10 + 20);
-          return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          return `<div class="analysis-bar-row" style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
             <div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap">${b.name}</div>
             <div style="flex:1;background:var(--surface2);border-radius:6px;height:24px;position:relative;overflow:hidden">
               <div style="width:${barW}%;background:${clvCol}33;height:100%;border-radius:6px"></div>
@@ -3252,7 +3518,10 @@ async function loadNotifications() {
         const typeClass = n.type === 'error' ? 'error' : n.type === 'warn' ? 'warn' : n.type === 'success' ? 'success' : 'info';
         const icon = n.type === 'error' ? '🔴' : n.type === 'warn' ? '🟡' : n.type === 'success' ? '🟢' : '🔵';
         const bodyPreview = (n.body || '').length > 80 ? n.body.substring(0, 80) + '...' : (n.body || '');
-        return `<div class="notif-item ${typeClass}" style="${!n.read ? 'border-left:3px solid var(--accent)' : ''}">
+        const safeTitle = (n.title || t('notif_notification')).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const safeBody = (n.body || '').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n');
+        const timeStr = n.created_at ? new Date(n.created_at).toLocaleString('nl-NL') : '';
+        return `<div class="notif-item ${typeClass}" style="${!n.read ? 'border-left:3px solid var(--accent)' : ''};cursor:pointer" onclick="openNotifDetail('${safeTitle}','${safeBody}','${timeStr}')">
           <span style="font-size:16px;line-height:1.3;flex-shrink:0">${icon}</span>
           <div style="flex:1;min-width:0">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -3421,11 +3690,14 @@ async function loadUserSettings() {
   } catch {}
 }
 
+let _prevTab = 'scans';
 function openProfileModal() {
-  const modal = document.getElementById('profile-modal');
-  modal.style.display = 'flex';
+  // Remember current tab to go back to
+  _prevTab = localStorage.getItem('activeTab') || 'scans';
+  go('settings');
   // Vul email in
-  document.getElementById('profile-email').textContent = currentUser?.email || '';
+  const emailEl = document.getElementById('settings-email');
+  if (emailEl) emailEl.textContent = currentUser?.email || '';
   // Vul instellingen in
   const s = userSettings || {};
   document.getElementById('s-start-bankroll').value = s.startBankroll ?? 100;
@@ -3442,7 +3714,23 @@ function openProfileModal() {
 }
 
 function closeProfileModal() {
-  document.getElementById('profile-modal').style.display = 'none';
+  goBack();
+}
+
+function goBack() {
+  go(_prevTab || 'scans');
+}
+
+// ── NOTIFICATION DETAIL MODAL ─────────────────────────────────────────────
+function openNotifDetail(title, body, time) {
+  document.getElementById('ndm-title').textContent = title || t('notif_notification');
+  document.getElementById('ndm-body').textContent = body || '';
+  document.getElementById('ndm-time').textContent = time || '';
+  document.getElementById('notif-detail-overlay').classList.add('open');
+}
+
+function closeNotifDetail() {
+  document.getElementById('notif-detail-overlay').classList.remove('open');
 }
 
 function buildScanTimePicker(selected) {
@@ -3497,7 +3785,7 @@ async function saveSettings() {
     userSettings = d.settings;
     applyLanguage();
     profileMsg(t('prof_saved'), true);
-    setTimeout(closeProfileModal, 1200);
+    setTimeout(goBack, 1200);
   } catch { profileMsg('Verbindingsfout'); }
 }
 
@@ -4062,6 +4350,94 @@ function closeBnavMenu() {
 document.addEventListener('click', e => {
   if (!e.target.closest('.bnav-more')) closeBnavMenu();
 });
+
+// ── ONBOARDING TOUR ──────────────────────────────────────────────────────────
+const TOUR_STEPS = [
+  { target: '.sp-btn-pm', title: 'Dagelijkse Scan', text: 'Klik hier om de scanner te starten. Het model analyseert alle wedstrijden van vandaag en vindt value bets.', tab: 'scans' },
+  { target: '#picks-prematch', title: 'Picks', text: 'Na de scan verschijnen hier de aanbevolen bets, gesorteerd op verwachte waarde. Klik "+ Log" om een bet vast te leggen.', tab: 'scans' },
+  { target: '#potd-btn', title: 'POTD Generator', text: 'Genereer automatisch een Reddit en X post van je beste pick van de dag.', tab: 'scans' },
+  { target: '.stats-grid', title: 'Je Statistieken', text: 'Bankroll, ROI, win rate en meer. Deze updaten automatisch na elke settled bet.', tab: 'tracker' },
+  { target: '.bets-table', title: 'Bet Tracker', text: 'Al je bets op een rij. Klik op odds, units of bookmaker om aan te passen. Sorteer op elke kolom.', tab: 'tracker' },
+  { target: '#page-live', title: 'Mijn Bets Live', text: 'Volg je open bets in real-time. Scores updaten elke 60 seconden. Groen = winnend, rood = verliezend.', tab: 'live' },
+  { target: '#ch-bankroll', title: 'Data & Analyse', text: 'Bankroll grafiek, hit rates per markt/score, CLV analyse, variance tracker en signal attribution.', tab: 'data' },
+  { target: '#page-inbox', title: 'Inbox', text: 'Alle model updates, calibraties en inzichten. Het model leert van elke bet en meldt hier wat er verandert.', tab: 'inbox' },
+];
+
+function startTour() {
+  if (localStorage.getItem('ep_tour_done')) return;
+  _runTour();
+}
+
+function restartTour() {
+  localStorage.removeItem('ep_tour_done');
+  _runTour();
+}
+
+function _runTour() {
+  let step = 0;
+  const overlay = document.getElementById('tour-overlay');
+  const spotlight = document.getElementById('tour-spotlight');
+  const tooltip = document.getElementById('tour-tooltip');
+
+  function showStep() {
+    const s = TOUR_STEPS[step];
+    if (s.tab) go(s.tab);
+
+    setTimeout(() => {
+      const el = document.querySelector(s.target);
+      if (!el) { step++; if (step < TOUR_STEPS.length) showStep(); else endTour(); return; }
+
+      const rect = el.getBoundingClientRect();
+      overlay.classList.add('active');
+
+      spotlight.style.top = (rect.top - 8) + 'px';
+      spotlight.style.left = (rect.left - 8) + 'px';
+      spotlight.style.width = (rect.width + 16) + 'px';
+      spotlight.style.height = (rect.height + 16) + 'px';
+
+      const nextLabel = step < TOUR_STEPS.length - 1 ? t('tour_next') : t('tour_done');
+      tooltip.innerHTML = `
+        <h3>${s.title}</h3>
+        <p>${s.text}</p>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="tour-step-count">${step + 1} / ${TOUR_STEPS.length}</span>
+          <div class="tour-actions">
+            <button class="tour-skip" onclick="endTour()">${t('tour_skip')}</button>
+            <button class="tour-next" onclick="nextTourStep()">${nextLabel}</button>
+          </div>
+        </div>`;
+
+      const tooltipTop = rect.bottom + 20;
+      tooltip.style.top = tooltipTop + 'px';
+      tooltip.style.left = Math.max(16, Math.min(window.innerWidth - 340, rect.left)) + 'px';
+    }, 300);
+  }
+
+  window.nextTourStep = () => { step++; if (step < TOUR_STEPS.length) showStep(); else endTour(); };
+  window.endTour = () => { overlay.classList.remove('active'); localStorage.setItem('ep_tour_done', '1'); };
+
+  showStep();
+}
+
+// ── HELP TOOLTIPS: inject Score/Edge tips into pick cards ────────────────────
+function injectPickCardHelpTips() {
+  document.querySelectorAll('[data-i18n-text]').forEach(el => {
+    const key = el.getAttribute('data-i18n-text');
+    const val = t(key);
+    if (val && val !== key) el.textContent = val;
+  });
+}
+
+// Run help tip translation after language changes
+const _origApplyLanguage = typeof applyLanguage === 'function' ? applyLanguage : null;
+if (_origApplyLanguage) {
+  // We wrap via a post-hook pattern: call original, then our addition
+  const _applyLangOrig = applyLanguage;
+  applyLanguage = function() {
+    _applyLangOrig();
+    injectPickCardHelpTips();
+  };
+}
 </script>
 
 <!-- Bottom nav voor mobiel -->
@@ -4087,8 +4463,15 @@ document.addEventListener('click', e => {
       <button class="bnav-menu-item" onclick="goMobile('inbox')">📬 Inbox</button>
       <button class="bnav-menu-item" onclick="goMobile('status')">🟢 Status</button>
       <button class="bnav-menu-item" onclick="goMobile('info')">📖 Info</button>
+      <button class="bnav-menu-item" onclick="closeBnavMenu(); openProfileModal()">⚙️ <span data-i18n="nav_settings">Instellingen</span></button>
     </div>
   </div>
+</div>
+
+<!-- Tour overlay -->
+<div class="tour-overlay" id="tour-overlay">
+  <div class="tour-spotlight" id="tour-spotlight"></div>
+  <div class="tour-tooltip" id="tour-tooltip"></div>
 </div>
 
 </body>
