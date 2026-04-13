@@ -2713,7 +2713,9 @@ async function schedulePreKickoffCheck(bet) {
         if (fxId) {
           const oddsData = await afGet('v3.football.api-sports.io', '/odds', { fixture: fxId });
           const rawBks   = oddsData?.[0]?.bookmakers || [];
-          const bk       = rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
+          const userBk   = (bet.tip || 'bet365').toLowerCase();
+          const bk       = rawBks.find(b => b.name?.toLowerCase().includes(userBk))
+                        || rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
           if (bk) {
             const marktLc = markt.toLowerCase();
             let val = null;
@@ -2835,8 +2837,13 @@ async function scheduleCLVCheck(bet) {
 
       const oddsData = await afGet('v3.football.api-sports.io', '/odds', { fixture: fxId });
       const rawBks   = oddsData?.[0]?.bookmakers || [];
-      const bk       = rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
+      // Gebruik de bookmaker waar de user daadwerkelijk bet (opgeslagen in tip field)
+      const userBookie = (bet.tip || 'bet365').toLowerCase();
+      const bk = rawBks.find(b => b.name?.toLowerCase().includes(userBookie))
+              || rawBks.find(b => b.name?.toLowerCase().includes('bet365'))
+              || rawBks[0];
       if (!bk) return;
+      const usedBookie = bk.name || userBookie;
 
       let closingOdds = null;
       const marktLc = markt.toLowerCase();
@@ -2900,7 +2907,7 @@ async function scheduleCLVCheck(bet) {
         });
       }
 
-      await tg(`📊 CLV: ${matchName} | Gelogd: ${loggedOdds} → Slotlijn: ${closingOdds} | CLV: ${clvPct > 0 ? '+' : ''}${clvPct}% ${clvIcon}`).catch(() => {});
+      await tg(`📊 CLV: ${matchName}\n🏦 ${usedBookie} | Gelogd: ${loggedOdds} → Slotlijn: ${closingOdds} | CLV: ${clvPct > 0 ? '+' : ''}${clvPct}% ${clvIcon}`).catch(() => {});
     } catch (err) {
       console.error('CLV check error:', err.message);
     }
@@ -3692,7 +3699,9 @@ function scheduleOddsMonitor() {
         const oddsData = await afGet('v3.football.api-sports.io', '/odds', { fixture: fxId });
         checksRun++;
         const rawBks   = oddsData?.[0]?.bookmakers || [];
-        const bk       = rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
+        const userBk   = (bet.tip || 'bet365').toLowerCase();
+        const bk       = rawBks.find(b => b.name?.toLowerCase().includes(userBk))
+                      || rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
         if (!bk) continue;
 
         let currentOdds = null;

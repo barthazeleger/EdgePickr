@@ -2055,7 +2055,7 @@ function addBet() {
       wedstrijd: document.getElementById('f-match').value,
       markt: document.getElementById('f-markt').value,
       odds, units,
-      tip: document.getElementById('f-tip').value,
+      tip: document.getElementById('f-bookie').value || document.getElementById('f-tip').value,
       uitkomst: document.getElementById('f-uitkomst').value,
       tijd: document.getElementById('f-tijd').value || null
     })
@@ -3015,7 +3015,7 @@ async function logModalBet() {
       sport: document.getElementById('m-sport').value,
       wedstrijd: match,
       markt: document.getElementById('m-markt').value,
-      odds, units, tip: 'Main', uitkomst: 'Open', notities: '',
+      odds, units, tip: document.getElementById('m-bookie').value || 'Bet365', uitkomst: 'Open', notities: '',
       score: modalPick ? (() => { const hk = modalPick.kelly||0; return Math.min(10, Math.max(5, Math.round((hk-0.015)/0.135*5)+5)); })() : null
     })
   }).then(r => r?.json());
