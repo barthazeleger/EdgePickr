@@ -2951,9 +2951,9 @@ app.post('/api/bets', async (req, res) => {
 // Uitkomst updaten
 app.put('/api/bets/:id', async (req, res) => {
   try {
-    const { uitkomst, odds, units } = req.body;
+    const { uitkomst, odds, units, tip } = req.body;
     // Als alleen uitkomst: gebruik bestaande flow
-    if (uitkomst && !odds && !units) {
+    if (uitkomst && !odds && !units && !tip) {
       await updateBetOutcome(req.params.id, uitkomst);
     } else {
       // Edit odds/units/uitkomst
@@ -2976,6 +2976,12 @@ app.put('/api/bets/:id', async (req, res) => {
           await sh.spreadsheets.values.update({
             spreadsheetId: SHEET_ID, range: `${tab}!G${rowNum}:H${rowNum}`,
             valueInputOption: 'RAW', requestBody: { values: [[u, inzet]] }
+          });
+        }
+        if (tip) {
+          await sh.spreadsheets.values.update({
+            spreadsheetId: SHEET_ID, range: `${tab}!I${rowNum}`,
+            valueInputOption: 'RAW', requestBody: { values: [[tip]] }
           });
         }
         if (uitkomst) await updateBetOutcome(id, uitkomst);
