@@ -1041,7 +1041,24 @@ const afCache = {
 };
 
 // ── API-FOOTBALL RATE LIMIT TRACKER ─────────────────────────────────────────
-let afRateLimit = { remaining: null, limit: null, updatedAt: null };
+const AF_USAGE_FILE = path.join(__dirname, 'af-usage.json');
+let afRateLimit = { remaining: null, limit: 7500, updatedAt: null, callsToday: 0, date: null };
+
+// Laad persistent usage
+try {
+  const saved = JSON.parse(fs.readFileSync(AF_USAGE_FILE, 'utf8'));
+  const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  if (saved.date === todayStr) {
+    afRateLimit = saved;
+  } else {
+    afRateLimit.date = todayStr;
+    afRateLimit.callsToday = 0;
+  }
+} catch { afRateLimit.date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' }); }
+
+function saveAfUsage() {
+  try { fs.writeFileSync(AF_USAGE_FILE, JSON.stringify(afRateLimit)); } catch {}
+}
 
 async function afGet(host, path, params = {}) {
   if (!AF_KEY) return [];
@@ -1054,11 +1071,15 @@ async function afGet(host, path, params = {}) {
     // Lees rate limit headers uit elke response
     const rem = r.headers.get('x-ratelimit-requests-remaining');
     const lim = r.headers.get('x-ratelimit-requests-limit');
-    if (rem !== null) afRateLimit = {
-      remaining: parseInt(rem),
-      limit:     parseInt(lim) || afRateLimit.limit,
-      updatedAt: new Date().toISOString(),
-    };
+    const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+    if (afRateLimit.date !== todayStr) { afRateLimit.callsToday = 0; afRateLimit.date = todayStr; }
+    afRateLimit.callsToday++;
+    if (rem !== null) {
+      afRateLimit.remaining = parseInt(rem);
+      afRateLimit.limit = parseInt(lim) || afRateLimit.limit;
+    }
+    afRateLimit.updatedAt = new Date().toISOString();
+    saveAfUsage();
     const d = await r.json().catch(() => ({}));
     return d.response || [];
   } catch { return []; }
@@ -3192,7 +3213,8 @@ app.get('/api/status', (req, res) => {
         plan: 'Pro',
         remaining: afRateLimit.remaining,
         limit: afRateLimit.limit || 7500,
-        usedPct: afRateLimit.limit ? Math.round((1 - (afRateLimit.remaining || 0) / afRateLimit.limit) * 100) : null,
+        callsToday: afRateLimit.callsToday || 0,
+        usedPct: Math.round((afRateLimit.callsToday || 0) / (afRateLimit.limit || 7500) * 100),
         updatedAt: afRateLimit.updatedAt,
       },
       espn: { status: 'active', plan: 'Free', note: 'Onbeperkt — live scores auto-refresh' },
