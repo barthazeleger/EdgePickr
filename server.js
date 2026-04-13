@@ -1579,15 +1579,19 @@ function fairProbs2Way(oddsArr) {
 }
 
 // Parse basketball/hockey odds from api-sports response
+// Extended: also extracts 1st-half, 1st-period, NRFI, odd/even markets
 function parseGameOdds(oddsResp, homeTeam, awayTeam) {
   const bookmakers = oddsResp?.[0]?.bookmakers || oddsResp?.bookmakers || [];
-  if (!bookmakers.length) return { moneyline: [], totals: [], spreads: [] };
+  if (!bookmakers.length) return { moneyline: [], totals: [], spreads: [], halfML: [], halfTotals: [], halfSpreads: [], nrfi: [], oddEven: [] };
 
   const ml = [], tots = [], spr = [];
+  const halfML = [], halfTotals = [], halfSpreads = [];
+  const nrfi = [], oddEven = [];
   for (const bk of bookmakers) {
     const bkName = bk.name || bk.bookmaker?.name || 'Unknown';
     for (const bet of (bk.bets || [])) {
       const betId = bet.id;
+      const betName = (bet.name || '').toLowerCase();
       // Moneyline (bet id 1 for basketball, id 1 for hockey)
       if (betId === 1) {
         for (const v of (bet.values || [])) {
@@ -1609,9 +1613,54 @@ function parseGameOdds(oddsResp, homeTeam, awayTeam) {
           if (m) spr.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
         }
       }
+
+      // ── 1st Half / 1st Period markets (name-based detection) ──
+      const is1H = betName.includes('1st half') || betName.includes('first half') || betName.includes('1st period') || betName.includes('first period') || betName.includes('1st inning');
+
+      if (is1H) {
+        // 1st Half Moneyline
+        if (betName.includes('winner') || betName.includes('moneyline') || betName.includes('result')) {
+          for (const v of (bet.values || [])) {
+            const side = v.value === 'Home' ? 'home' : v.value === 'Away' ? 'away' : null;
+            if (side) halfML.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
+          }
+        }
+        // 1st Half Over/Under
+        for (const v of (bet.values || [])) {
+          const m = (v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
+          if (m) halfTotals.push({ side: m[1].toLowerCase(), point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
+        }
+        // 1st Half Spread
+        for (const v of (bet.values || [])) {
+          const m = (v.value || '').match(/(Home|Away)\s*([+-][\d.]+)/i);
+          if (m) halfSpreads.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
+        }
+      }
+
+      // ── NRFI / 1st Inning scoring (baseball) ──
+      if (betName.includes('1st inning') || betName.includes('nrfi') || betName.includes('first inning')) {
+        for (const v of (bet.values || [])) {
+          const val = (v.value || '').toLowerCase();
+          // "Yes" = runs scored, "No" = no runs (NRFI)
+          if (val === 'yes' || val === 'no' || val === 'over' || val === 'under') {
+            const isNRFI = val === 'no' || val === 'under'; // NRFI = no runs
+            nrfi.push({ side: isNRFI ? 'nrfi' : 'yrfi', price: parseFloat(v.odd) || 0, bookie: bkName });
+          }
+        }
+      }
+
+      // ── Odd/Even total ──
+      if (betName.includes('odd/even') || betName.includes('odd or even') || betName.includes('total odd') || betName.includes('total even')) {
+        for (const v of (bet.values || [])) {
+          const val = (v.value || '').toLowerCase();
+          if (val === 'odd' || val === 'even') {
+            oddEven.push({ side: val, price: parseFloat(v.odd) || 0, bookie: bkName });
+          }
+        }
+      }
     }
   }
-  return { moneyline: ml, totals: tots, spreads: spr };
+  return { moneyline: ml, totals: tots, spreads: spr, halfML, halfTotals, halfSpreads, nrfi, oddEven };
 }
 
 // Best odds from parsed odds array
@@ -1934,6 +1983,69 @@ async function runBasketball(emit) {
             }
           }
         }
+
+        // ── 1st Half Over/Under (basketball - research: 1H totals often mispriced) ──
+        const h1Over = parsed.halfTotals.filter(o => o.side === 'over');
+        const h1Under = parsed.halfTotals.filter(o => o.side === 'under');
+        if (h1Over.length && h1Under.length) {
+          const h1PointCounts = {};
+          for (const o of [...h1Over, ...h1Under]) {
+            h1PointCounts[o.point] = (h1PointCounts[o.point] || 0) + 1;
+          }
+          const h1MainLine = Object.entries(h1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
+          if (h1MainLine) {
+            const h1Line = parseFloat(h1MainLine);
+            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            if (h1Ov.length && h1Un.length) {
+              const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
+              const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
+              const h1TotIP = h1AvgOvIP + h1AvgUnIP;
+              const h1OverP = h1TotIP > 0 ? h1AvgOvIP / h1TotIP : 0.5;
+              const h1BestOv = bestFromArr(h1Ov);
+              const h1BestUn = bestFromArr(h1Un);
+              const h1OverEdge = h1OverP * h1BestOv.price - 1;
+              const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
+
+              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🏀 1H Over ${h1Line} pts`, h1BestOv.price,
+                  `1st Half O/U: ${(h1OverP*100).toFixed(1)}% over | ${h1BestOv.bookie}: ${h1BestOv.price}${sharedNotes} | ${ko}`,
+                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals);
+              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🔒 1H Under ${h1Line} pts`, h1BestUn.price,
+                  `1st Half O/U: ${((1-h1OverP)*100).toFixed(1)}% under | ${h1BestUn.bookie}: ${h1BestUn.price}${sharedNotes} | ${ko}`,
+                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals);
+            }
+          }
+        }
+
+        // ── 1st Half Spread (basketball - research: mispriced vs full-game spread) ──
+        const h1HomeSpr = parsed.halfSpreads.filter(o => o.side === 'home');
+        const h1AwaySpr = parsed.halfSpreads.filter(o => o.side === 'away');
+        if (h1HomeSpr.length) {
+          const best = bestFromArr(h1HomeSpr);
+          if (best.price >= 1.60 && best.price <= 3.8) {
+            const sEdge = fpHome * best.price - 1;
+            if (sEdge >= MIN_EDGE + 0.01) {
+              const pt = h1HomeSpr[0].point > 0 ? `+${h1HomeSpr[0].point}` : `${h1HomeSpr[0].point}`;
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, best.price,
+                `1st Half Spread | ${best.bookie}: ${best.price}${sharedNotes} | ${ko}`,
+                Math.round(fpHome*100), sEdge * 0.18, kickoffTime, best.bookie, matchSignals);
+            }
+          }
+        }
+        if (h1AwaySpr.length) {
+          const best = bestFromArr(h1AwaySpr);
+          if (best.price >= 1.60 && best.price <= 3.8) {
+            const sEdge = fpAway * best.price - 1;
+            if (sEdge >= MIN_EDGE + 0.01) {
+              const pt = h1AwaySpr[0].point > 0 ? `+${h1AwaySpr[0].point}` : `${h1AwaySpr[0].point}`;
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, best.price,
+                `1st Half Spread | ${best.bookie}: ${best.price}${sharedNotes} | ${ko}`,
+                Math.round(fpAway*100), sEdge * 0.18, kickoffTime, best.bookie, matchSignals);
+            }
+          }
+        }
       }
       await sleep(200);
     } catch (err) {
@@ -2225,6 +2337,78 @@ async function runHockey(emit) {
             }
           }
         }
+
+        // ── 1st Period Over/Under (hockey - derivative markets often mispriced) ──
+        const p1Over = parsed.halfTotals.filter(o => o.side === 'over');
+        const p1Under = parsed.halfTotals.filter(o => o.side === 'under');
+        if (p1Over.length && p1Under.length) {
+          const p1PointCounts = {};
+          for (const o of [...p1Over, ...p1Under]) {
+            p1PointCounts[o.point] = (p1PointCounts[o.point] || 0) + 1;
+          }
+          const p1MainLine = Object.entries(p1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
+          if (p1MainLine) {
+            const p1Line = parseFloat(p1MainLine);
+            const p1Ov = p1Over.filter(o => Math.abs(o.point - p1Line) < 0.6);
+            const p1Un = p1Under.filter(o => Math.abs(o.point - p1Line) < 0.6);
+            if (p1Ov.length && p1Un.length) {
+              const p1AvgOvIP = p1Ov.reduce((s,o)=>s+1/o.price,0) / p1Ov.length;
+              const p1AvgUnIP = p1Un.reduce((s,o)=>s+1/o.price,0) / p1Un.length;
+              const p1TotIP = p1AvgOvIP + p1AvgUnIP;
+              const p1OverP = p1TotIP > 0 ? p1AvgOvIP / p1TotIP : 0.5;
+              const p1BestOv = bestFromArr(p1Ov);
+              const p1BestUn = bestFromArr(p1Un);
+              const p1OverEdge = p1OverP * p1BestOv.price - 1;
+              const p1UnderEdge = (1-p1OverP) * p1BestUn.price - 1;
+
+              if (p1OverEdge >= MIN_EDGE && p1BestOv.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🏒 P1 Over ${p1Line} goals`, p1BestOv.price,
+                  `1st Period O/U: ${(p1OverP*100).toFixed(1)}% over | ${p1BestOv.bookie}: ${p1BestOv.price}${sharedNotes} | ${ko}`,
+                  Math.round(p1OverP*100), p1OverEdge * 0.20, kickoffTime, p1BestOv.bookie, matchSignals);
+              if (p1UnderEdge >= MIN_EDGE && p1BestUn.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🔒 P1 Under ${p1Line} goals`, p1BestUn.price,
+                  `1st Period O/U: ${((1-p1OverP)*100).toFixed(1)}% under | ${p1BestUn.bookie}: ${p1BestUn.price}${sharedNotes} | ${ko}`,
+                  Math.round((1-p1OverP)*100), p1UnderEdge * 0.18, kickoffTime, p1BestUn.bookie, matchSignals);
+            }
+          }
+        }
+
+        // ── Both Teams Score (hockey - BTTS equivalent: both teams score at least 1 goal) ──
+        // Use full-game goal expectations from standings to estimate BTTS probability
+        if (hmSt && awSt && hmSt.totalGames >= 5 && awSt.totalGames >= 5) {
+          const hmGFpg = hmSt.goalsFor / hmSt.totalGames;
+          const awGFpg = awSt.goalsFor / awSt.totalGames;
+          // Poisson probability of scoring 0 goals
+          const hmP0 = Math.exp(-hmGFpg);
+          const awP0 = Math.exp(-awGFpg);
+          // BTTS = 1 - P(home=0) - P(away=0) + P(both=0)
+          const bttsP = 1 - hmP0 - awP0 + hmP0 * awP0;
+          // Check if odd/even market has BTTS-like pricing, or use totals as proxy
+          // Look for odds that match our BTTS estimate
+          const oddOdds = parsed.oddEven.filter(o => o.side === 'odd');
+          const evenOdds = parsed.oddEven.filter(o => o.side === 'even');
+          if (oddOdds.length && evenOdds.length) {
+            const bestOdd = bestFromArr(oddOdds);
+            const bestEven = bestFromArr(evenOdds);
+            // Odd total is roughly correlated with both teams scoring
+            // Use consensus for fair probability
+            const avgOddIP = oddOdds.reduce((s,o)=>s+1/o.price,0) / oddOdds.length;
+            const avgEvenIP = evenOdds.reduce((s,o)=>s+1/o.price,0) / evenOdds.length;
+            const oeTotal = avgOddIP + avgEvenIP;
+            const oddP = oeTotal > 0 ? avgOddIP / oeTotal : 0.5;
+            const oddEdge = oddP * bestOdd.price - 1;
+            const evenEdge = (1-oddP) * bestEven.price - 1;
+
+            if (oddEdge >= MIN_EDGE && bestOdd.price >= 1.60)
+              mkP(`${hm} vs ${aw}`, league.name, `🎲 Odd Total`, bestOdd.price,
+                `Odd/Even: ${(oddP*100).toFixed(1)}% odd | ${bestOdd.bookie}: ${bestOdd.price}${sharedNotes} | ${ko}`,
+                Math.round(oddP*100), oddEdge * 0.16, kickoffTime, bestOdd.bookie, matchSignals);
+            if (evenEdge >= MIN_EDGE && bestEven.price >= 1.60)
+              mkP(`${hm} vs ${aw}`, league.name, `🎲 Even Total`, bestEven.price,
+                `Odd/Even: ${((1-oddP)*100).toFixed(1)}% even | ${bestEven.bookie}: ${bestEven.price}${sharedNotes} | ${ko}`,
+                Math.round((1-oddP)*100), evenEdge * 0.16, kickoffTime, bestEven.bookie, matchSignals);
+          }
+        }
       }
       await sleep(200);
     } catch (err) {
@@ -2514,6 +2698,44 @@ async function runBaseball(emit) {
             }
           }
         }
+
+        // ── NRFI (No Run First Inning) ──
+        // Research: NRFI is profitable when both pitchers have low FIP / strong 1st innings
+        // We use team form + run differential as proxy for pitching quality
+        const nrfiOdds = parsed.nrfi.filter(o => o.side === 'nrfi');
+        const yrfiOdds = parsed.nrfi.filter(o => o.side === 'yrfi');
+        if (nrfiOdds.length && yrfiOdds.length) {
+          const avgNrfiIP = nrfiOdds.reduce((s,o)=>s+1/o.price,0) / nrfiOdds.length;
+          const avgYrfiIP = yrfiOdds.reduce((s,o)=>s+1/o.price,0) / yrfiOdds.length;
+          const nrfiTotIP = avgNrfiIP + avgYrfiIP;
+          const nrfiP = nrfiTotIP > 0 ? avgNrfiIP / nrfiTotIP : 0.5;
+
+          // Signal: low-scoring teams (low runs per game) favor NRFI
+          let nrfiAdj = 0;
+          if (hmSt && awSt && hmSt.totalGames >= 10 && awSt.totalGames >= 10) {
+            const hmRpg = hmSt.pointsFor / hmSt.totalGames;
+            const awRpg = awSt.pointsFor / awSt.totalGames;
+            const avgRpg = (hmRpg + awRpg) / 2;
+            // Lower scoring teams → boost NRFI probability slightly
+            if (avgRpg < 4.0) nrfiAdj = 0.02;       // low-scoring matchup
+            else if (avgRpg > 5.5) nrfiAdj = -0.02;  // high-scoring matchup
+          }
+
+          const bestNrfi = bestFromArr(nrfiOdds);
+          const bestYrfi = bestFromArr(yrfiOdds);
+          const adjNrfiP = Math.min(0.85, Math.max(0.15, nrfiP + nrfiAdj));
+          const nrfiEdge = adjNrfiP * bestNrfi.price - 1;
+          const yrfiEdge = (1 - adjNrfiP) * bestYrfi.price - 1;
+
+          if (nrfiEdge >= MIN_EDGE && bestNrfi.price >= 1.60)
+            mkP(`${hm} vs ${aw}`, league.name, `⚾ NRFI (No Run 1st Inning)`, bestNrfi.price,
+              `NRFI: ${(adjNrfiP*100).toFixed(1)}% | ${bestNrfi.bookie}: ${bestNrfi.price}${sharedNotes} | ${ko}`,
+              Math.round(adjNrfiP*100), nrfiEdge * 0.18, kickoffTime, bestNrfi.bookie, matchSignals);
+          if (yrfiEdge >= MIN_EDGE && bestYrfi.price >= 1.60)
+            mkP(`${hm} vs ${aw}`, league.name, `⚾ YRFI (Yes Run 1st Inning)`, bestYrfi.price,
+              `YRFI: ${((1-adjNrfiP)*100).toFixed(1)}% | ${bestYrfi.bookie}: ${bestYrfi.price}${sharedNotes} | ${ko}`,
+              Math.round((1-adjNrfiP)*100), yrfiEdge * 0.18, kickoffTime, bestYrfi.bookie, matchSignals);
+        }
       }
       await sleep(200);
     } catch (err) {
@@ -2793,6 +3015,69 @@ async function runFootballUS(emit) {
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, best.price,
                 `Spread | ${best.bookie}: ${best.price}${sharedNotes} | ${ko}`,
                 Math.round(fpAway*100), sEdge * 0.20, kickoffTime, best.bookie, matchSignals);
+            }
+          }
+        }
+
+        // ── 1st Half Spread (NFL - research: 1H spreads often mispriced vs full-game) ──
+        const h1HomeSpr = parsed.halfSpreads.filter(o => o.side === 'home');
+        const h1AwaySpr = parsed.halfSpreads.filter(o => o.side === 'away');
+        if (h1HomeSpr.length) {
+          const best = bestFromArr(h1HomeSpr);
+          if (best.price >= 1.60 && best.price <= 3.8) {
+            const sEdge = fpHome * best.price - 1;
+            if (sEdge >= MIN_EDGE + 0.01) {
+              const pt = h1HomeSpr[0].point > 0 ? `+${h1HomeSpr[0].point}` : `${h1HomeSpr[0].point}`;
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, best.price,
+                `1st Half Spread | ${best.bookie}: ${best.price}${sharedNotes} | ${ko}`,
+                Math.round(fpHome*100), sEdge * 0.18, kickoffTime, best.bookie, matchSignals);
+            }
+          }
+        }
+        if (h1AwaySpr.length) {
+          const best = bestFromArr(h1AwaySpr);
+          if (best.price >= 1.60 && best.price <= 3.8) {
+            const sEdge = fpAway * best.price - 1;
+            if (sEdge >= MIN_EDGE + 0.01) {
+              const pt = h1AwaySpr[0].point > 0 ? `+${h1AwaySpr[0].point}` : `${h1AwaySpr[0].point}`;
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, best.price,
+                `1st Half Spread | ${best.bookie}: ${best.price}${sharedNotes} | ${ko}`,
+                Math.round(fpAway*100), sEdge * 0.18, kickoffTime, best.bookie, matchSignals);
+            }
+          }
+        }
+
+        // ── 1st Half Over/Under (NFL - often mispriced due to game script assumptions) ──
+        const h1Over = parsed.halfTotals.filter(o => o.side === 'over');
+        const h1Under = parsed.halfTotals.filter(o => o.side === 'under');
+        if (h1Over.length && h1Under.length) {
+          const h1PointCounts = {};
+          for (const o of [...h1Over, ...h1Under]) {
+            h1PointCounts[o.point] = (h1PointCounts[o.point] || 0) + 1;
+          }
+          const h1MainLine = Object.entries(h1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
+          if (h1MainLine) {
+            const h1Line = parseFloat(h1MainLine);
+            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            if (h1Ov.length && h1Un.length) {
+              const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
+              const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
+              const h1TotIP = h1AvgOvIP + h1AvgUnIP;
+              const h1OverP = h1TotIP > 0 ? h1AvgOvIP / h1TotIP : 0.5;
+              const h1BestOv = bestFromArr(h1Ov);
+              const h1BestUn = bestFromArr(h1Un);
+              const h1OverEdge = h1OverP * h1BestOv.price - 1;
+              const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
+
+              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🏈 1H Over ${h1Line} pts`, h1BestOv.price,
+                  `1st Half O/U: ${(h1OverP*100).toFixed(1)}% over | ${h1BestOv.bookie}: ${h1BestOv.price}${sharedNotes} | ${ko}`,
+                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals);
+              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `🔒 1H Under ${h1Line} pts`, h1BestUn.price,
+                  `1st Half O/U: ${((1-h1OverP)*100).toFixed(1)}% under | ${h1BestUn.bookie}: ${h1BestUn.price}${sharedNotes} | ${ko}`,
+                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals);
             }
           }
         }
@@ -3730,34 +4015,17 @@ async function runPrematch(emit) {
     const noMsg = allCandidates.length > 0
       ? `🌅 Dagelijkse Pre-Match Scan\n\n🚫 Geen overtuigde picks.\n${allCandidates.length} kandidaat(en) gevonden maar te zwak (min. confidence niet gehaald).\nGeanalyseerd: ${totalEvents} wedstrijden`
       : `🌅 Dagelijkse Pre-Match Scan\n\nGeen kwalificerende picks gevonden.\nGeanalyseerd: ${totalEvents} wedstrijden | Min. odds: 1.60`;
-    await tg(noMsg);
-    emit({ log: `📭 Geen overtuigde picks (${allCandidates.length} kandidaten te zwak). Bericht gestuurd.`, picks: [] });
+    // Telegram wordt gestuurd NA multi-sport merge
+    emit({ log: `📭 Geen voetbal picks (${allCandidates.length} kandidaten te zwak).`, picks: [] });
     return [];
   }
 
   const weakNote = weakCount > 0 ? ` (${weakCount} zwakke kandidaat${weakCount>1?'en':''} weggelaten)` : '';
-  emit({ log: `🎯 ${finalPicks.length} overtuigde pick${finalPicks.length>1?'s':''}${weakNote}! Sturen naar Telegram...` });
-
-  // ── TELEGRAM BERICHTEN ─────────────────────────────────────────────────────
-  const todayLabel = new Date().toLocaleDateString('nl-NL',{day:'2-digit',month:'long',year:'numeric'});
-  const pickWord = finalPicks.length === 1 ? 'OVERTUIGDE PICK' : `${finalPicks.length} OVERTUIGDE PICKS`;
-  const header = `🌅 DAGELIJKSE PRE-MATCH SCAN\n📅 ${todayLabel}\n📊 ${totalEvents} wedstrijden geanalyseerd\n✅ ${pickWord} (van ${allCandidates.length} kandidaten)\n\n`;
-
-  let msgs = [header];
-  let cur  = 0;
-  for (const [i, p] of finalPicks.entries()) {
-    const star = i === 0 ? '⭐' : i === 1 ? '🔵' : '•';
-    const typeTag = p.scanType === 'live' ? ' 🔴LIVE' : ' 🌅PRE';
-    const refLine = p.referee ? `\n🟨 Scheidsrechter: ${p.referee}` : '';
-    const line = `${star} PICK ${i+1}${typeTag}: ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%${refLine}\n📊 ${p.reason}\n\n`;
-    if ((msgs[cur]||'').length + line.length > 3900) { cur++; msgs.push(''); }
-    msgs[cur] = (msgs[cur]||'') + line;
-  }
-  for (const msg of msgs) { if (msg.trim()) await tg(msg); }
+  emit({ log: `🎯 ${finalPicks.length} voetbal pick${finalPicks.length>1?'s':''}${weakNote}` });
 
   lastPrematchPicks = finalPicks;
-  // saveScanEntry moved to POST /api/prematch handler after multi-sport merge
-  emit({ log: `✅ Klaar! ${msgs.length} Telegram bericht(en) gestuurd.`, picks: finalPicks });
+  // Telegram wordt gestuurd NA multi-sport merge in POST /api/prematch
+  emit({ log: `✅ Voetbal scan klaar.`, picks: finalPicks });
 
   // ── Upgrade / unit-size check na scan ────────────────────────────────────
   try {
@@ -4278,20 +4546,23 @@ app.post('/api/prematch', (req, res) => {
       emit({ log: `🌐 Totaal: ${footballPicks.length} voetbal + ${nbaPicks.length} basketball + ${nhlPicks.length} hockey + ${mlbPicks.length} baseball + ${nflPicks.length} NFL + ${handballPicks.length} handball = ${allPicks.length} kandidaten` });
       if (droppedCount > 0) emit({ log: `🎯 Top ${MAX_PICKS} geselecteerd (${droppedCount} zwakkere kandidaten weggelaten)` });
 
-      // Save ALL combined picks to scan history (not just football)
-      const totalEventsAll = topPicks.length; // total picks across all sports
-      saveScanEntry(topPicks, 'prematch', totalEventsAll);
+      // Save ALL combined picks to scan history
+      saveScanEntry(topPicks, 'prematch', allPicks.length);
 
-      // Send Telegram for non-football picks that made the top
-      const nonFootballTop = topPicks.filter(p => p.sport && p.sport !== 'football');
-      if (nonFootballTop.length > 0) {
-        const sportEmoji = { basketball: '🏀', hockey: '🏒', baseball: '⚾', 'american-football': '🏈', handball: '🤾' };
-        let extraMsg = '🌐 MULTI-SPORT PICKS\n\n';
-        nonFootballTop.forEach((p, i) => {
+      // 1 gecombineerd Telegram bericht met alle sport picks
+      if (topPicks.length > 0) {
+        const sportEmoji = { football: '⚽', basketball: '🏀', hockey: '🏒', baseball: '⚾', 'american-football': '🏈', handball: '🤾' };
+        const todayLabel = new Date().toLocaleDateString('nl-NL', { day: '2-digit', month: 'long', year: 'numeric' });
+        let tgMsg = `🎯 EDGEPICKR DAILY SCAN\n📅 ${todayLabel}\n📊 ${allPicks.length} kandidaten uit 6 sporten\n✅ TOP ${topPicks.length} PICKS\n\n`;
+        topPicks.forEach((p, i) => {
           const icon = sportEmoji[p.sport] || '🏆';
-          extraMsg += `${icon} ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%\n\n`;
+          const star = i === 0 ? '⭐' : i === 1 ? '🔵' : '•';
+          tgMsg += `${star} ${icon} ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%\n\n`;
         });
-        tg(extraMsg).catch(() => {});
+        tg(tgMsg).catch(() => {});
+      } else {
+        const todayLabel = new Date().toLocaleDateString('nl-NL', { day: '2-digit', month: 'long', year: 'numeric' });
+        tg(`🎯 EDGEPICKR DAILY SCAN\n📅 ${todayLabel}\n\n🚫 Geen picks met voldoende edge gevonden.`).catch(() => {});
       }
 
       // Non-admin: filter gevoelige model data uit picks
@@ -4461,12 +4732,43 @@ async function fetchCurrentOdds(sport, gameId, markt, bookmaker) {
       val = dnb.values?.find(v => v.value === (isHome ? 'Home' : 'Away'));
     }
   }
-  // NRFI (baseball)
-  else if (m.includes('nrfi') || m.includes('no run first')) {
+  // NRFI / YRFI (baseball)
+  else if (m.includes('nrfi') || m.includes('yrfi') || m.includes('no run first') || m.includes('no run 1st') || m.includes('yes run first') || m.includes('yes run 1st')) {
     const nrfi = bk.bets?.find(b => (b.name||'').toLowerCase().includes('1st inning') || (b.name||'').toLowerCase().includes('nrfi'));
     if (nrfi) {
-      const isYes = m.includes('yes') || m.includes('ja') || !m.includes('no');
-      val = nrfi.values?.find(v => v.value === (isYes ? 'Yes' : 'No')) || nrfi.values?.[0];
+      const isNRFI = m.includes('nrfi') || m.includes('no run');
+      val = nrfi.values?.find(v => v.value === (isNRFI ? 'No' : 'Yes')) || nrfi.values?.[0];
+    }
+  }
+  // 1st Half / 1st Period Over/Under
+  else if ((m.includes('1h ') || m.includes('1st half') || m.includes('p1 ') || m.includes('1st period')) && (m.includes('over') || m.includes('under'))) {
+    const isOver = m.includes('over');
+    const lineMatch = m.match(/(?:over|under)\s*(\d+\.?\d*)/i);
+    const halfBet = bk.bets?.find(b => {
+      const bn = (b.name||'').toLowerCase();
+      return (bn.includes('1st half') || bn.includes('first half') || bn.includes('1st period') || bn.includes('first period')) && (bn.includes('over') || bn.includes('total'));
+    });
+    if (halfBet && lineMatch) {
+      val = halfBet.values?.find(v => v.value === `${isOver ? 'Over' : 'Under'} ${lineMatch[1]}`);
+    }
+  }
+  // 1st Half / 1st Period Spread
+  else if ((m.includes('1h ') || m.includes('1st half') || m.includes('p1 ') || m.includes('1st period')) && (m.includes('spread') || m.match(/[+-]\d/))) {
+    const halfSpBet = bk.bets?.find(b => {
+      const bn = (b.name||'').toLowerCase();
+      return (bn.includes('1st half') || bn.includes('first half') || bn.includes('1st period') || bn.includes('first period')) && (bn.includes('spread') || bn.includes('handicap'));
+    });
+    if (halfSpBet) {
+      const lineMatch = m.match(/([+-]?\d+\.?\d*)/);
+      if (lineMatch) val = halfSpBet.values?.find(v => v.value?.includes(lineMatch[1]));
+    }
+  }
+  // Odd/Even total
+  else if (m.includes('odd total') || m.includes('even total') || m.includes('odd/even') || m.includes('🎲')) {
+    const oeBet = bk.bets?.find(b => (b.name||'').toLowerCase().includes('odd') && (b.name||'').toLowerCase().includes('even'));
+    if (oeBet) {
+      const isOdd = m.includes('odd');
+      val = oeBet.values?.find(v => v.value?.toLowerCase() === (isOdd ? 'odd' : 'even'));
     }
   }
 
@@ -5213,43 +5515,55 @@ async function checkOpenBetResults(userId = null) {
       sport:  'football',
     }));
 
-  // Basketball finished games
+  // Basketball finished games (include halftime scores for 1H market resolution)
   const bbFinished = [...(bbToday || []), ...(bbYesterday || [])].filter(g => {
     const status = (g.status?.short || '').toUpperCase();
     return status === 'FT' || status === 'AOT';
   }).map(g => ({
     home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
     scoreH: g.scores?.home?.total ?? 0, scoreA: g.scores?.away?.total ?? 0,
+    // 1st half = Q1+Q2
+    halfH: (g.scores?.home?.quarter_1 ?? 0) + (g.scores?.home?.quarter_2 ?? 0),
+    halfA: (g.scores?.away?.quarter_1 ?? 0) + (g.scores?.away?.quarter_2 ?? 0),
     sport: 'basketball',
   }));
 
-  // Hockey finished games
+  // Hockey finished games (include 1st period scores)
   const hkFinished = [...(hkToday || []), ...(hkYesterday || [])].filter(g => {
     const status = (g.status?.short || '').toUpperCase();
     return status === 'FT' || status === 'AOT';
   }).map(g => ({
     home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
     scoreH: g.scores?.home ?? 0, scoreA: g.scores?.away ?? 0,
+    // 1st period scores (periods array or period_1 field)
+    p1H: g.periods?.first?.home ?? g.scores?.home?.period_1 ?? null,
+    p1A: g.periods?.first?.away ?? g.scores?.away?.period_1 ?? null,
     sport: 'hockey',
   }));
 
-  // Baseball finished games
+  // Baseball finished games (include 1st inning for NRFI resolution)
   const baseballFinished = [...(baToday || []), ...(baYesterday || [])].filter(g => {
     const status = (g.status?.short || '').toUpperCase();
     return status === 'FT' || status === 'AOT';
   }).map(g => ({
     home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
     scoreH: g.scores?.home?.total ?? 0, scoreA: g.scores?.away?.total ?? 0,
+    // 1st inning scores for NRFI
+    inn1H: g.scores?.home?.innings?.['1'] ?? g.scores?.home?.inning_1 ?? null,
+    inn1A: g.scores?.away?.innings?.['1'] ?? g.scores?.away?.inning_1 ?? null,
     sport: 'baseball',
   }));
 
-  // NFL (American Football) finished games
+  // NFL (American Football) finished games (include 1st half scores)
   const nflFinished = [...(nflToday || []), ...(nflYesterday || [])].filter(g => {
     const status = (g.game?.status?.short || '').toUpperCase();
     return status === 'FT' || status === 'AOT';
   }).map(g => ({
     home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
     scoreH: g.scores?.home?.total ?? 0, scoreA: g.scores?.away?.total ?? 0,
+    // 1st half = Q1+Q2
+    halfH: (g.scores?.home?.quarter_1 ?? 0) + (g.scores?.home?.quarter_2 ?? 0),
+    halfA: (g.scores?.away?.quarter_1 ?? 0) + (g.scores?.away?.quarter_2 ?? 0),
     sport: 'american-football',
   }));
 
@@ -5281,15 +5595,75 @@ async function checkOpenBetResults(userId = null) {
     const total = ev.scoreH + ev.scoreA;
     let uitkomst = null;
 
+    // ── NRFI / YRFI (baseball 1st inning) ──
+    if (markt.includes('nrfi') || markt.includes('yrfi') || markt.includes('no run 1st') || markt.includes('yes run 1st') || markt.includes('no run first') || markt.includes('yes run first')) {
+      if (ev.inn1H !== null && ev.inn1H !== undefined && ev.inn1A !== null && ev.inn1A !== undefined) {
+        const firstInningRuns = (ev.inn1H || 0) + (ev.inn1A || 0);
+        const isNRFI = markt.includes('nrfi') || markt.includes('no run');
+        if (isNRFI) uitkomst = firstInningRuns === 0 ? 'W' : 'L';
+        else uitkomst = firstInningRuns > 0 ? 'W' : 'L';
+      }
+    }
+    // ── 1st Half Over/Under (basketball, NFL) ──
+    else if ((markt.includes('1h ') || markt.includes('1st half')) && (markt.includes('over') || markt.includes('under'))) {
+      const halfTotal = (ev.halfH ?? null) !== null && (ev.halfA ?? null) !== null ? ev.halfH + ev.halfA : null;
+      if (halfTotal !== null) {
+        const h1OverMatch = markt.match(/over\s*(\d+\.?\d*)/i);
+        const h1UnderMatch = !h1OverMatch && markt.match(/under\s*(\d+\.?\d*)/i);
+        if (h1OverMatch) {
+          const line = parseFloat(h1OverMatch[1]);
+          uitkomst = halfTotal > line ? 'W' : halfTotal < line ? 'L' : null;
+        } else if (h1UnderMatch) {
+          const line = parseFloat(h1UnderMatch[1]);
+          uitkomst = halfTotal < line ? 'W' : halfTotal > line ? 'L' : null;
+        }
+      }
+    }
+    // ── 1st Half Spread (basketball, NFL) ──
+    else if ((markt.includes('1h ') || markt.includes('1st half')) && (markt.includes('spread') || markt.match(/[+-]\d/))) {
+      const halfH = ev.halfH ?? null;
+      const halfA = ev.halfA ?? null;
+      if (halfH !== null && halfA !== null) {
+        const h1SpreadMatch = markt.match(/([+-]?\d+\.?\d*)/);
+        if (h1SpreadMatch) {
+          const line = parseFloat(h1SpreadMatch[1]);
+          // Determine which side from the label
+          const isHome = markt.includes(ev.home.toLowerCase().split(' ').pop());
+          const diff = isHome ? (halfH - halfA) : (halfA - halfH);
+          const adjusted = diff + line;
+          uitkomst = adjusted > 0 ? 'W' : adjusted < 0 ? 'L' : null;
+        }
+      }
+    }
+    // ── 1st Period Over/Under (hockey) ──
+    else if ((markt.includes('p1 ') || markt.includes('1st period')) && (markt.includes('over') || markt.includes('under'))) {
+      const p1Total = (ev.p1H ?? null) !== null && (ev.p1A ?? null) !== null ? ev.p1H + ev.p1A : null;
+      if (p1Total !== null) {
+        const p1OverMatch = markt.match(/over\s*(\d+\.?\d*)/i);
+        const p1UnderMatch = !p1OverMatch && markt.match(/under\s*(\d+\.?\d*)/i);
+        if (p1OverMatch) {
+          const line = parseFloat(p1OverMatch[1]);
+          uitkomst = p1Total > line ? 'W' : p1Total < line ? 'L' : null;
+        } else if (p1UnderMatch) {
+          const line = parseFloat(p1UnderMatch[1]);
+          uitkomst = p1Total < line ? 'W' : p1Total > line ? 'L' : null;
+        }
+      }
+    }
+    // ── Odd/Even total ──
+    else if (markt.includes('odd total') || markt.includes('even total') || markt.includes('🎲')) {
+      const isOdd = markt.includes('odd');
+      uitkomst = (total % 2 === 1) === isOdd ? 'W' : 'L';
+    }
     // Generic over/under detection (works for all sports: goals, points, runs, etc.)
-    const overMatch = markt.match(/over\s*(\d+\.?\d*)/i);
-    const underMatch = !overMatch && markt.match(/under\s*(\d+\.?\d*)/i);
-    if (overMatch) {
-      const line = parseFloat(overMatch[1]);
+    else if (markt.match(/over\s*(\d+\.?\d*)/i)) {
+      const ouMatch = markt.match(/over\s*(\d+\.?\d*)/i);
+      const line = parseFloat(ouMatch[1]);
       uitkomst = total > line ? 'W' : total < line ? 'L' : null; // exact = push
     }
-    else if (underMatch) {
-      const line = parseFloat(underMatch[1]);
+    else if (markt.match(/under\s*(\d+\.?\d*)/i) && !markt.match(/over\s*(\d+\.?\d*)/i)) {
+      const ouMatch = markt.match(/under\s*(\d+\.?\d*)/i);
+      const line = parseFloat(ouMatch[1]);
       uitkomst = total < line ? 'W' : total > line ? 'L' : null;
     }
     else if (markt.includes('btts ja') || markt.includes('btts yes') || (markt.includes('btts') && !markt.includes('nee') && !markt.includes('no'))) {
