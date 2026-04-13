@@ -755,58 +755,41 @@ const AF_FOOTBALL_LEAGUES = [
 
 // ── BASKETBALL LEAGUES (api-sports.io basketball) ────────────────────────────
 const NBA_LEAGUES = [
-  // Noord-Amerika
+  // Tier 1: goede odds coverage van 20+ bookmakers
   { id: 12,  key: 'nba',         name: 'NBA',                 ha: 0.03, season: '2025-2026' },
-  { id: 13,  key: 'nba_gleague', name: 'NBA G-League',        ha: 0.03, season: '2025-2026' },
-  // Europa
   { id: 120, key: 'euroleague',  name: 'Euroleague',          ha: 0.04, season: '2025-2026' },
-  { id: 121, key: 'eurocup',     name: 'EuroCup',             ha: 0.04, season: '2025-2026' },
-  // Nationale competities
   { id: 116, key: 'acb',         name: 'Liga ACB (Spanje)',   ha: 0.05, season: '2025-2026' },
   { id: 117, key: 'lnb',         name: 'LNB Pro A (Frankrijk)',ha: 0.05, season: '2025-2026' },
   { id: 204, key: 'bsl',         name: 'BSL (Turkije)',       ha: 0.05, season: '2025-2026' },
-  { id: 105, key: 'nbl',         name: 'NBL (Australie)',     ha: 0.04, season: '2025-2026' },
-  { id: 22,  key: 'cba',         name: 'CBA (China)',         ha: 0.05, season: '2025-2026' },
 ];
 
-// ── HOCKEY LEAGUES (api-sports.io hockey) ────────────────────────────────────
+// ── HOCKEY LEAGUES (alleen met goede odds data) ─────────────────────────────
 const NHL_LEAGUES = [
   { id: 57,  key: 'nhl',         name: 'NHL',                 ha: 0.03, season: '2025-2026' },
-  { id: 58,  key: 'ahl',         name: 'AHL',                 ha: 0.03, season: '2025-2026' },
-  // Europa
   { id: 85,  key: 'khl',         name: 'KHL (Rusland)',       ha: 0.04, season: '2025-2026' },
   { id: 72,  key: 'shl',         name: 'SHL (Zweden)',        ha: 0.04, season: '2025-2026' },
   { id: 68,  key: 'liiga',       name: 'Liiga (Finland)',     ha: 0.04, season: '2025-2026' },
-  { id: 73,  key: 'czech_extra', name: 'Extraliga (Tsjechie)',ha: 0.04, season: '2025-2026' },
-  { id: 71,  key: 'del',         name: 'DEL (Duitsland)',     ha: 0.04, season: '2025-2026' },
-  { id: 74,  key: 'swiss_nl',    name: 'National League (CH)',ha: 0.04, season: '2025-2026' },
 ];
 
-// ── BASEBALL LEAGUES (api-sports.io baseball) ──────────────────────────────
+// ── BASEBALL LEAGUES (alleen met goede odds data) ───────────────────────────
 const BASEBALL_LEAGUES = [
   { id: 1,   key: 'mlb',         name: 'MLB',                 ha: 0.04, season: '2026' },
-  { id: 2,   key: 'aaa',         name: 'Triple-A (AAA)',      ha: 0.03, season: '2026' },
   { id: 10,  key: 'kbo',         name: 'KBO (Korea)',         ha: 0.04, season: '2026' },
   { id: 11,  key: 'npb',         name: 'NPB (Japan)',         ha: 0.04, season: '2026' },
 ];
 
-// ── NFL LEAGUES (api-sports.io american-football) ──────────────────────────
+// ── NFL LEAGUES (alleen met goede odds data) ────────────────────────────────
 const NFL_LEAGUES = [
   { id: 1,   key: 'nfl',         name: 'NFL',                 ha: 0.057, season: '2025' },
   { id: 2,   key: 'ncaa',        name: 'NCAA Football',       ha: 0.05, season: '2025' },
-  { id: 9,   key: 'cfl',         name: 'CFL (Canada)',        ha: 0.04, season: '2025' },
 ];
 
-// ── HANDBALL LEAGUES (api-sports.io handball) ──────────────────────────────
+// ── HANDBALL LEAGUES (alleen met goede odds data) ───────────────────────────
 const HANDBALL_LEAGUES = [
-  // Champions League
   { id: 30,  key: 'ehf_cl',      name: 'EHF Champions League',ha: 0.05, season: '2025-2026' },
-  { id: 31,  key: 'ehf_el',      name: 'EHF European League', ha: 0.05, season: '2025-2026' },
-  // Nationale competities
   { id: 35,  key: 'hbl',         name: 'Handball Bundesliga',  ha: 0.06, season: '2025-2026' },
   { id: 36,  key: 'lnh',         name: 'Starligue (Frankrijk)',ha: 0.06, season: '2025-2026' },
   { id: 37,  key: 'asobal',      name: 'Liga Asobal (Spanje)',ha: 0.06, season: '2025-2026' },
-  { id: 117, key: 'hand_dk',     name: 'Handboldligaen (DK)', ha: 0.06, season: '2025-2026' },
 ];
 
 // ── LAST PICKS (in-memory voor analyse tab) ──────────────────────────────────
