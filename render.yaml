@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: toto-scanner
+    name: edgepickr
     runtime: node
     plan: free
     buildCommand: npm install

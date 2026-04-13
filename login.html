@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bet Scanner — Login</title>
+  <title>EdgePickr — Login</title>
   <style>
     :root {
       --bg:       #f9fafb;
@@ -65,8 +65,8 @@
   <div class="card">
     <div class="logo">
       <div class="logo-icon">📡</div>
-      <div class="logo-title">Bet Scanner</div>
-      <div class="logo-sub">Picks &amp; Bet Tracker</div>
+      <div class="logo-title">EdgePickr</div>
+      <div class="logo-sub">Find your edge</div>
     </div>
 
     <div class="tabs">
@@ -99,7 +99,7 @@
 
   <script>
     // Redirect als al ingelogd
-    const tok = localStorage.getItem('bs_token');
+    const tok = localStorage.getItem('ep_token');
     if (tok) {
       fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + tok } })
         .then(r => r.ok ? (window.location.href = '/') : null)
@@ -108,12 +108,12 @@
 
     // Donker/licht thema
     const html = document.documentElement;
-    const saved = localStorage.getItem('bs_theme');
+    const saved = localStorage.getItem('ep_theme');
     if (saved) html.setAttribute('data-theme', saved);
     function toggleDark() {
       const isDark = html.getAttribute('data-theme') === 'dark';
       html.setAttribute('data-theme', isDark ? 'light' : 'dark');
-      localStorage.setItem('bs_theme', isDark ? 'light' : 'dark');
+      localStorage.setItem('ep_theme', isDark ? 'light' : 'dark');
     }
 
     function switchTab(tab) {
@@ -145,8 +145,8 @@
         });
         const d = await r.json();
         if (!r.ok) return showMsg('l-msg', d.error || 'Inloggen mislukt', 'err');
-        localStorage.setItem('bs_token', d.token);
-        localStorage.setItem('bs_user', JSON.stringify(d.user));
+        localStorage.setItem('ep_token', d.token);
+        localStorage.setItem('ep_user', JSON.stringify(d.user));
         window.location.href = '/';
       } catch { showMsg('l-msg', 'Verbindingsfout — probeer opnieuw', 'err'); }
       finally { btn.disabled = false; btn.textContent = 'Inloggen'; }

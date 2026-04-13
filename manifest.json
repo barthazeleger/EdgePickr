@@ -1,6 +1,6 @@
 {
-  "name": "Bet Scanner",
-  "short_name": "BetScanner",
+  "name": "EdgePickr",
+  "short_name": "EdgePickr",
   "description": "Data-gedreven sportsbetting picks & tracker",
   "start_url": "/",
   "display": "standalone",

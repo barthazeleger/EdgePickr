@@ -1,10 +1,10 @@
-# Bet Scanner v5.1
+# EdgePickr v5.1
 
 Data-gedreven sportsbetting platform met een zelflerend prediction model, real-time tracking en automatische notificaties.
 
 ## Wat het doet
 
-Bet Scanner scant dagelijks 40 voetbalcompetities wereldwijd, vindt value bets waar bookmakers het mis hebben, en leert van elke bet om steeds beter te worden.
+EdgePickr scant dagelijks 40 voetbalcompetities wereldwijd, vindt value bets waar bookmakers het mis hebben, en leert van elke bet om steeds beter te worden.
 
 ### Core features
 
@@ -59,8 +59,8 @@ Web Push API               PWA push notificaties
 
 ### 1. Clone & install
 ```bash
-git clone https://github.com/barthazeleger/bet-scanner.git
-cd bet-scanner
+git clone https://github.com/barthazeleger/edgepickr.git
+cd edgepickr
 npm install
 ```
 

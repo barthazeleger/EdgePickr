@@ -12,7 +12,7 @@ const app = express();
 app.use(express.json());
 
 // ── AUTH CONFIG ────────────────────────────────────────────────────────────────
-const JWT_SECRET   = process.env.JWT_SECRET || 'bet-scanner-dev-secret-change-in-prod';
+const JWT_SECRET   = process.env.JWT_SECRET || 'edgepickr-dev-secret-change-in-prod';
 const ADMIN_EMAIL  = (process.env.ADMIN_EMAIL || '').toLowerCase();
 const ADMIN_PASSW  = process.env.ADMIN_PASSWORD || '';
 const USER_TAB     = 'Users';
@@ -23,7 +23,7 @@ const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'ko_u-RBo2io-Cdl6K6Ah0_d8
 const PUSH_SUBS_FILE = path.join(__dirname, 'push-subs.json');
 
 if (VAPID_PUBLIC && VAPID_PRIVATE) {
-  webpush.setVapidDetails('mailto:noreply@betscanner.app', VAPID_PUBLIC, VAPID_PRIVATE);
+  webpush.setVapidDetails('mailto:noreply@edgepickr.com', VAPID_PUBLIC, VAPID_PRIVATE);
 }
 
 const PUSH_TAB = 'PushSubs';
@@ -3893,7 +3893,7 @@ app.get('/api/timing-analysis', async (req, res) => {
 // ── START ───────────────────────────────────────────────────────────────────
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`\n🚀 Bet Scanner draait op http://localhost:${PORT}\n`);
+  console.log(`\n🚀 EdgePickr draait op http://localhost:${PORT}\n`);
   console.log(`   Prematch scan : POST /api/prematch`);
   console.log(`   Live scan     : POST /api/live`);
   console.log(`   Bet tracker   : GET/POST /api/bets\n`);
