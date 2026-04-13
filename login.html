@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EdgePickr — Login</title>
+  <title>EdgePickr · Login</title>
   <style>
     :root {
       --bg:       #f9fafb;
@@ -57,11 +57,14 @@
     .msg.ok   { background: rgba(16,185,129,.1); color: var(--green); display: block; }
     .dark-btn { position: fixed; top: 16px; right: 16px; background: var(--surface2); border: 1px solid var(--border);
                 border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 16px; color: var(--muted); }
+    .lang-btn { position: fixed; top: 16px; right: 60px; background: var(--surface2); border: 1px solid var(--border);
+                border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; color: var(--muted); font-weight: 600; }
     .form { display: none; }
     .form.active { display: block; }
   </style>
 </head>
 <body>
+  <button class="lang-btn" onclick="toggleLang()" id="langBtn">EN</button>
   <button class="dark-btn" onclick="toggleDark()">🌙</button>
   <div class="card">
     <div class="logo">
@@ -71,34 +74,81 @@
     </div>
 
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('login')">Inloggen</button>
-      <button class="tab" onclick="switchTab('register')">Registreren</button>
+      <button class="tab active" onclick="switchTab('login')" id="tab-login">Inloggen</button>
+      <button class="tab" onclick="switchTab('register')" id="tab-register">Registreren</button>
     </div>
 
     <!-- Login -->
     <div class="form active" id="f-login">
-      <label>E-mailadres</label>
+      <label id="lbl-l-email">E-mailadres</label>
       <input type="email" id="l-email" placeholder="naam@domein.com" autocomplete="email">
-      <label>Wachtwoord</label>
+      <label id="lbl-l-pass">Wachtwoord</label>
       <input type="password" id="l-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
-      <button class="btn" onclick="login()">Inloggen</button>
+      <button class="btn" onclick="login()" id="btn-login">Inloggen</button>
       <div class="msg" id="l-msg"></div>
     </div>
 
     <!-- Register -->
     <div class="form" id="f-register">
-      <label>E-mailadres</label>
+      <label id="lbl-r-email">E-mailadres</label>
       <input type="email" id="r-email" placeholder="naam@domein.com" autocomplete="email">
-      <label>Wachtwoord <span style="font-weight:400">(min. 8 tekens)</span></label>
+      <label id="lbl-r-pass">Wachtwoord <span style="font-weight:400" id="pw-min">(min. 8 tekens)</span></label>
       <input type="password" id="r-pass" placeholder="••••••••" autocomplete="new-password">
-      <label>Bevestig wachtwoord</label>
+      <label id="lbl-r-pass2">Bevestig wachtwoord</label>
       <input type="password" id="r-pass2" placeholder="••••••••" autocomplete="new-password" onkeydown="if(event.key==='Enter')register()">
-      <button class="btn" onclick="register()">Aanmelden</button>
+      <button class="btn" onclick="register()" id="btn-register">Aanmelden</button>
       <div class="msg" id="r-msg"></div>
     </div>
   </div>
 
   <script>
+    const LANG_LOGIN = {
+      nl: {
+        login: 'Inloggen', register: 'Registreren', email: 'E-mailadres', password: 'Wachtwoord',
+        pw_min: '(min. 8 tekens)', confirm_pw: 'Bevestig wachtwoord', login_btn: 'Inloggen',
+        register_btn: 'Aanmelden', busy: 'Bezig...', fill: 'Vul e-mail en wachtwoord in',
+        failed: 'Inloggen mislukt', pw_mismatch: 'Wachtwoorden komen niet overeen',
+        pw_short: 'Wachtwoord minimaal 8 tekens', reg_failed: 'Registratie mislukt',
+        conn_error: 'Verbindingsfout, probeer opnieuw'
+      },
+      en: {
+        login: 'Log in', register: 'Register', email: 'Email', password: 'Password',
+        pw_min: '(min. 8 chars)', confirm_pw: 'Confirm password', login_btn: 'Log in',
+        register_btn: 'Register', busy: 'Loading...', fill: 'Fill in email and password',
+        failed: 'Login failed', pw_mismatch: 'Passwords do not match',
+        pw_short: 'Password minimum 8 characters', reg_failed: 'Registration failed',
+        conn_error: 'Connection error, try again'
+      }
+    };
+
+    let currentLang = localStorage.getItem('ep_lang') || 'nl';
+
+    function tl(key) { return LANG_LOGIN[currentLang]?.[key] ?? LANG_LOGIN.nl[key] ?? key; }
+
+    function applyLoginLang() {
+      const l = currentLang;
+      document.getElementById('tab-login').textContent = tl('login');
+      document.getElementById('tab-register').textContent = tl('register');
+      document.getElementById('lbl-l-email').textContent = tl('email');
+      document.getElementById('lbl-l-pass').textContent = tl('password');
+      document.getElementById('lbl-r-email').textContent = tl('email');
+      document.getElementById('lbl-r-pass').innerHTML = tl('password') + ' <span style="font-weight:400">' + tl('pw_min') + '</span>';
+      document.getElementById('lbl-r-pass2').textContent = tl('confirm_pw');
+      document.getElementById('btn-login').textContent = tl('login_btn');
+      document.getElementById('btn-register').textContent = tl('register_btn');
+      document.getElementById('langBtn').textContent = l === 'nl' ? 'EN' : 'NL';
+      document.documentElement.lang = l;
+    }
+
+    function toggleLang() {
+      currentLang = currentLang === 'nl' ? 'en' : 'nl';
+      localStorage.setItem('ep_lang', currentLang);
+      applyLoginLang();
+    }
+
+    // Init language
+    applyLoginLang();
+
     // Redirect als al ingelogd
     const tok = localStorage.getItem('ep_token');
     if (tok) {
@@ -135,9 +185,9 @@
       const btn   = document.querySelector('#f-login .btn');
       const email = document.getElementById('l-email').value.trim();
       const pass  = document.getElementById('l-pass').value;
-      if (!email || !pass) return showMsg('l-msg', 'Vul e-mail en wachtwoord in', 'err');
+      if (!email || !pass) return showMsg('l-msg', tl('fill'), 'err');
       btn.disabled = true;
-      btn.textContent = 'Bezig...';
+      btn.textContent = tl('busy');
       try {
         const r = await fetch('/api/auth/login', {
           method: 'POST',
@@ -145,12 +195,14 @@
           body: JSON.stringify({ email, password: pass })
         });
         const d = await r.json();
-        if (!r.ok) return showMsg('l-msg', d.error || 'Inloggen mislukt', 'err');
+        if (!r.ok) return showMsg('l-msg', d.error || tl('failed'), 'err');
         localStorage.setItem('ep_token', d.token);
         localStorage.setItem('ep_user', JSON.stringify(d.user));
+        // Save language preference from user settings if available
+        if (d.user?.language) localStorage.setItem('ep_lang', d.user.language);
         window.location.href = '/';
-      } catch { showMsg('l-msg', 'Verbindingsfout — probeer opnieuw', 'err'); }
-      finally { btn.disabled = false; btn.textContent = 'Inloggen'; }
+      } catch { showMsg('l-msg', tl('conn_error'), 'err'); }
+      finally { btn.disabled = false; btn.textContent = tl('login_btn'); }
     }
 
     async function register() {
@@ -158,11 +210,11 @@
       const email = document.getElementById('r-email').value.trim();
       const pass  = document.getElementById('r-pass').value;
       const pass2 = document.getElementById('r-pass2').value;
-      if (!email || !pass) return showMsg('r-msg', 'Vul e-mail en wachtwoord in', 'err');
-      if (pass !== pass2)  return showMsg('r-msg', 'Wachtwoorden komen niet overeen', 'err');
-      if (pass.length < 8) return showMsg('r-msg', 'Wachtwoord minimaal 8 tekens', 'err');
+      if (!email || !pass) return showMsg('r-msg', tl('fill'), 'err');
+      if (pass !== pass2)  return showMsg('r-msg', tl('pw_mismatch'), 'err');
+      if (pass.length < 8) return showMsg('r-msg', tl('pw_short'), 'err');
       btn.disabled = true;
-      btn.textContent = 'Bezig...';
+      btn.textContent = tl('busy');
       try {
         const r = await fetch('/api/auth/register', {
           method: 'POST',
@@ -170,10 +222,10 @@
           body: JSON.stringify({ email, password: pass })
         });
         const d = await r.json();
-        if (!r.ok) return showMsg('r-msg', d.error || 'Registratie mislukt', 'err');
-        showMsg('r-msg', '✅ ' + d.message, 'ok');
-      } catch { showMsg('r-msg', 'Verbindingsfout — probeer opnieuw', 'err'); }
-      finally { btn.disabled = false; btn.textContent = 'Aanmelden'; }
+        if (!r.ok) return showMsg('r-msg', d.error || tl('reg_failed'), 'err');
+        showMsg('r-msg', '\u2705 ' + d.message, 'ok');
+      } catch { showMsg('r-msg', tl('conn_error'), 'err'); }
+      finally { btn.disabled = false; btn.textContent = tl('register_btn'); }
     }
   </script>
 </body>
