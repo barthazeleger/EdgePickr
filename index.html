@@ -773,7 +773,7 @@ nav::-webkit-scrollbar { display: none; }
       <thead>
         <tr>
           <th>#</th><th>Datum</th><th>Aftrap</th><th>Sport</th><th>Wedstrijd</th><th>Bet</th>
-          <th>Odds</th><th>Units</th><th>Inzet</th><th>Score</th><th>Uitkomst</th><th>W/L</th><th>CLV</th><th></th>
+          <th>Odds</th><th>Units</th><th>Bookie</th><th>Inzet</th><th>Score</th><th>Uitkomst</th><th>W/L</th><th>CLV</th><th></th>
         </tr>
       </thead>
       <tbody id="bets-body"></tbody>
@@ -1995,6 +1995,7 @@ function renderBetsTable(bets) {
       <td style="max-width:190px;overflow:hidden;text-overflow:ellipsis" title="${b.markt}">${b.markt}</td>
       <td><strong style="cursor:pointer" onclick="editBetField(${b.id},'odds',${b.odds})" title="Klik om aan te passen">${b.odds}</strong></td>
       <td style="cursor:pointer" onclick="editBetField(${b.id},'units',${b.units})" title="Klik om aan te passen">${b.units}U</td>
+      <td style="cursor:pointer;font-size:11px;color:var(--muted)" onclick="editBookie(${b.id},'${(b.tip||'Bet365').replace(/'/g,"\\'")}')" title="Klik om aan te passen">${b.tip||'—'}</td>
       <td>€${b.inzet}</td>
       <td style="text-align:center">${b.score != null ? `<span style="font-size:11px;font-weight:700;color:${b.score>=8?'#34d399':b.score>=6?'#fbbf24':'#94a3b8'}">${b.score}/10</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td>
@@ -2026,6 +2027,18 @@ function editBetField(id, field, currentVal) {
   api('/api/bets/' + id, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ [field]: num })
+  }).then(r => r?.json()).then(d => {
+    if (d) { betData = d; renderStats(d.stats); renderBetsTable(d.bets); }
+  });
+}
+
+function editBookie(id, currentVal) {
+  const bookies = ['Bet365', 'Unibet', 'Toto', 'Pinnacle', 'Anders'];
+  const val = prompt(`Bookmaker (was ${currentVal}):\n${bookies.join(', ')}`, currentVal);
+  if (val === null || val === '') return;
+  api('/api/bets/' + id, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tip: val })
   }).then(r => r?.json()).then(d => {
     if (d) { betData = d; renderStats(d.stats); renderBetsTable(d.bets); }
   });
