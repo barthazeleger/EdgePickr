@@ -192,11 +192,11 @@ nav::-webkit-scrollbar { display: none; }
 .picks-wrap { margin-top: 16px; }
 .picks-hdr { font-size: 11px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; margin-bottom: 10px; }
 .edge-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px; vertical-align: middle; margin-left: 6px; }
-.pick-card { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; transition: background 0.15s; }
+.pick-card { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; transition: background 0.15s; }
 .pick-card:hover { background: rgba(255,255,255,0.12); }
 .pick-card.top { border-left: 3px solid #60a5fa; }
 .pick-name { font-weight: 600; font-size: 13px; color: #fff; }
-.pick-meta { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+.pick-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .prob-row  { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
 .prob-bar  { width: 70px; height: 3px; background: rgba(255,255,255,0.15); border-radius: 2px; }
 .prob-fill { height: 100%; border-radius: 2px; }
@@ -543,6 +543,10 @@ nav::-webkit-scrollbar { display: none; }
         <div class="hero-stat-val" id="dh-clv">—</div>
         <div class="hero-stat-lbl" data-i18n="hero_clv">Gem. CLV</div><span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_clv">Closing Line Value. Positief = je pakt betere odds dan de markt bij aftrap</span></span>
       </div>
+      <div class="hero-stat">
+        <div class="hero-stat-val" id="dh-pot-win" style="font-size:16px">—</div>
+        <div class="hero-stat-lbl" data-i18n="pot_win_today">Pot. winst vandaag</div>
+      </div>
     </div>
   </div>
 
@@ -649,6 +653,7 @@ nav::-webkit-scrollbar { display: none; }
     <div class="stat-box"><div class="stat-val" id="s-sr">—</div><div class="stat-lbl">Strike Rate <span class="help-tip" tabindex="0">?<span class="help-text" data-i18n-text="help_strike_rate">Percentage van je bets dat gewonnen is</span></span></div></div>
     <div class="stat-box"><div class="stat-val" id="s-wl">—</div><div class="stat-lbl">W/L (€)</div></div>
     <div class="stat-box"><div class="stat-val" id="s-odds">—</div><div class="stat-lbl">Gem. odds</div></div>
+    <div class="stat-box"><div class="stat-val green" id="s-pot-win">—</div><div class="stat-lbl" data-i18n="pot_win_today">Pot. winst vandaag</div></div>
   </div>
 
   <div class="card" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -1606,6 +1611,17 @@ Object.assign(LANG.nl, {
   analyze_weather: 'Weer',
   analyze_all_markets: 'Alle markten geanalyseerd',
   analyze_log: '+ Log',
+  pot_win_today: 'Pot. winst vandaag',
+  pot_risk_today: 'Risico',
+  sport_football: 'Voetbal',
+  sport_basketball: 'Basketball',
+  sport_hockey: 'Hockey',
+  sport_baseball: 'Baseball',
+  sport_nfl: 'NFL',
+  sport_handball: 'Handbal',
+  api_total: 'Totaal',
+  api_budget_reset: 'Budget reset dagelijks om middernacht UTC. Gemiddeld verbruik: ~200-400 calls per scan.',
+  api_budget_high: 'Hoog verbruik — beperk handmatige rescans.',
 });
 Object.assign(LANG.en, {
   picks_none: 'No confident picks today',
@@ -1662,6 +1678,17 @@ Object.assign(LANG.en, {
   analyze_weather: 'Weather',
   analyze_all_markets: 'All markets analyzed',
   analyze_log: '+ Log',
+  pot_win_today: 'Pot. profit today',
+  pot_risk_today: 'Risk',
+  sport_football: 'Football',
+  sport_basketball: 'Basketball',
+  sport_hockey: 'Hockey',
+  sport_baseball: 'Baseball',
+  sport_nfl: 'NFL',
+  sport_handball: 'Handball',
+  api_total: 'Total',
+  api_budget_reset: 'Budget resets daily at midnight UTC. Average usage: ~200-400 calls per scan.',
+  api_budget_high: 'High usage — limit manual rescans.',
 });
 
 function t(key) {
@@ -1921,6 +1948,19 @@ function renderStats(s) {
   wl.textContent = (s.wlEur >= 0 ? '+' : '') + '€' + s.wlEur;
   wl.className = 'stat-val ' + (s.wlEur >= 0 ? 'green' : 'red');
   document.getElementById('s-odds').textContent = s.avgOdds;
+  // Potential day profit
+  const potEl = document.getElementById('s-pot-win');
+  if (potEl && s.todayBetsCount != null) {
+    if (s.todayBetsCount > 0) {
+      potEl.innerHTML = `<span style="color:var(--green)">+€${s.potentialWin}</span> / <span style="color:var(--red)">-€${s.potentialLoss}</span>`;
+      potEl.className = 'stat-val';
+      const lbl = potEl.parentElement.querySelector('.stat-lbl');
+      if (lbl) lbl.textContent = `${t('pot_win_today')} (${s.todayBetsCount} bets)`;
+    } else {
+      potEl.textContent = '—';
+      potEl.className = 'stat-val';
+    }
+  }
 }
 
 // ── PERIODE FILTER ─────────────────────────────────────────────────────────────
@@ -3926,18 +3966,56 @@ async function loadStatus() {
     const pct = Math.round(calls / lim * 100);
     const scansLeft = Math.floor((lim - calls) / 400);
     const budgetCol = pct > 80 ? '#f87171' : pct > 50 ? '#fbbf24' : '#34d399';
+    // Per-sport bars
+    const sportMeta = {
+      football:           { icon: '\u26bd', label: t('sport_football') },
+      basketball:         { icon: '\ud83c\udfc0', label: t('sport_basketball') },
+      hockey:             { icon: '\ud83c\udfd2', label: t('sport_hockey') },
+      baseball:           { icon: '\u26be', label: t('sport_baseball') },
+      'american-football':{ icon: '\ud83c\udfc8', label: t('sport_nfl') },
+      handball:           { icon: '\ud83e\udd3e', label: t('sport_handball') },
+    };
+    const perSport = af.perSport || {};
+    const totalCalls = Object.values(perSport).reduce((s, sp) => s + (sp.calls || 0), 0);
+    const totalLimit = Object.values(perSport).reduce((s, sp) => s + (sp.limit || 7500), 0);
+    const sportBarsHtml = Object.entries(sportMeta).map(([key, meta]) => {
+      const sp = perSport[key] || { calls: 0, limit: 7500 };
+      const spPct = Math.round(sp.calls / sp.limit * 100);
+      const spCol = spPct > 80 ? '#f87171' : spPct > 50 ? '#fbbf24' : '#34d399';
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="width:100px;font-size:12px;white-space:nowrap">${meta.icon} ${meta.label}</div>
+        <div style="flex:1;background:var(--surface2);border-radius:4px;height:16px;position:relative;overflow:hidden">
+          <div style="width:${Math.max(spPct, 1)}%;background:${spCol}66;height:100%;border-radius:4px;transition:.3s"></div>
+        </div>
+        <div style="width:120px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">
+          ${sp.calls.toLocaleString()} / ${sp.limit.toLocaleString()} <span style="color:var(--muted)">${spPct}%</span>
+        </div>
+      </div>`;
+    }).join('');
+
     document.getElementById('status-api-budget').innerHTML = `
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px">
         <span>api-football: ${calls} / ${lim.toLocaleString()} calls vandaag</span>
         <span style="font-weight:700;color:${budgetCol}">${pct}% · ~${scansLeft} scans over</span>
       </div>
-      <div style="background:var(--surface2);border-radius:8px;height:24px;position:relative;overflow:hidden;margin-bottom:12px">
+      <div style="background:var(--surface2);border-radius:8px;height:24px;position:relative;overflow:hidden;margin-bottom:14px">
         <div style="width:${pct}%;background:${budgetCol}44;height:100%;border-radius:8px;transition:.3s"></div>
         <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${calls} van ${lim} calls · ~${scansLeft} scans over</div>
       </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px">Per sport:</div>
+        ${sportBarsHtml}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="width:100px;font-size:12px;font-weight:700">${t('api_total')}</div>
+          <div style="flex:1"></div>
+          <div style="width:120px;font-size:11px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums">
+            ${totalCalls.toLocaleString()} / ${totalLimit.toLocaleString()}
+          </div>
+        </div>
+      </div>
       <div style="font-size:12px;color:var(--muted)">
-        Budget reset dagelijks om middernacht UTC. Gemiddeld verbruik: ~200-400 calls per scan.
-        ${pct > 80 ? '<br><strong style="color:#f87171">⚠️ Hoog verbruik — beperk handmatige rescans.</strong>' : ''}
+        ${t('api_budget_reset')}
+        ${pct > 80 ? '<br><strong style="color:#f87171">\u26a0\ufe0f ' + t('api_budget_high') + '</strong>' : ''}
       </div>
     `;
 
@@ -4040,6 +4118,13 @@ function updateDashStats(stats, bets) {
     clvEl.textContent = (stats.avgCLV > 0 ? '+' : '') + stats.avgCLV.toFixed(1) + '%';
     clvEl.style.color = stats.avgCLV >= 0 ? 'var(--green)' : 'var(--red)';
   } else { clvEl.textContent = '—'; }
+
+  // Potential day profit in hero
+  const dhPot = document.getElementById('dh-pot-win');
+  if (dhPot && stats.todayBetsCount != null && stats.todayBetsCount > 0) {
+    dhPot.innerHTML = `<span style="color:var(--green)">+€${stats.potentialWin}</span>`;
+    dhPot.style.color = '';
+  } else if (dhPot) { dhPot.textContent = '—'; }
 
   // Recente bets sidebar
   if (bets) renderRecentBets(bets);
