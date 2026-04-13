@@ -4,12 +4,12 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
 self.addEventListener('push', event => {
   const data = event.data ? event.data.json() : {};
-  const title = data.title || 'Bet Scanner';
+  const title = data.title || 'EdgePickr';
   const options = {
     body: data.body || '',
     icon: data.icon || '/favicon.ico',
     badge: '/favicon.ico',
-    tag: data.tag || 'bet-scanner',
+    tag: data.tag || 'edgepickr',
     data: { url: data.url || '/' },
     vibrate: [200, 100, 200],
   };
