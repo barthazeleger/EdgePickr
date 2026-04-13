@@ -4460,7 +4460,19 @@ async function schedulePreKickoffCheck(bet) {
             } else if (marktLc.includes('btts') || marktLc.includes('beide')) {
               // Both Teams To Score · bet id 8
               const btts = bk.bets?.find(b => b.id === 8) || bk.bets?.find(b => (b.name||'').toLowerCase().includes('both'));
-              if (btts) val = btts.values?.find(v => v.value === 'Yes');
+              if (btts) {
+                const isBttsNo = marktLc.includes('nee') || marktLc.includes('no') || marktLc.includes('🛡️');
+                val = btts.values?.find(v => v.value === (isBttsNo ? 'No' : 'Yes'));
+              }
+            } else if (marktLc.includes('gelijkspel') || marktLc.includes('draw')) {
+              const mw = bk.bets?.find(b => b.id === 1);
+              if (mw) val = mw.values?.find(v => v.value === 'Draw');
+            } else if (marktLc.includes('draw no bet') || marktLc.includes('dnb')) {
+              const dnb = bk.bets?.find(b => b.id === 12) || bk.bets?.find(b => (b.name||'').toLowerCase().includes('draw no bet'));
+              if (dnb) {
+                const isHome = marktLc.includes('🏠') || !marktLc.includes('✈️');
+                val = dnb.values?.find(v => v.value === (isHome ? 'Home' : 'Away'));
+              }
             }
 
             if (val) currentOdds = parseFloat(val.odd) || null;
