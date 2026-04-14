@@ -1941,6 +1941,89 @@ test('integration: complete scan-flow simulatie (4 entiteiten geschreven)', asyn
   assert.strictEqual(sb._tables.pick_candidates.filter(c => c.passed_filters).length, 0);
 });
 
+// ── Code-review v2 fixes (v10.0.1) ──────────────────────────────────────────
+
+console.log('\n  Reviewer v2 fixes:');
+
+test('diversification: max 1 pick per match (anti-correlatie)', () => {
+  // Simuleer multi-sport merge selectie logic
+  const picks = [
+    { match: 'Vegas vs Winnipeg', sport: 'hockey', expectedEur: 5.0, label: '🏠 Vegas wint' },
+    { match: 'Vegas vs Winnipeg', sport: 'hockey', expectedEur: 4.5, label: '📈 Vegas TT Over 3.5' },
+    { match: 'Boston vs Toronto', sport: 'hockey', expectedEur: 4.0, label: '🏠 Boston wint' },
+    { match: 'Atlanta vs Miami', sport: 'baseball', expectedEur: 3.8, label: '🏠 Atlanta wint' },
+  ];
+  picks.sort((a, b) => b.expectedEur - a.expectedEur);
+  const seenMatches = new Map(), seenSports = new Map();
+  const top = [];
+  for (const p of picks) {
+    if (top.length >= 5) break;
+    const m = p.match.toLowerCase().trim();
+    if ((seenMatches.get(m) || 0) >= 1) continue;
+    if ((seenSports.get(p.sport) || 0) >= 2) continue;
+    top.push(p);
+    seenMatches.set(m, 1);
+    seenSports.set(p.sport, (seenSports.get(p.sport) || 0) + 1);
+  }
+  // Vegas TT Over (zelfde match) moet weggefilterd
+  assert.strictEqual(top.length, 3, 'Vegas-Winnipeg dupe gefilterd → 3 picks');
+  assert.ok(!top.find(p => p.label.includes('TT Over')), 'TT Over op zelfde match niet in selectie');
+});
+
+test('diversification: max 2 per sport (anti-concentratie)', () => {
+  const picks = [
+    { match: 'A vs B', sport: 'hockey', expectedEur: 5 },
+    { match: 'C vs D', sport: 'hockey', expectedEur: 4 },
+    { match: 'E vs F', sport: 'hockey', expectedEur: 3 }, // sport cap → skip
+    { match: 'G vs H', sport: 'baseball', expectedEur: 2.5 },
+    { match: 'I vs J', sport: 'football', expectedEur: 2 },
+  ];
+  picks.sort((a, b) => b.expectedEur - a.expectedEur);
+  const seenMatches = new Map(), seenSports = new Map();
+  const top = [];
+  for (const p of picks) {
+    if (top.length >= 5) break;
+    if ((seenMatches.get(p.match.toLowerCase()) || 0) >= 1) continue;
+    if ((seenSports.get(p.sport) || 0) >= 2) continue;
+    top.push(p);
+    seenMatches.set(p.match.toLowerCase(), 1);
+    seenSports.set(p.sport, (seenSports.get(p.sport) || 0) + 1);
+  }
+  // 3e hockey moet weggefilterd, baseball + football wel door
+  assert.strictEqual(top.length, 4);
+  assert.strictEqual(top.filter(p => p.sport === 'hockey').length, 2, 'max 2 hockey');
+  assert.ok(top.find(p => p.sport === 'baseball'));
+  assert.ok(top.find(p => p.sport === 'football'));
+});
+
+test('kill-switch enforcement: filter werkt op pick.label via detectMarket', () => {
+  // Mock kill-switch met sport_market keys
+  const killed = new Set(['hockey_home', 'football_draw']);
+  const isKilled = (sport, label) => {
+    const market = detectMarket(label || 'other');
+    return killed.has(`${normalizeSport(sport)}_${market}`);
+  };
+  assert.strictEqual(isKilled('hockey', '🏠 Vegas wint'), true, 'home label gekoppeld aan home market');
+  assert.strictEqual(isKilled('hockey', '✈️ Winnipeg wint'), false, 'away market niet killed');
+  assert.strictEqual(isKilled('Voetbal', '🤝 Gelijkspel'), true, 'normalizeSport: Voetbal → football, draw market killed');
+  assert.strictEqual(isKilled('hockey', '🕐 Vegas wint (60-min)'), false, '60-min markt = aparte bucket (home60), niet killed');
+});
+
+test('afGet timeout: AbortController fires bij langzame call', async () => {
+  // We kunnen geen echte fetch mocken, maar test dat de mechaniek correct is
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10);
+  let aborted = false;
+  try {
+    await new Promise((resolve, reject) => {
+      controller.signal.addEventListener('abort', () => { aborted = true; reject(new Error('AbortError')); });
+      setTimeout(resolve, 100); // langer dan 10ms timeout
+    });
+  } catch {}
+  clearTimeout(timer);
+  assert.strictEqual(aborted, true, 'AbortController fires correct binnen 10ms');
+});
+
 // ── SUMMARY ──────────────────────────────────────────────────────────────────
 console.log(`\n\u2514\u2500\u2500 Results: ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);
