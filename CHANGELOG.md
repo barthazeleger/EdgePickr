@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.4.0] - 2026-04-14
+
+### Added (autonome model-evolutie)
+- **Kelly-fraction auto-stepup**: KELLY_FRACTION nu dynamisch (default 0.50, max auto 0.75, step 0.05). Verhoogt automatisch bij avg CLV > 2% + ROI > 5% over laatste 200 bets, geen kill-switch in laatste 30d, cooldown 30d. Persistent in calibration store. Telegram + inbox notification bij elke stap. Volledige Kelly (>0.75) vereist handmatige override.
+- **Auto-promote signal**: signalen op weight=0 die n≥50 picks halen met avg CLV > 0% worden automatisch geactiveerd op 0.5 (logged-only → live). Symmetrisch met bestaande mute-logic.
+- **Status page extended**: 9 services in plaats van 5. Web Push (VAPID), MLB StatsAPI, NHL public API, open-meteo toegevoegd. Gratis APIs tonen ∞ icoon naast plan-naam.
+- **Backtest-gate residual model**: `residualModelActive(n, validationStats)` accepteert nu walk-forward Brier-delta. Activatie alleen als delta < 0 (residual model verbetert calibratie).
+
+### Changed
+- **RESIDUAL_MIN_TRAINING_PICKS**: 500 → 100. Reden: bij 2 bets/dag was 500 onbereikbaar in praktijk. Backtest-gate vangt overfitting risk.
+- **KELLY_FRACTION** is geen const meer maar dynamische runtime-state via `getKellyFraction()`/`setKellyFraction()`. Backwards-compat alias behouden.
+- `lib/picks.js` + `server.js` (2x inline) gebruiken nu `getKellyFraction()` ipv hardcoded import.
+
+### Tests
+- 190 passed (1 nieuwe: backtest-gate residualModelActive)
+- residualModelActive threshold-test bijgewerkt naar 100
+
 ## [10.3.1] - 2026-04-14
 
 ### Changed (unit sizing granularity)
