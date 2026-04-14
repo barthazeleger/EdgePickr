@@ -1296,6 +1296,89 @@ test('poissonOver: lambda=0 edge case', () => {
   assert.strictEqual(poissonOver(0, 1.5), 0);
 });
 
+// ── Pitcher adjustment (MLB) ────────────────────────────────────────────────
+
+function pitcherAdjustment(homePitcher, awayPitcher) {
+  if (!homePitcher?.era || !awayPitcher?.era) return { adj: 0, note: null, valid: false };
+  if ((homePitcher.ip || 0) < 10 || (awayPitcher.ip || 0) < 10) return { adj: 0, note: null, valid: false };
+  const eraDiff = awayPitcher.era - homePitcher.era;
+  const raw = eraDiff * 0.017;
+  const clamped = Math.max(-0.06, Math.min(0.06, raw));
+  const note = `Pitchers: ${homePitcher.name?.split(' ').pop() || 'H'} ${homePitcher.era.toFixed(2)} vs ${awayPitcher.name?.split(' ').pop() || 'A'} ${awayPitcher.era.toFixed(2)} (Δ${eraDiff > 0 ? '+' : ''}${eraDiff.toFixed(2)})`;
+  return { adj: clamped, note, valid: true };
+}
+
+test('pitcherAdjustment: home pitcher beter → positieve adj', () => {
+  const r = pitcherAdjustment(
+    { era: 3.0, ip: 80, name: 'Skubal' },
+    { era: 4.5, ip: 70, name: 'Adams' }
+  );
+  assert.strictEqual(r.valid, true);
+  assert.ok(r.adj > 0, 'home ERA beter → adj positief');
+  assert.ok(r.adj <= 0.06, 'clamped max 0.06');
+});
+
+test('pitcherAdjustment: away pitcher beter → negatieve adj', () => {
+  const r = pitcherAdjustment(
+    { era: 4.5, ip: 70, name: 'B' },
+    { era: 2.5, ip: 80, name: 'A' }
+  );
+  assert.ok(r.adj < 0);
+  assert.ok(r.adj >= -0.06, 'clamped min -0.06');
+});
+
+test('pitcherAdjustment: extreme verschil clamps bij ±0.06', () => {
+  const rBig = pitcherAdjustment(
+    { era: 2.0, ip: 100, name: 'A' },
+    { era: 6.0, ip: 80, name: 'B' }
+  );
+  assert.ok(Math.abs(rBig.adj - 0.06) < 1e-9, 'clamped exact op +0.06');
+});
+
+test('pitcherAdjustment: <10 IP → invalid', () => {
+  const r = pitcherAdjustment(
+    { era: 2.0, ip: 5, name: 'A' },
+    { era: 4.0, ip: 80, name: 'B' }
+  );
+  assert.strictEqual(r.valid, false, 'te weinig IP → geen signal');
+  assert.strictEqual(r.adj, 0);
+});
+
+test('pitcherAdjustment: missing pitcher → invalid', () => {
+  assert.strictEqual(pitcherAdjustment(null, null).valid, false);
+  assert.strictEqual(pitcherAdjustment({era:3,ip:50}, null).valid, false);
+  assert.strictEqual(pitcherAdjustment({}, {era:3,ip:50}).valid, false);
+});
+
+test('pitcherAdjustment: note bevat ERA-verschil', () => {
+  const r = pitcherAdjustment(
+    { era: 3.0, ip: 50, name: 'Skubal' },
+    { era: 4.2, ip: 40, name: 'Adams' }
+  );
+  assert.ok(r.note.includes('Skubal'));
+  assert.ok(r.note.includes('Adams'));
+  assert.ok(r.note.includes('3.00'));
+  assert.ok(r.note.includes('4.20'));
+});
+
+// ── Double Chance derived probs ─────────────────────────────────────────────
+
+test('Double Chance: probs som op tot 2.0 (elke outcome zit in 2 DC-markten)', () => {
+  const pH = 0.45, pX = 0.25, pA = 0.30;
+  const pHX = pH + pX;
+  const p12 = pH + pA;
+  const pX2 = pX + pA;
+  assert.ok(Math.abs((pHX + p12 + pX2) - 2.0) < 1e-9, 'som = 2.0');
+});
+
+test('DNB derived: draw chance uitsluiten, home+away genormaliseerd', () => {
+  const pH = 0.45, pA = 0.30;
+  const dnbH = pH / (pH + pA);
+  const dnbA = pA / (pH + pA);
+  assert.ok(Math.abs(dnbH + dnbA - 1.0) < 1e-9);
+  assert.ok(dnbH > pH, 'zonder draw component meer home kans');
+});
+
 // ── Integration scenario's ──────────────────────────────────────────────────
 
 test('full pipeline: LA Kings example catches bad pick', () => {

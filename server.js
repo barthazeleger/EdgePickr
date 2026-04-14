@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.3.0';
+const APP_VERSION    = '9.4.0';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1707,6 +1707,39 @@ function parseGameOdds(oddsResp, homeTeam, awayTeam) {
         }
       }
 
+      // ── F5 / 1st 5 Innings (baseball) ──
+      // Pitcher-driven markt: eerste 5 innings settlement, zwaar afhankelijk van starting pitcher.
+      // api-sports bet names: "1st 5 Innings Winner" (ML), "1st 5 Innings Total" (O/U),
+      // "1st 5 Innings Run Line" (spread).
+      const isF5 = betName.includes('1st 5 inning') || betName.includes('first 5 inning') ||
+                   betName.includes('1st 5 innings') || betName.includes('f5 ');
+      if (isF5) {
+        // F5 ML: 2 of 3 values (met of zonder tie)
+        if (betName.includes('winner') || betName.includes('moneyline') || betName.includes('result')) {
+          const vals = bet.values || [];
+          const hasDraw = vals.some(v => String(v.value || '').trim() === 'Draw');
+          for (const v of vals) {
+            const val = String(v.value || '').trim();
+            const price = parseFloat(v.odd) || 0;
+            if (price <= 1.0) continue;
+            // Store apart als halfML entry met tag 'f5' in side voor downstream herkenning
+            if (val === 'Home') halfML.push({ side: 'home', name: homeTeam, price, bookie: bkName, market: 'f5', hasDraw });
+            else if (val === 'Away') halfML.push({ side: 'away', name: awayTeam, price, bookie: bkName, market: 'f5', hasDraw });
+            else if (val === 'Draw' && hasDraw) halfML.push({ side: 'draw', price, bookie: bkName, market: 'f5', hasDraw });
+          }
+        }
+        // F5 Total
+        for (const v of (bet.values || [])) {
+          const m = String(v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
+          if (m) halfTotals.push({ side: m[1].toLowerCase(), point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName, market: 'f5' });
+        }
+        // F5 Spread
+        for (const v of (bet.values || [])) {
+          const m = String(v.value || '').match(/(Home|Away)\s*([+-][\d.]+)/i);
+          if (m) halfSpreads.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName, market: 'f5' });
+        }
+      }
+
       // ── NRFI / 1st Inning scoring (baseball) ──
       if (betName.includes('1st inning') || betName.includes('nrfi') || betName.includes('first inning')) {
         for (const v of (bet.values || [])) {
@@ -1913,6 +1946,121 @@ function modelMarketSanityCheck(modelProb, marketProb, threshold = MODEL_MARKET_
     modelProb: +modelProb.toFixed(4),
     threshold,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MLB STATS API (statsapi.mlb.com)
+// Publiekelijke MLB API, gratis, geen auth. Levert probable pitchers + season stats.
+// Volledig fail-safe: als API faalt of timeout → return leeg, MLB-scan gaat door.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let _mlbPitcherCache = { date: null, data: null, at: 0 };
+const MLB_CACHE_TTL_MS = 60 * 60 * 1000; // 1 uur per dag-slot
+const MLB_FETCH_TIMEOUT_MS = 5000;
+
+async function mlbFetch(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MLB_FETCH_TIMEOUT_MS);
+  try {
+    const r = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': 'EdgePickr/9.x' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+// Haalt probable pitchers + season stats op voor alle MLB games op een datum.
+// Cached per-datum voor 1 uur. Return: [{home, away, homePitcher: {id, name, stats}, awayPitcher: ...}].
+async function fetchMlbProbablePitchers(date) {
+  if (_mlbPitcherCache.date === date && _mlbPitcherCache.data
+      && Date.now() - _mlbPitcherCache.at < MLB_CACHE_TTL_MS) {
+    return _mlbPitcherCache.data;
+  }
+  try {
+    const schedUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date)}&hydrate=probablePitcher`;
+    const sched = await mlbFetch(schedUrl);
+    if (!sched || !sched.dates) {
+      _mlbPitcherCache = { date, data: [], at: Date.now() };
+      return [];
+    }
+    const games = [];
+    const pitcherIds = new Set();
+    for (const d of (sched.dates || [])) {
+      for (const g of (d.games || [])) {
+        const home = g.teams?.home?.team?.name;
+        const away = g.teams?.away?.team?.name;
+        const hp = g.teams?.home?.probablePitcher;
+        const ap = g.teams?.away?.probablePitcher;
+        if (!home || !away) continue;
+        games.push({
+          home, away,
+          homePitcherId: hp?.id || null, homePitcherName: hp?.fullName || null,
+          awayPitcherId: ap?.id || null, awayPitcherName: ap?.fullName || null,
+        });
+        if (hp?.id) pitcherIds.add(hp.id);
+        if (ap?.id) pitcherIds.add(ap.id);
+      }
+    }
+    if (!pitcherIds.size) {
+      _mlbPitcherCache = { date, data: games, at: Date.now() };
+      return games;
+    }
+    // Batch season-stats fetch
+    const currentYear = new Date().getFullYear();
+    const idsParam = [...pitcherIds].join(',');
+    const statsUrl = `https://statsapi.mlb.com/api/v1/people?personIds=${idsParam}&hydrate=stats(group=[pitching],type=[season],season=${currentYear})`;
+    const statsResp = await mlbFetch(statsUrl);
+    const pitcherStats = {};
+    if (statsResp && Array.isArray(statsResp.people)) {
+      for (const p of statsResp.people) {
+        const group = (p.stats || []).find(s => s.group?.displayName === 'pitching');
+        const split = group?.splits?.[0]?.stat;
+        if (split) {
+          const era = parseFloat(split.era);
+          const whip = parseFloat(split.whip);
+          const ip = parseFloat(split.inningsPitched);
+          pitcherStats[p.id] = {
+            name: p.fullName,
+            era: isFinite(era) ? era : null,
+            whip: isFinite(whip) ? whip : null,
+            ip: isFinite(ip) ? ip : null,
+          };
+        }
+      }
+    }
+    const result = games.map(g => ({
+      ...g,
+      homePitcher: g.homePitcherId ? pitcherStats[g.homePitcherId] || null : null,
+      awayPitcher: g.awayPitcherId ? pitcherStats[g.awayPitcherId] || null : null,
+    }));
+    _mlbPitcherCache = { date, data: result, at: Date.now() };
+    return result;
+  } catch (e) {
+    console.error('fetchMlbProbablePitchers fout:', e.message);
+    _mlbPitcherCache = { date, data: [], at: Date.now() };
+    return [];
+  }
+}
+
+// Pitcher-edge signal: ERA-diff omzetten in kansaanpassing (±6% max).
+// Lage ERA = betere pitcher = team scoort minder tegen = teamwaarde hoger.
+// Vereist minimaal 10 IP per pitcher voor betrouwbaar signal (anders null).
+function pitcherAdjustment(homePitcher, awayPitcher) {
+  if (!homePitcher?.era || !awayPitcher?.era) return { adj: 0, note: null, valid: false };
+  if ((homePitcher.ip || 0) < 10 || (awayPitcher.ip || 0) < 10) return { adj: 0, note: null, valid: false };
+  // Lagere ERA thuis = betere pitcher thuis = meer home-waarde
+  const eraDiff = awayPitcher.era - homePitcher.era; // positief als home pitcher beter
+  // MLB league-avg ERA ~4.00; 1 punt verschil ≈ 0.07 edge richting betere pitcher team
+  const raw = eraDiff * 0.017;
+  const clamped = Math.max(-0.06, Math.min(0.06, raw));
+  const note = `Pitchers: ${homePitcher.name?.split(' ').pop() || 'H'} ${homePitcher.era.toFixed(2)} vs ${awayPitcher.name?.split(' ').pop() || 'A'} ${awayPitcher.era.toFixed(2)} (Δ${eraDiff > 0 ? '+' : ''}${eraDiff.toFixed(2)})`;
+  return { adj: clamped, note, valid: true };
 }
 
 // Scan-wide filter: alleen odds van deze bookies tellen mee voor pick generation.
@@ -2848,6 +2996,25 @@ async function runBaseball(emit) {
   if (!AF_KEY) { emit({ log: '⚾ Baseball: geen API key' }); return []; }
   emit({ log: `⚾ Baseball scan · ${BASEBALL_LEAGUES.length} competities` });
 
+  // Probable pitchers ophalen (één call per datum). Graceful fallback: bij falen geen pitcher signal.
+  const pitcherDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // MLB gebruikt US-datums
+  const mlbGames = await fetchMlbProbablePitchers(pitcherDate).catch(() => []);
+  if (Array.isArray(mlbGames) && mlbGames.length) {
+    emit({ log: `⚾ MLB StatsAPI: ${mlbGames.length} games met probable pitchers opgehaald` });
+  } else {
+    emit({ log: `⚠️ MLB StatsAPI niet beschikbaar, scan gaat door zonder pitcher signal` });
+  }
+  // Build team-name → pitcher-pair map voor fuzzy lookup
+  const pitcherByTeamPair = (homeName, awayName) => {
+    if (!Array.isArray(mlbGames) || !mlbGames.length) return null;
+    let best = null, bestScore = 0;
+    for (const g of mlbGames) {
+      const s = teamMatchScore(g.home, homeName) + teamMatchScore(g.away, awayName);
+      if (s > bestScore && s >= 120) { best = g; bestScore = s; }
+    }
+    return best;
+  };
+
   const calib = loadCalib();
   const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball');
   const MIN_EDGE = 0.055;
@@ -3012,7 +3179,11 @@ async function runBaseball(emit) {
         }
         streakAdj = Math.min(0.04, Math.max(-0.04, streakAdj));
 
-        const totalAdv = runDiffAdj + homeAwayAdj + streakAdj;
+        // Pitcher signal (MLB-only): ERA-differential via StatsAPI
+        const mlbMatch = pitcherByTeamPair(hm, aw);
+        const pitcherSig = mlbMatch ? pitcherAdjustment(mlbMatch.homePitcher, mlbMatch.awayPitcher) : { adj: 0, note: null, valid: false };
+
+        const totalAdv = runDiffAdj + homeAwayAdj + streakAdj + pitcherSig.adj;
 
         // Home advantage (~54% in MLB)
         const ha = 0.04;
@@ -3033,10 +3204,14 @@ async function runBaseball(emit) {
         if (Math.abs(runDiffAdj) >= 0.005) matchSignals.push(`run_diff:${runDiffAdj>0?'+':''}${(runDiffAdj*100).toFixed(1)}%`);
         if (Math.abs(homeAwayAdj) >= 0.005) matchSignals.push(`home_away_split:${homeAwayAdj>0?'+':''}${(homeAwayAdj*100).toFixed(1)}%`);
         if (Math.abs(streakAdj) >= 0.005) matchSignals.push(`streak:${streakAdj>0?'+':''}${(streakAdj*100).toFixed(1)}%`);
+        if (pitcherSig.valid && Math.abs(pitcherSig.adj) >= 0.005) {
+          matchSignals.push(`pitcher_era_diff:${pitcherSig.adj>0?'+':''}${(pitcherSig.adj*100).toFixed(1)}%`);
+        }
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}`;
+        const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note}` : '';
+        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}`;
 
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS)
@@ -3148,6 +3323,70 @@ async function runBaseball(emit) {
             mkP(`${hm} vs ${aw}`, league.name, `⚾ YRFI (Yes Run 1st Inning)`, bestYrfi.price,
               `YRFI: ${((1-adjNrfiP)*100).toFixed(1)}% | ${bestYrfi.bookie}: ${bestYrfi.price}${sharedNotes} | ${ko}`,
               Math.round((1-adjNrfiP)*100), yrfiEdge * 0.18, kickoffTime, bestYrfi.bookie, matchSignals);
+        }
+
+        // ── F5 (1st 5 Innings) markten ──
+        // Pitcher-driven markt: weight pitcher signal 3x zwaarder (ERA-diff bepaalt ~80% van F5).
+        // Alleen picks als we valid pitcher data hebben (anders te weinig model-info).
+        const f5ML = (parsed.halfML || []).filter(o => o.market === 'f5');
+        const f5Totals = (parsed.halfTotals || []).filter(o => o.market === 'f5');
+        const f5Spreads = (parsed.halfSpreads || []).filter(o => o.market === 'f5');
+
+        if (pitcherSig.valid && f5ML.length) {
+          // F5 probability: Gebruik fpHome/fpAway als baseline + pitcher × 3
+          const f5PitcherAdj = Math.max(-0.12, Math.min(0.12, pitcherSig.adj * 3));
+          const f5Home = Math.min(0.85, Math.max(0.15, fpHome + f5PitcherAdj + ha * 0.7));
+          const f5Away = Math.min(0.85, Math.max(0.15, fpAway - f5PitcherAdj * 0.7 - ha * 0.35));
+
+          const f5H = f5ML.filter(o => o.side === 'home');
+          const f5A = f5ML.filter(o => o.side === 'away');
+          const bF5H = bestFromArr(f5H);
+          const bF5A = bestFromArr(f5A);
+          const eF5H = bF5H.price > 0 ? f5Home * bF5H.price - 1 : -1;
+          const eF5A = bF5A.price > 0 ? f5Away * bF5A.price - 1 : -1;
+
+          if (eF5H >= MIN_EDGE && bF5H.price >= 1.60 && bF5H.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${hm}`, bF5H.price,
+              `F5 (1st 5 inn): ${(f5Home*100).toFixed(1)}% | ${bF5H.bookie}: ${bF5H.price} | ${pitcherSig.note} | ${ko}`,
+              Math.round(f5Home*100), eF5H * 0.24, kickoffTime, bF5H.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
+          if (eF5A >= MIN_EDGE && bF5A.price >= 1.60 && bF5A.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${aw}`, bF5A.price,
+              `F5 (1st 5 inn): ${(f5Away*100).toFixed(1)}% | ${bF5A.bookie}: ${bF5A.price} | ${pitcherSig.note} | ${ko}`,
+              Math.round(f5Away*100), eF5A * 0.24, kickoffTime, bF5A.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
+        }
+
+        // F5 Totals (consensus-driven — market weet beter dan wij)
+        if (f5Totals.length) {
+          const pointCounts = {};
+          for (const o of f5Totals) pointCounts[o.point] = (pointCounts[o.point] || 0) + 1;
+          const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
+          if (mainLine) {
+            const line = parseFloat(mainLine);
+            const ov = f5Totals.filter(o => o.side === 'over' && Math.abs(o.point - line) < 0.6);
+            const un = f5Totals.filter(o => o.side === 'under' && Math.abs(o.point - line) < 0.6);
+            if (ov.length && un.length) {
+              const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
+              const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
+              const totIP = avgOvIP + avgUnIP;
+              const overP = totIP > 0 ? avgOvIP / totIP : 0.5;
+              // Pitcher signal op F5 totals: betere pitcher samen → lagere score → under-bias
+              const pitcherUnderBias = pitcherSig.valid ? Math.max(0, (4.0 - (mlbMatch?.homePitcher?.era || 4) - (mlbMatch?.awayPitcher?.era || 4) + 4.0) * 0.01) : 0;
+              const adjOverP = Math.max(0.05, Math.min(0.95, overP - pitcherUnderBias));
+              const bestOv = bestFromArr(ov);
+              const bestUn = bestFromArr(un);
+              const eOv = bestOv.price > 0 ? adjOverP * bestOv.price - 1 : -1;
+              const eUn = bestUn.price > 0 ? (1 - adjOverP) * bestUn.price - 1 : -1;
+
+              if (eOv >= MIN_EDGE && bestOv.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Over ${line}`, bestOv.price,
+                  `F5 Total: ${(adjOverP*100).toFixed(1)}% over ${line} | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
+                  Math.round(adjOverP*100), eOv * 0.20, kickoffTime, bestOv.bookie, [...matchSignals, 'f5_total']);
+              if (eUn >= MIN_EDGE && bestUn.price >= 1.60)
+                mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Under ${line}`, bestUn.price,
+                  `F5 Total: ${((1-adjOverP)*100).toFixed(1)}% under ${line} | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
+                  Math.round((1-adjOverP)*100), eUn * 0.20, kickoffTime, bestUn.bookie, [...matchSignals, 'f5_total']);
+            }
+          }
         }
       }
       await sleep(200);
@@ -4352,6 +4591,56 @@ async function runPrematch(emit) {
                 `Draw No Bet: ${(dnbAwayP*100).toFixed(1)}% | ${bestDnbA.bookie}: ${bestDnbA.price} | Gelijk=terugbetaling | ${ko}`,
                 Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals, refereeName);
           }
+        }
+
+        // ── Double Chance (1X / X2 / 12) via 1X2 devig ──
+        // Bookies bieden soms apart "Double Chance" markt. Als die er is: check edge tegen
+        // afgeleide kansen. Lage odds (1.10-2.00) maar laag-variance markt, goed voor combi's.
+        const dcBookies = bookies.map(fb => {
+          const dcM = fb.markets?.find(m =>
+            (m.key || '').includes('double_chance') || (m.key || '').includes('double-chance')
+          );
+          if (!dcM) return null;
+          return { name: fb.title || fb.name, values: dcM.outcomes || [] };
+        }).filter(Boolean);
+
+        if (dcBookies.length > 0 && adjHome2 && adjAway2) {
+          const pHX = adjHome2 + (adjDraw || 0);
+          const p12 = adjHome2 + adjAway2;
+          const pX2 = (adjDraw || 0) + adjAway2;
+
+          let bestHX = { price: 0, bookie: '' };
+          let best12 = { price: 0, bookie: '' };
+          let bestX2 = { price: 0, bookie: '' };
+          for (const b of dcBookies) {
+            for (const o of b.values) {
+              const val = String(o.name || '').trim();
+              const price = parseFloat(o.price) || 0;
+              if (price <= 1.0) continue;
+              // Namen variëren per bookie: "Home/Draw", "1X", "1/X", etc.
+              const v = val.toLowerCase().replace(/[\/\-\s]/g, '');
+              if ((v === '1x' || v === 'homedraw') && price > bestHX.price) bestHX = { price, bookie: b.name };
+              else if ((v === '12' || v === 'homeaway') && price > best12.price) best12 = { price, bookie: b.name };
+              else if ((v === 'x2' || v === 'drawaway') && price > bestX2.price) bestX2 = { price, bookie: b.name };
+            }
+          }
+
+          const eHX = bestHX.price > 0 ? pHX * bestHX.price - 1 : -1;
+          const e12 = best12.price > 0 ? p12 * best12.price - 1 : -1;
+          const eX2 = bestX2.price > 0 ? pX2 * bestX2.price - 1 : -1;
+
+          if (eHX >= MIN_EDGE && bestHX.price >= 1.15 && bestHX.price <= 2.50)
+            mkP(`${hm} vs ${aw}`, league.name, `🎯 1X (${hm} of gelijk)`, bestHX.price,
+              `Double Chance 1X: ${(pHX*100).toFixed(1)}% | ${bestHX.bookie}: ${bestHX.price} | ${ko}`,
+              Math.round(pHX*100), eHX * 0.16, kickoffTime, bestHX.bookie, matchSignals, refereeName);
+          if (e12 >= MIN_EDGE && best12.price >= 1.15 && best12.price <= 2.50)
+            mkP(`${hm} vs ${aw}`, league.name, `🎯 12 (geen gelijk)`, best12.price,
+              `Double Chance 12: ${(p12*100).toFixed(1)}% | ${best12.bookie}: ${best12.price} | ${ko}`,
+              Math.round(p12*100), e12 * 0.16, kickoffTime, best12.bookie, matchSignals, refereeName);
+          if (eX2 >= MIN_EDGE && bestX2.price >= 1.15 && bestX2.price <= 2.50)
+            mkP(`${hm} vs ${aw}`, league.name, `🎯 X2 (${aw} of gelijk)`, bestX2.price,
+              `Double Chance X2: ${(pX2*100).toFixed(1)}% | ${bestX2.bookie}: ${bestX2.price} | ${ko}`,
+              Math.round(pX2*100), eX2 * 0.16, kickoffTime, bestX2.bookie, matchSignals, refereeName);
         }
 
         // ── Handicap ──────────────────────────────────────────────────
