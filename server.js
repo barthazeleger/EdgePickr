@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.2.0';
+const APP_VERSION    = '9.2.1';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1642,11 +1642,16 @@ function parseGameOdds(oddsResp, homeTeam, awayTeam) {
     for (const bet of (bk.bets || [])) {
       const betId = bet.id;
       const betName = (bet.name || '').toLowerCase();
-      // Moneyline (bet id 1 for basketball, id 1 for hockey)
+      // Moneyline — alleen 2-way entries (exact 2 values Home/Away, geen handicap).
+      // bet id 1 + value count 2 + values zijn {Home, Away} defensief.
       if (betId === 1) {
-        for (const v of (bet.values || [])) {
-          const side = v.value === 'Home' ? 'home' : v.value === 'Away' ? 'away' : null;
-          if (side) ml.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
+        const vals = bet.values || [];
+        const names = vals.map(v => String(v.value || '').trim()).sort().join('|');
+        if (vals.length === 2 && names === 'Away|Home') {
+          for (const v of vals) {
+            const side = v.value === 'Home' ? 'home' : 'away';
+            ml.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
+          }
         }
       }
       // 3-way markt (Home/Draw/Away) — vaak label "Home/Away (Regular Time)", "3Way Result",
@@ -2375,16 +2380,10 @@ async function runHockey(emit) {
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const sharedNotes = `${posStr}${formNote}${b2bNote}${goalDiffNote}${homeRecordNote}`;
 
-        // Moneyline picks — homeOddsOT/awayOddsOT zijn al gefilterd op OT-bookies
-        if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && isOTBookieHockey(bH.bookie))
-          mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
-            `Consensus: ${(fpHome*100).toFixed(1)}%→${(adjHome*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`,
-            Math.round(adjHome*100), homeEdge * 0.28, kickoffTime, bH.bookie, matchSignals);
-
-        if (awayEdge >= MIN_EDGE && bA.price >= 1.60 && bA.price <= MAX_WINNER_ODDS && isOTBookieHockey(bA.bookie))
-          mkP(`${hm} vs ${aw}`, league.name, `✈️ ${aw} wint`, bA.price,
-            `Consensus: ${(fpAway*100).toFixed(1)}%→${(adjAway*100).toFixed(1)}% | ${bA.bookie}: ${bA.price}${sharedNotes} | ${ko}`,
-            Math.round(adjAway*100), awayEdge * 0.28, kickoffTime, bA.bookie, matchSignals);
+        // 2-way ML voor NHL UITGESCHAKELD:
+        // api-sports 'Home/Away' (2 values) kan per bookie 60-min-met-push of incl-OT zijn.
+        // Geen betrouwbare manier om de twee te onderscheiden via de feed.
+        // Alleen 3-way 60-min Poisson picks hieronder (onambiguous).
 
         // ── 3-weg ML (Home/Draw/Away 60-min regulation) via Poisson ──
         // Veilig voor elke bookie: 3-weg wordt altijd op 60-min gesettled, geen OT-verschil.
