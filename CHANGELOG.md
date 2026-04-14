@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.6.0] - 2026-04-14
+
+### Changed (codebase split)
+- `index.html` van 4768 → 4266 regels (-502): LANG dict + `t()`/`applyLanguage()` verhuisd naar `/js/lang.js` (434 regels), AUTH section (`api()`, `getToken()`, `logout()`, `initUserUI()`, push-registratie) naar `/js/auth.js` (70 regels).
+- `<script>`-tags toegevoegd vóór de inline JS zodat lang/auth eerst laden — classic-script realm zorgt voor shared top-level scope, 125 `t()` call-sites resolven correct bij runtime.
+- `.js` toegevoegd aan `ALLOWED_EXTENSIONS` in server.js + lib/config.js zodat Express static handler de nieuwe files serveert.
+- Service worker (`sw.js`) gebruikt geen `caches.open`, dus geen cache-invalidation nodig.
+- Tests: 190 passed, 0 failed. Syntax-check op lang.js + auth.js + server.js clean.
+
+### Notes
+- Next sessions: verdere splits (pages, live, modals) mogelijk als dit stabiel blijkt. Voor nu conservatief: LANG + auth zijn de zelfvoorzienende modules met duidelijkste grenzen.
+
 ## [10.5.3] - 2026-04-14
 
 ### Added (Phase 4 i18n)
