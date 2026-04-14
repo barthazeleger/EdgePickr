@@ -195,7 +195,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' https://cdn.jsdelivr.net",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.6.0';
+const APP_VERSION    = '10.6.1';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -8035,11 +8035,15 @@ app.get('/api/notifications', async (req, res) => {
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
     for (const entry of (c.modelLog || []).slice(0, 3)) {
       if (new Date(entry.date).getTime() < cutoff) break;
-      const dir = entry.newMult > entry.oldMult ? '📈' : '📉';
+      const hasMult = typeof entry.oldMult === 'number' && typeof entry.newMult === 'number';
+      const dir = hasMult ? (entry.newMult > entry.oldMult ? '📈' : '📉') : '🧠';
+      const msg = hasMult
+        ? `Model update: ${entry.note} (${entry.oldMult.toFixed(2)}→${entry.newMult.toFixed(2)})`
+        : `Model update: ${entry.note || entry.type || 'update'}`;
       alerts.push({
         type:        'model',
         icon:        dir,
-        msg:         `Model update: ${entry.note} (${entry.oldMult.toFixed(2)}→${entry.newMult.toFixed(2)})`,
+        msg,
         date:        entry.date,
         modelUpdate: true,
       });

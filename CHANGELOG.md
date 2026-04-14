@@ -2,6 +2,13 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.6.1] - 2026-04-14
+
+### Fixed
+- **`/api/notifications` 500**: server crashte op `entry.oldMult.toFixed(2)` bij modelLog entries zonder oldMult/newMult (milestone, signal_tuning, insight types). Nu type-guarded met `hasMult` check, identiek aan frontend fix in v10.3.0.
+- **CSP source-map error**: Chart.js probeerde `chart.umd.js.map` op te halen van cdn.jsdelivr.net, geblokkeerd door `connect-src 'self'`. Toegevoegd: `https://cdn.jsdelivr.net` aan connect-src (zelfde origin waarvan we al script laden).
+- **Deprecated meta-tag warning**: `<meta name="mobile-web-app-capable">` toegevoegd naast bestaande `apple-mobile-web-app-capable` (Chrome 95+ requires modern tag).
+
 ## [10.6.0] - 2026-04-14
 
 ### Changed (codebase split)
