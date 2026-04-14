@@ -2102,6 +2102,39 @@ test('CSP header bevat strict-default + unsafe-inline waar nodig', () => {
   assert.ok(CSP.includes("'unsafe-inline'"), 'unsafe-inline accepted (legacy)');
 });
 
+// ── Discipline-first additions (v10.0.3) ────────────────────────────────────
+
+console.log('\n  Discipline-first (signal kill + adaptive edge):');
+
+test('signal kill: avg CLV ≤ -3% over ≥50 samples → weight = 0', () => {
+  const SIGNAL_KILL_MIN_N = 50;
+  const SIGNAL_KILL_CLV_PCT = -3.0;
+  const decide = (avgClv, n) => (n >= SIGNAL_KILL_MIN_N && avgClv <= SIGNAL_KILL_CLV_PCT) ? 0 : 1.0;
+  assert.strictEqual(decide(-3.5, 60), 0, 'structureel slecht → mute');
+  assert.strictEqual(decide(-3.0, 50), 0, 'exact op grens → mute');
+  assert.strictEqual(decide(-2.9, 60), 1.0, 'net boven threshold → blijf');
+  assert.strictEqual(decide(-5.0, 49), 1.0, '<50 samples → tune ipv kill');
+  assert.strictEqual(decide(0.5, 100), 1.0, 'positief → niet mute');
+});
+
+test('adaptiveMinEdge: tier-based threshold per sample size', () => {
+  const baseMinEdge = 0.055;
+  const compute = (n) => n >= 100 ? baseMinEdge : n >= 30 ? Math.max(baseMinEdge, 0.065) : Math.max(baseMinEdge, 0.08);
+  assert.strictEqual(compute(0), 0.08, 'geen data → 8% conservatief');
+  assert.strictEqual(compute(29), 0.08, '<30 → 8%');
+  assert.strictEqual(compute(30), 0.065, '30-99 → 6.5%');
+  assert.strictEqual(compute(99), 0.065);
+  assert.strictEqual(compute(100), 0.055, 'proven → base 5.5%');
+  assert.strictEqual(compute(500), 0.055);
+});
+
+test('adaptiveMinEdge: nooit lager dan baseMinEdge', () => {
+  const compute = (n, base) => n >= 100 ? base : n >= 30 ? Math.max(base, 0.065) : Math.max(base, 0.08);
+  // Als baseMinEdge hoger is dan tier-defaults, gebruik base
+  assert.strictEqual(compute(500, 0.10), 0.10, 'base 10% > tier → behoud base');
+  assert.strictEqual(compute(50, 0.10), 0.10);
+});
+
 // ── SUMMARY ──────────────────────────────────────────────────────────────────
 console.log(`\n\u2514\u2500\u2500 Results: ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);
