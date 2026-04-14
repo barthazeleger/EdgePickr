@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.1.5';
+const APP_VERSION    = '9.1.6';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -298,11 +298,15 @@ async function saveCalib(c) {
 
 function detectMarket(markt = '') {
   const m = markt.toLowerCase();
-  if (m.includes('wint') || m.includes('winner') || m.includes('home') || m.includes('thuis')) {
-    if (m.includes('✈️') || m.includes('away') || m.includes('uit') || m.match(/→.*away/)) return 'away';
-    return 'home';
+  // 3-weg 60-min markten (hockey/handbal regulation) krijgen hun eigen bucket
+  const is60min = m.includes('60-min') || m.includes('60 min') || m.includes('🕐');
+  if (m.includes('gelijkspel') || m.includes('draw') || m.includes('x2') || m.includes('1x')) {
+    return is60min ? 'draw60' : 'draw';
   }
-  if (m.includes('gelijkspel') || m.includes('draw') || m.includes('x2') || m.includes('1x')) return 'draw';
+  if (m.includes('wint') || m.includes('winner') || m.includes('home') || m.includes('thuis')) {
+    if (m.includes('✈️') || m.includes('away') || m.includes('uit') || m.match(/→.*away/)) return is60min ? 'away60' : 'away';
+    return is60min ? 'home60' : 'home';
+  }
   if (m.includes('over') || m.includes('>')) return 'over';
   if (m.includes('under') || m.includes('<')) return 'under';
   return 'other';
@@ -1623,13 +1627,15 @@ function fairProbs2Way(oddsArr) {
 
 // Parse basketball/hockey odds from api-sports response
 // Extended: also extracts 1st-half, 1st-period, NRFI, odd/even markets
+// Nieuw: threeWay (Home/Draw/Away 60-min regulation) voor hockey 3-weg ML
 function parseGameOdds(oddsResp, homeTeam, awayTeam) {
   const bookmakers = oddsResp?.[0]?.bookmakers || oddsResp?.bookmakers || [];
-  if (!bookmakers.length) return { moneyline: [], totals: [], spreads: [], halfML: [], halfTotals: [], halfSpreads: [], nrfi: [], oddEven: [] };
+  if (!bookmakers.length) return { moneyline: [], totals: [], spreads: [], halfML: [], halfTotals: [], halfSpreads: [], nrfi: [], oddEven: [], threeWay: [] };
 
   const ml = [], tots = [], spr = [];
   const halfML = [], halfTotals = [], halfSpreads = [];
   const nrfi = [], oddEven = [];
+  const threeWay = [];
   for (const bk of bookmakers) {
     const bkName = bk.name || bk.bookmaker?.name || 'Unknown';
     for (const bet of (bk.bets || [])) {
@@ -1640,6 +1646,18 @@ function parseGameOdds(oddsResp, homeTeam, awayTeam) {
         for (const v of (bet.values || [])) {
           const side = v.value === 'Home' ? 'home' : v.value === 'Away' ? 'away' : null;
           if (side) ml.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
+        }
+      }
+      // 3-way markt (Home/Draw/Away) — vaak label "Home/Away (Regular Time)", "3Way Result",
+      // "Full Time Result" of "1X2". Detecteer op 3 values ongeacht bet id.
+      const vals3 = (bet.values || []).filter(v => ['Home','Draw','Away','1','X','2'].includes((v.value||'').trim()));
+      if (vals3.length === 3 && betId !== 1) {
+        for (const v of vals3) {
+          const s = (v.value || '').trim();
+          const side = (s === 'Home' || s === '1') ? 'home'
+                     : (s === 'Draw' || s === 'X') ? 'draw'
+                     : (s === 'Away' || s === '2') ? 'away' : null;
+          if (side) threeWay.push({ side, price: parseFloat(v.odd) || 0, bookie: bkName });
         }
       }
       // Over/Under (bet id 3 for basketball total points, id 2 for hockey)
@@ -1703,7 +1721,33 @@ function parseGameOdds(oddsResp, homeTeam, awayTeam) {
       }
     }
   }
-  return { moneyline: ml, totals: tots, spreads: spr, halfML, halfTotals, halfSpreads, nrfi, oddEven };
+  return { moneyline: ml, totals: tots, spreads: spr, halfML, halfTotals, halfSpreads, nrfi, oddEven, threeWay };
+}
+
+// Poisson PMF: P(X = k) voor X ~ Poisson(lambda)
+function poisson(k, lambda) {
+  if (lambda <= 0) return k === 0 ? 1 : 0;
+  let result = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) result *= lambda / i;
+  return result;
+}
+
+// Bivariate Poisson (independence assumed): P(home>away), P(tie), P(away>home) na regulation.
+// Gebruikt voor hockey 3-weg ML (60-min regulatie, voor OT).
+function poisson3Way(expHome, expAway, maxGoals = 12) {
+  let pHome = 0, pTie = 0, pAway = 0;
+  for (let h = 0; h <= maxGoals; h++) {
+    const ph = poisson(h, expHome);
+    for (let a = 0; a <= maxGoals; a++) {
+      const pa = poisson(a, expAway);
+      const joint = ph * pa;
+      if (h > a) pHome += joint;
+      else if (h === a) pTie += joint;
+      else pAway += joint;
+    }
+  }
+  const total = pHome + pTie + pAway;
+  return { pHome: pHome / total, pDraw: pTie / total, pAway: pAway / total };
 }
 
 // Best odds from parsed odds array
@@ -2322,6 +2366,47 @@ async function runHockey(emit) {
           mkP(`${hm} vs ${aw}`, league.name, `✈️ ${aw} wint`, bA.price,
             `Consensus: ${(fpAway*100).toFixed(1)}%→${(adjAway*100).toFixed(1)}% | ${bA.bookie}: ${bA.price}${sharedNotes} | ${ko}`,
             Math.round(adjAway*100), awayEdge * 0.28, kickoffTime, bA.bookie, matchSignals);
+
+        // ── 3-weg ML (Home/Draw/Away 60-min regulation) via Poisson ──
+        // Veilig voor elke bookie: 3-weg wordt altijd op 60-min gesettled, geen OT-verschil.
+        if (parsed.threeWay && parsed.threeWay.length) {
+          // Bereken verwachte doelpunten per team uit standings; fallback naar NHL avg ~3.1
+          const hmGFpg = hmSt?.totalGames ? (hmSt.goalsFor / hmSt.totalGames) : 3.1;
+          const hmGApg = hmSt?.totalGames ? (hmSt.goalsAgainst / hmSt.totalGames) : 3.1;
+          const awGFpg = awSt?.totalGames ? (awSt.goalsFor / awSt.totalGames) : 3.1;
+          const awGApg = awSt?.totalGames ? (awSt.goalsAgainst / awSt.totalGames) : 3.1;
+          // Verwachte goals in regulation; home ice +0.15, form en b2b aanpassingen meenemen
+          const formBoost = formAdj * 0.5;
+          const b2bBoost = b2bAdj * 0.5;
+          const expHome = Math.max(0.5, (hmGFpg + awGApg) / 2 + 0.15 + formBoost);
+          const expAway = Math.max(0.5, (awGFpg + hmGApg) / 2 - 0.05 - b2bBoost);
+          const p3 = poisson3Way(expHome, expAway);
+
+          const h3 = parsed.threeWay.filter(o => o.side === 'home');
+          const d3 = parsed.threeWay.filter(o => o.side === 'draw');
+          const a3 = parsed.threeWay.filter(o => o.side === 'away');
+          const bH3 = bestFromArr(h3);
+          const bD3 = bestFromArr(d3);
+          const bA3 = bestFromArr(a3);
+
+          const e3H = bH3.price > 0 ? p3.pHome * bH3.price - 1 : -1;
+          const e3D = bD3.price > 0 ? p3.pDraw * bD3.price - 1 : -1;
+          const e3A = bA3.price > 0 ? p3.pAway * bA3.price - 1 : -1;
+
+          const threeNote = ` | λh:${expHome.toFixed(2)} λa:${expAway.toFixed(2)} | 60-min`;
+          if (e3H >= MIN_EDGE && bH3.price >= 1.60 && bH3.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 ${hm} wint (60-min)`, bH3.price,
+              `3-way: ${(p3.pHome*100).toFixed(1)}% | ${bH3.bookie}: ${bH3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pHome*100), e3H * 0.26, kickoffTime, bH3.bookie, [...matchSignals, '3way_ml']);
+          if (e3D >= MIN_EDGE && bD3.price >= 2.80 && bD3.price <= 8.00)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 Gelijkspel (60-min)`, bD3.price,
+              `3-way: ${(p3.pDraw*100).toFixed(1)}% gelijk na 60 min | ${bD3.bookie}: ${bD3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pDraw*100), e3D * 0.20, kickoffTime, bD3.bookie, [...matchSignals, '3way_ml']);
+          if (e3A >= MIN_EDGE && bA3.price >= 1.60 && bA3.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 ${aw} wint (60-min)`, bA3.price,
+              `3-way: ${(p3.pAway*100).toFixed(1)}% | ${bA3.bookie}: ${bA3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pAway*100), e3A * 0.26, kickoffTime, bA3.bookie, [...matchSignals, '3way_ml']);
+        }
 
         // Over/Under total goals
         const overOdds = parsed.totals.filter(o => o.side === 'over');
@@ -3340,6 +3425,43 @@ async function runHandball(emit) {
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const sharedNotes = `${posStr}${formNote}${goalDiffNote}${homeWRNote}${momentumNote}`;
+
+        // ── 3-weg ML voor handbal (Home/Draw/Away 60-min) via Poisson ──
+        // Handbal heeft vaak een 3-weg markt (gelijkspel in reguliere tijd is mogelijk).
+        if (parsed.threeWay && parsed.threeWay.length) {
+          const hmGFpg = hmSt?.totalGames ? (hmSt.goalsFor / hmSt.totalGames) : 28;
+          const hmGApg = hmSt?.totalGames ? (hmSt.goalsAgainst / hmSt.totalGames) : 28;
+          const awGFpg = awSt?.totalGames ? (awSt.goalsFor / awSt.totalGames) : 28;
+          const awGApg = awSt?.totalGames ? (awSt.goalsAgainst / awSt.totalGames) : 28;
+          const expHome = Math.max(10, (hmGFpg + awGApg) / 2 + ha * 30);
+          const expAway = Math.max(10, (awGFpg + hmGApg) / 2 - ha * 10);
+          const p3 = poisson3Way(expHome, expAway, 60);
+
+          const h3 = parsed.threeWay.filter(o => o.side === 'home');
+          const d3 = parsed.threeWay.filter(o => o.side === 'draw');
+          const a3 = parsed.threeWay.filter(o => o.side === 'away');
+          const bH3 = bestFromArr(h3);
+          const bD3 = bestFromArr(d3);
+          const bA3 = bestFromArr(a3);
+
+          const e3H = bH3.price > 0 ? p3.pHome * bH3.price - 1 : -1;
+          const e3D = bD3.price > 0 ? p3.pDraw * bD3.price - 1 : -1;
+          const e3A = bA3.price > 0 ? p3.pAway * bA3.price - 1 : -1;
+
+          const threeNote = ` | λh:${expHome.toFixed(1)} λa:${expAway.toFixed(1)} | 60-min`;
+          if (e3H >= MIN_EDGE && bH3.price >= 1.60 && bH3.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 ${hm} wint (60-min)`, bH3.price,
+              `3-way: ${(p3.pHome*100).toFixed(1)}% | ${bH3.bookie}: ${bH3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pHome*100), e3H * 0.26, kickoffTime, bH3.bookie, [...matchSignals, '3way_ml']);
+          if (e3D >= MIN_EDGE && bD3.price >= 4.00 && bD3.price <= 15.00)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 Gelijkspel (60-min)`, bD3.price,
+              `3-way: ${(p3.pDraw*100).toFixed(1)}% gelijk na 60 min | ${bD3.bookie}: ${bD3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pDraw*100), e3D * 0.18, kickoffTime, bD3.bookie, [...matchSignals, '3way_ml']);
+          if (e3A >= MIN_EDGE && bA3.price >= 1.60 && bA3.price <= MAX_WINNER_ODDS)
+            mkP(`${hm} vs ${aw}`, league.name, `🕐 ${aw} wint (60-min)`, bA3.price,
+              `3-way: ${(p3.pAway*100).toFixed(1)}% | ${bA3.bookie}: ${bA3.price}${threeNote} | ${ko}`,
+              Math.round(p3.pAway*100), e3A * 0.26, kickoffTime, bA3.bookie, [...matchSignals, '3way_ml']);
+        }
 
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS)
@@ -4907,6 +5029,19 @@ async function fetchCurrentOdds(sport, gameId, markt, bookmaker, opts = {}) {
       val = ou.values?.find(v => v.value === `${isOver ? 'Over' : 'Under'} ${line}`);
     }
   }
+  // 3-weg 60-min markt (hockey/handbal regulation): zoek bet met 3 Home/Draw/Away values
+  else if (m.includes('60-min') || m.includes('60 min') || m.includes('🕐')) {
+    const isDraw = m.includes('gelijkspel') || m.includes('draw');
+    const isHome = !isDraw && (m.includes('🏠') || !m.includes('✈️'));
+    const target = isDraw ? 'Draw' : isHome ? 'Home' : 'Away';
+    for (const bet of (bk.bets || [])) {
+      const v3 = (bet.values || []).filter(x => ['Home','Draw','Away'].includes((x.value||'').trim()));
+      if (v3.length === 3 && bet.id !== 1) {
+        val = v3.find(x => x.value === target);
+        if (val) break;
+      }
+    }
+  }
   // Moneyline / Match Winner
   else if (m.includes('wint') || m.includes('winner') || m.includes('moneyline') || m.includes('🏠') || m.includes('✈️')) {
     const mw = bk.bets?.find(b => b.id === 1 || (b.name||'').toLowerCase().includes('winner') || (b.name||'').toLowerCase().includes('money'));
@@ -6009,18 +6144,44 @@ async function checkOpenBetResults(userId = null) {
     sport: 'basketball',
   }));
 
-  // Hockey finished games (include 1st period scores)
+  // Hockey finished games (include 1st period + regulation score voor 3-weg)
   const hkFinished = [...(hkToday || []), ...(hkYesterday || [])].filter(g => {
     const status = (g.status?.short || '').toUpperCase();
-    return status === 'FT' || status === 'AOT';
-  }).map(g => ({
-    home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
-    scoreH: g.scores?.home ?? 0, scoreA: g.scores?.away ?? 0,
-    // 1st period scores (periods array or period_1 field)
-    p1H: g.periods?.first?.home ?? g.scores?.home?.period_1 ?? null,
-    p1A: g.periods?.first?.away ?? g.scores?.away?.period_1 ?? null,
-    sport: 'hockey',
-  }));
+    return status === 'FT' || status === 'AOT' || status === 'AP';
+  }).map(g => {
+    const status = (g.status?.short || '').toUpperCase();
+    // Regulation score: sommeer eerste 3 periodes indien beschikbaar,
+    // anders als status=FT is de finale score ook de reg score.
+    // Bij AOT/AP was het na 60 min gelijk (anders geen OT nodig).
+    const p1H = g.periods?.first?.home ?? null;
+    const p1A = g.periods?.first?.away ?? null;
+    const p2H = g.periods?.second?.home ?? null;
+    const p2A = g.periods?.second?.away ?? null;
+    const p3H = g.periods?.third?.home ?? null;
+    const p3A = g.periods?.third?.away ?? null;
+    let regH, regA;
+    if (p1H != null && p2H != null && p3H != null) {
+      regH = p1H + p2H + p3H;
+      regA = (p1A || 0) + (p2A || 0) + (p3A || 0);
+    } else if (status === 'FT') {
+      regH = g.scores?.home ?? 0;
+      regA = g.scores?.away ?? 0;
+    } else if (status === 'AOT' || status === 'AP') {
+      // Geen period data → neem aan dat het na 60 min gelijk was (standaard voor AOT/AP)
+      regH = regA = g.scores?.home ?? 0;
+    } else {
+      regH = g.scores?.home ?? 0;
+      regA = g.scores?.away ?? 0;
+    }
+    return {
+      home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
+      scoreH: g.scores?.home ?? 0, scoreA: g.scores?.away ?? 0,
+      regScoreH: regH, regScoreA: regA,
+      status,
+      p1H, p1A,
+      sport: 'hockey',
+    };
+  });
 
   // Baseball finished games (include 1st inning for NRFI resolution)
   const baseballFinished = [...(baToday || []), ...(baYesterday || [])].filter(g => {
@@ -6051,12 +6212,17 @@ async function checkOpenBetResults(userId = null) {
   // Handball finished games
   const handballFinished = [...(hbToday || []), ...(hbYesterday || [])].filter(g => {
     const status = (g.status?.short || '').toUpperCase();
-    return status === 'FT' || status === 'AOT';
-  }).map(g => ({
-    home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
-    scoreH: g.scores?.home ?? 0, scoreA: g.scores?.away ?? 0,
-    sport: 'handball',
-  }));
+    return status === 'FT' || status === 'AOT' || status === 'AP';
+  }).map(g => {
+    const status = (g.status?.short || '').toUpperCase();
+    const scoreH = g.scores?.home ?? 0;
+    const scoreA = g.scores?.away ?? 0;
+    // Handbal: FT = regulation gelijk aan final. AOT/AP = knockout OT, reg was gelijk.
+    let regH = scoreH, regA = scoreA;
+    if (status === 'AOT' || status === 'AP') { regH = regA = scoreH; }
+    return { home: g.teams?.home?.name || '', away: g.teams?.away?.name || '',
+             scoreH, scoreA, regScoreH: regH, regScoreA: regA, status, sport: 'handball' };
+  });
 
   const allFinished = [...footballFinished, ...bbFinished, ...hkFinished, ...baseballFinished, ...nflFinished, ...handballFinished];
 
@@ -6076,8 +6242,26 @@ async function checkOpenBetResults(userId = null) {
     const total = ev.scoreH + ev.scoreA;
     let uitkomst = null;
 
+    // ── 3-weg 60-min markten (hockey/handbal regulation) ──
+    // Gebruikt regScoreH/regScoreA (na 60 min, excl OT/SO). Bij AOT/AP was reg score gelijk.
+    const is60min = markt.includes('60-min') || markt.includes('60 min') || markt.includes('🕐');
+    if (is60min && ev.regScoreH != null && ev.regScoreA != null) {
+      if (markt.includes('gelijkspel') || markt.includes('draw')) {
+        uitkomst = ev.regScoreH === ev.regScoreA ? 'W' : 'L';
+      } else {
+        // Winnaar-detectie: pak teamnaam uit markt
+        const winnerMatch = markt.match(/(.+?)\s+wint/i);
+        if (winnerMatch) {
+          const t = winnerMatch[1].replace(/[🏠✈️🕐]/g, '').trim().toLowerCase();
+          const isHome = ev.home.toLowerCase().includes(t) || t.includes(ev.home.toLowerCase().split(' ').pop());
+          const isAway = ev.away.toLowerCase().includes(t) || t.includes(ev.away.toLowerCase().split(' ').pop());
+          if (isHome) uitkomst = ev.regScoreH > ev.regScoreA ? 'W' : 'L'; // gelijk = L (draw won)
+          else if (isAway) uitkomst = ev.regScoreA > ev.regScoreH ? 'W' : 'L';
+        }
+      }
+    }
     // ── NRFI / YRFI (baseball 1st inning) ──
-    if (markt.includes('nrfi') || markt.includes('yrfi') || markt.includes('no run 1st') || markt.includes('yes run 1st') || markt.includes('no run first') || markt.includes('yes run first')) {
+    else if (markt.includes('nrfi') || markt.includes('yrfi') || markt.includes('no run 1st') || markt.includes('yes run 1st') || markt.includes('no run first') || markt.includes('yes run first')) {
       if (ev.inn1H !== null && ev.inn1H !== undefined && ev.inn1A !== null && ev.inn1A !== undefined) {
         const firstInningRuns = (ev.inn1H || 0) + (ev.inn1A || 0);
         const isNRFI = markt.includes('nrfi') || markt.includes('no run');
