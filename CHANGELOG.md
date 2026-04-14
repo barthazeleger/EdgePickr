@@ -2,6 +2,19 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.7.3] - 2026-04-14
+
+### Changed (ALLOWED_BKMS dynamisch)
+- Football scan gebruikte hardcoded `['bet365', 'unibet']` voor consensus-filtering. Nu: user's `preferredBookies` + altijd Pinnacle/William Hill als sharp refs. Fallback naar brede trusted set (7 bookies) als user geen voorkeur heeft.
+- Gevolg: markt-consensus wordt breder en sharper, en toevoegen van nieuwe bookies (BetCity, TonyBet) werkt automatisch zonder code-change — zodra in preferredBookies, counten ze mee.
+
+### Added (weather signal — NFL + MLB)
+- **NFL**: outdoor stadia krijgen nu weer-data. Regen >5mm = -3% Over, wind >30km/h = -2.5% Over (komt samen in `overP` berekening).
+- **MLB**: outdoor parks idem (regen >5mm = -2.5%, wind >25km/h = -2%). Kleiner dan NFL omdat baseball minder stil gelegd wordt bij wind.
+- Weather-tag in `matchSignals` voor CLV-autotune, `weatherNote` in `sharedNotes` voor UI.
+- Max weather-calls per scan gerespecteerd (existing `MAX_WEATHER_CALLS` cap).
+- Voor indoor sports (basketball, hockey, handball) niet relevant → niet geïmplementeerd.
+
 ## [10.7.2] - 2026-04-14
 
 ### Added (multi-sport stakes signal)

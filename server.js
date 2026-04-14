@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.7.2';
+const APP_VERSION    = '10.7.3';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -3875,6 +3875,19 @@ async function runBaseball(emit) {
         const stakesAdj = (hmStakesM.adj - awStakesM.adj) * mlbStakesW;
         const stakesNote = (hmStakesM.label || awStakesM.label) ? ` | Stakes: ${hmStakesM.label||'—'} vs ${awStakesM.label||'—'}` : '';
 
+        // ── Weather (outdoor MLB parks) — rain/wind dempen run-totaal ──
+        let mlbWeatherAdj = 0, mlbWeatherNote = '';
+        const mlbVenueCoords = getVenueCoords(g) || getVenueCoords({ venue: g.venue });
+        if (mlbVenueCoords && weatherCallsThisScan < MAX_WEATHER_CALLS) {
+          const w = await fetchMatchWeather(mlbVenueCoords.lat, mlbVenueCoords.lon, new Date(kickoffMs));
+          if (w) {
+            const parts = [];
+            if (w.rain > 5)  { mlbWeatherAdj -= 0.025; parts.push(`🌧️ ${w.rain}mm`); }
+            if (w.wind > 25) { mlbWeatherAdj -= 0.02; parts.push(`💨 ${w.wind}km/h`); }
+            if (parts.length) mlbWeatherNote = ` | Weer: ${parts.join(', ')} → Under nudge ${(mlbWeatherAdj*100).toFixed(0)}%`;
+          }
+        }
+
         // Home advantage (~54% in MLB)
         const ha = 0.04;
         const adjHome = Math.min(0.88, fpHome + ha + posAdj + formAdj + totalAdv + mlbInjAdj + stakesAdj);
@@ -3899,11 +3912,12 @@ async function runBaseball(emit) {
         }
         if (mlbInjDiff !== 0) matchSignals.push(`mlb_injury_diff:${mlbInjDiff>0?'+':''}${mlbInjDiff}`);
         if (hmStakesM.adj !== 0 || awStakesM.adj !== 0) matchSignals.push(`stakes:${((hmStakesM.adj - awStakesM.adj)*100).toFixed(1)}%`);
+        if (mlbWeatherAdj !== 0) matchSignals.push(`weather:${mlbWeatherAdj>0?'+':''}${(mlbWeatherAdj*100).toFixed(1)}%`);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
         const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note}` : '';
-        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}`;
+        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}${mlbWeatherNote}`;
 
         // v2: feature_snapshot + pick_candidates voor MLB ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -3953,7 +3967,7 @@ async function runBaseball(emit) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
-              const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
+              const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + mlbWeatherAdj));
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
@@ -4271,6 +4285,20 @@ async function runFootballUS(emit) {
           formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
         }
 
+        // ── Weather (outdoor NFL stadia) — nudge O/U bij heavy rain/wind ──
+        let weatherAdj = 0, weatherNote = '';
+        const nflVenueCoords = getVenueCoords(g) || getVenueCoords({ venue: g.venue });
+        if (nflVenueCoords && weatherCallsThisScan < MAX_WEATHER_CALLS) {
+          const w = await fetchMatchWeather(nflVenueCoords.lat, nflVenueCoords.lon, new Date(kickoffMs));
+          if (w) {
+            const parts = [];
+            if (w.rain > 5)  { weatherAdj -= 0.03; parts.push(`🌧️ ${w.rain}mm regen`); }
+            if (w.wind > 30) { weatherAdj -= 0.025; parts.push(`💨 ${w.wind}km/h wind`); }
+            if (parts.length) weatherNote = ` | Weer: ${parts.join(', ')} → Under nudge ${(weatherAdj*100).toFixed(0)}%`;
+            else weatherNote = ` | ☀️ ${w.temp}°C`;
+          }
+        }
+
         // Home advantage (~57% in NFL)
         const ha = 0.057;
         // Bye week: markt overvalueert dit (prijst +1.0 punt, werkelijk +0.3)
@@ -4354,10 +4382,11 @@ async function runFootballUS(emit) {
         // logged-only (nog niet in adjHome/adjAway gewogen): nfl_injury_diff
         if (nflInjuryDiff !== 0) matchSignals.push(`nfl_injury_diff:${nflInjuryDiff>0?'+':''}${nflInjuryDiff}`);
         if (hmStakesN.adj !== 0 || awStakesN.adj !== 0) matchSignals.push(`stakes:${((hmStakesN.adj - awStakesN.adj)*100).toFixed(1)}%`);
+        if (weatherAdj !== 0) matchSignals.push(`weather:${weatherAdj>0?'+':''}${(weatherAdj*100).toFixed(1)}%`);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${byeNote}${ptsDiffNote}${homeRecordNote}${divisionNote}`;
+        const sharedNotes = `${posStr}${formNote}${byeNote}${ptsDiffNote}${homeRecordNote}${divisionNote}${weatherNote}`;
 
         // v2: feature_snapshot + pick_candidates voor NFL ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -4404,7 +4433,8 @@ async function runFootballUS(emit) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
-              const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
+              // Weather-adjusted overP: regen/wind = minder scoring = under nudge
+              const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + weatherAdj));
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
@@ -4981,12 +5011,18 @@ async function runPrematch(emit) {
 
         const rawBks = oddsResp[0]?.bookmakers || [];
 
-        // Alleen Bet365 en Unibet · andere bookmakers hebben onbetrouwbare odds
-        const ALLOWED_BKMS = ['bet365', 'unibet'];
+        // Bookie filter: dynamisch via user's preferredBookies (fallback trusted set).
+        // Consensus/fairProbs gebruikt BREDE pool voor markt-truth; pick-odds filtering
+        // gebeurt pas in bestFromArr via _preferredBookiesLower.
+        // Trusted bookies: user prefs + scherpe refs die altijd consensus versterken.
+        const TRUSTED_FALLBACK = ['bet365', 'unibet', 'pinnacle', 'william hill', 'betfair', '888sport', 'marathonbet'];
+        const bkmsForConsensus = (_preferredBookiesLower?.length
+          ? Array.from(new Set([..._preferredBookiesLower, 'pinnacle', 'william hill']))
+          : TRUSTED_FALLBACK);
         const filteredBks = rawBks.filter(b =>
-          ALLOWED_BKMS.some(name => b.name?.toLowerCase().includes(name))
+          bkmsForConsensus.some(name => b.name?.toLowerCase().includes(name))
         );
-        if (filteredBks.length === 0) continue; // geen van beide beschikbaar, skip
+        if (filteredBks.length === 0) continue; // geen trusted bookies, skip
 
         const bookies = convertAfOdds(filteredBks, hm, aw);
         const fp = fairProbs(bookies, hm, aw);
