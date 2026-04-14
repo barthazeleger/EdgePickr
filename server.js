@@ -319,7 +319,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.2.1';
+const APP_VERSION    = '10.2.2';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -8582,6 +8582,11 @@ const CLV_ALERT_INTERVAL = 25;          // ping elke 25 nieuwe settled CLV bets
 const DD_ALERT_THRESHOLD = -0.15;       // -15% bankroll over 7d
 const DD_ALERT_COOLDOWN_MS = 24 * 3600 * 1000; // max 1x/dag
 
+// Drift alert state: alleen alerten bij NIEUWE drift (niet elk uur dezelfde)
+const _driftAlertedKeys = new Set();
+const DRIFT_ALERT_RESET_MS = 7 * 86400000; // reset wekelijks
+let _driftAlertResetAt = Date.now();
+
 function scheduleHealthAlerts() {
   const INTERVAL_MS = 60 * 60 * 1000; // hourly check
 
@@ -8620,6 +8625,46 @@ function scheduleHealthAlerts() {
         await tg(`📊 CLV Milestone\n${all.length} settled bets met CLV data\nGemiddelde CLV: ${avgClv > 0 ? '+' : ''}${avgClv.toFixed(2)}%\n${positive}/${all.length} positief (${posPct}%)\n${verdict}\n\nPer markt (≥10 bets):\n${marketSummary}`).catch(() => {});
         _lastClvAlertN = all.length;
       }
+
+      // Drift alert: detect markten/signalen die recent significant verslechteren
+      if (Date.now() - _driftAlertResetAt > DRIFT_ALERT_RESET_MS) {
+        _driftAlertedKeys.clear();
+        _driftAlertResetAt = Date.now();
+      }
+      try {
+        const driftAll = (clvBets || []).filter(b => typeof b.clv_pct === 'number');
+        if (driftAll.length >= 30) {
+          const byMarketRecent = {}, byMarketAll = {};
+          for (let i = 0; i < driftAll.length; i++) {
+            const b = driftAll[i];
+            const k = `${normalizeSport(b.sport)}_${detectMarket(b.markt || 'other')}`;
+            if (!byMarketAll[k]) byMarketAll[k] = [];
+            byMarketAll[k].push(b.clv_pct);
+            if (i < 25) {
+              if (!byMarketRecent[k]) byMarketRecent[k] = [];
+              byMarketRecent[k].push(b.clv_pct);
+            }
+          }
+          for (const [k, recent] of Object.entries(byMarketRecent)) {
+            if (recent.length < 10) continue;
+            const all = byMarketAll[k] || [];
+            if (all.length < 30) continue;
+            const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length;
+            const avgAll = all.reduce((a, b) => a + b, 0) / all.length;
+            const drift = avgRecent - avgAll;
+            const alertKey = `${k}_drop`;
+            if (drift < -2 && !_driftAlertedKeys.has(alertKey)) {
+              _driftAlertedKeys.add(alertKey);
+              await supabase.from('notifications').insert({
+                type: 'drift_alert',
+                title: `📉 Drift gedetecteerd: ${k}`,
+                body: `Recente CLV ${avgRecent.toFixed(2)}% vs all-time ${avgAll.toFixed(2)}% (Δ ${drift.toFixed(2)}%, n=${recent.length}/${all.length}). Markt verslechtert. Overweeg observatie of admin override.`,
+                read: false, user_id: null,
+              });
+            }
+          }
+        }
+      } catch { /* swallow */ }
 
       // Drawdown soft alert (alleen warn, geen pause)
       if (Date.now() - _lastDdAlertAt > DD_ALERT_COOLDOWN_MS) {
@@ -9277,7 +9322,20 @@ function scheduleDailyResultsCheck() {
     await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
     // CLV-based autotune (sneller signal dan W/L) — draait dagelijks na results
     const clvTune = await autoTuneSignalsByClv().catch(e => ({ tuned: 0, error: e.message }));
-    if (clvTune.tuned > 0) console.log(`📊 CLV autotune: ${clvTune.tuned} signal weights aangepast (${clvTune.muted || 0} gemute)`);
+    if (clvTune.tuned > 0) {
+      console.log(`📊 CLV autotune: ${clvTune.tuned} signal weights aangepast (${clvTune.muted || 0} gemute)`);
+      // Inbox notification bij significante modelverandering
+      try {
+        const muted = (clvTune.adjustments || []).filter(a => a.reason).slice(0, 3).map(a => `${a.name} (${a.avgClv}%)`).join(', ');
+        const top = (clvTune.adjustments || []).filter(a => !a.reason).slice(0, 3).map(a => `${a.name}: ${a.old}→${a.new}`).join(', ');
+        await supabase.from('notifications').insert({
+          type: 'model_update',
+          title: `🧠 Model bijgewerkt: ${clvTune.tuned} signal weights aangepast`,
+          body: `${clvTune.muted || 0} signal(s) gemute (CLV ≤ -3%): ${muted || 'geen'}\n${top ? `Aangepast: ${top}` : ''}`,
+          read: false, user_id: null,
+        });
+      } catch { /* swallow */ }
+    }
 
     scheduleDailyResultsCheck(); // plan volgende dag
   }, delay);
