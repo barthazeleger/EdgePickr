@@ -2,6 +2,45 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.2.2] - 2026-04-14
+
+### Added (autonomy completion)
+- Inbox notifications bij model-update (CLV autotune signal weight wijzigingen)
+- Inbox drift alerts: dagelijkse check van markten met recente CLV verslechtering ≥2%
+- 5 notification types totaal: kill_switch, model_update, drift_alert + Telegram CLV milestone + drawdown
+
+## [10.2.1] - 2026-04-14
+
+### Changed (reviewer pivot: observability > bedienbaarheid)
+- Operator failsafes vereenvoudigd naar minimal set (master_scan_enabled, market/signal_auto_kill, panic_mode, max_picks_per_day)
+- Dashboard UI: 5 toggle-knoppen ipv uitgebreide cockpit
+- Panic mode in scan: max 2 picks + alleen PROVEN markten + max 1 per sport
+- Drift endpoint: multi-window 25/50/100 vs all-time, per markt+signal+bookie, met sample size + alert min_n
+
+### Added
+- `GET/POST /api/admin/v2/operator` — minimale failsafe toggles
+- `top_contributions` (top 5 ranked) in why-this-pick attributie
+- Datakwaliteit: oldest_feature_snapshot_age_min + avg_bookmaker_count + avg_quality_score
+
+## [10.2.0] - 2026-04-14
+
+### Added (model control, reviewer-roadmap)
+- `GET /api/admin/v2/drift?recent=N` — drift detection per markt + signal
+- `GET /api/admin/v2/why-this-pick?bet_id=X` — pick attribution + lineage
+- `GET /api/admin/v2/data-quality?hours=N` — quality flag aggregaties
+- Dashboard UI knoppen: kill-switch toggle, refresh, autotune trigger, drift view
+
+## [10.1.5] - 2026-04-14
+
+### Added
+- Bootstrap mode in adaptive MIN_EDGE: bypass per-markt tiers tot ≥100 totaal settled bets
+- Voorkomt strangulatie van data-collectie tijdens eerste weken
+
+## [10.1.4] - 2026-04-14
+
+### Fixed (reviewer-advies)
+- Adaptive MIN_EDGE gate sluit ook combiPool: geen combo-legs op onbewezen markten
+
 ## [10.1.3] - 2026-04-14
 
 ### Added
