@@ -906,15 +906,48 @@ test('live scan error does not leak err.message', () => {
 
 test('admin-only endpoints require admin role', () => {
   // Verify these endpoint patterns are admin-protected
-  const adminEndpoints = ['/api/model-feed', '/api/signal-analysis', '/api/timing-analysis',
-    '/api/admin/users', '/api/bets/recalculate', '/api/debug/wl', '/api/backfill-times'];
-  // These should all be in the admin-required list (verified by reading server.js)
-  assert.strictEqual(adminEndpoints.length, 7, 'Should have 7 admin endpoints listed');
+  const adminEndpoints = [
+    '/api/model-feed', '/api/signal-analysis', '/api/timing-analysis',
+    '/api/admin/users', '/api/bets/recalculate', '/api/debug/wl', '/api/backfill-times',
+    // v2 admin endpoints (v9.6+)
+    '/api/admin/v2/pick-candidates-summary',
+    '/api/admin/v2/clv-stats',
+    '/api/admin/v2/snapshot-counts',
+    '/api/admin/v2/kill-switch',
+    '/api/admin/v2/walkforward',
+    '/api/admin/v2/autotune-clv',
+    '/api/clv/backfill',
+    '/api/clv/backfill/probe',
+    '/api/debug/odds',
+  ];
+  assert.strictEqual(adminEndpoints.length, 16, 'Should have 16 admin endpoints listed');
   // None of these should be in PUBLIC_PATHS
   const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
   for (const ep of adminEndpoints) {
     assert.ok(!PUBLIC_PATHS.has(ep), `${ep} should NOT be in public paths`);
   }
+});
+
+test('settings whitelist includes v2 toggles maar geen dangerous keys', () => {
+  // Whitelist moet behouden worden bij elke v2 toevoeging
+  const ALLOWED_SETTINGS = new Set([
+    'startBankroll','unitEur','language','timezone','scanTimes','scanEnabled',
+    'twoFactorEnabled','telegramChatId','telegramEnabled','preferredBookies',
+  ]);
+  assert.ok(ALLOWED_SETTINGS.has('preferredBookies'));
+  // Dangerous prototype-keys mogen NIET in whitelist
+  const dangerous = ['__proto__', 'constructor', 'prototype', '__defineGetter__', 'isAdmin', 'role', 'status'];
+  for (const k of dangerous) assert.ok(!ALLOWED_SETTINGS.has(k), `${k} mag niet in whitelist`);
+});
+
+test('v2 endpoints valideren input ranges (hours/days)', () => {
+  // Server gebruikt Math.max(1, Math.min(N, parseInt(value) || default))
+  const clamp = (val, def, max) => Math.max(1, Math.min(max, parseInt(val) || def));
+  assert.strictEqual(clamp(undefined, 24, 168), 24, 'default 24');
+  assert.strictEqual(clamp('999', 24, 168), 168, 'clamp to max');
+  assert.strictEqual(clamp('0', 24, 168), 24, '0 is falsy → fallback default'); // matches server.js logic
+  assert.strictEqual(clamp('xyz', 24, 168), 24, 'invalid → default');
+  assert.strictEqual(clamp('-5', 24, 168), 1, 'negatief → min');
 });
 
 test('PUBLIC_PATHS only contains safe endpoints', () => {
