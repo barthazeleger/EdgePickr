@@ -1212,30 +1212,61 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v9.0.3</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v9.3.0</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
-          <div style="font-weight:600;margin-bottom:5px">Analyzer multi-sport + CLV backfill</div>
-          <div style="color:var(--muted);line-height:1.7">🔍 Analyzer vindt nu óók niet-gescande wedstrijden (threshold versoepeld 100 → 70, beide teams fuzzy)<br>
-          🏀🏒⚾🏈🤾 Analyzer herkent sport-hints (nhl, nba, mlb, nfl, handbal) en doorzoekt andere sporten als football niks oplevert<br>
-          🔁 Nieuwe admin endpoint <code>POST /api/clv/backfill</code> vult ontbrekende CLV voor settled bets aan<br>
-          🔔 Notificatie per succesvolle CLV-backfill</div>
+          <div style="font-weight:600;margin-bottom:5px">Market-sanity check: model vs markt vergelijking</div>
+          <div style="color:var(--muted);line-height:1.7">🛡️ Elke pick wordt nu gecheckt tegen devigged market consensus (3-way odds vanuit ~10 bookies)<br>
+          ❌ Picks met &gt;4% divergentie tussen model-prob en markt worden automatisch geskipt — voorkomt false edges<br>
+          🕐 NHL 2-way ML terug aan mét dubbele guardrail (OT-bookie + sanity)<br>
+          🧮 Nieuwe toolkit: <code>devigProportional</code>, <code>consensus3Way</code>, <code>deriveIncOTProbFrom3Way</code><br>
+          ✅ 108 unit tests (26 nieuwe voor market-derivation)</div>
         </div>
       </div>
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v9.0.2</span><br>
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v9.2</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
-          <div style="font-weight:600;margin-bottom:5px">Pre-match &amp; CLV checks betrouwbaar voor nachtwedstrijden</div>
-          <div style="color:var(--muted);line-height:1.7">🌙 Pre-match + CLV werken nu ook voor nachtwedstrijden (zoekt gisteren/vandaag/morgen)<br>
-          💾 fixture_id wordt opgeslagen zodat checks na server-herstart betrouwbaar zijn<br>
-          🔔 Falende checks krijgen nu een notificatie in het belletje<br>
-          📅 Mijn Bets sorteert nu chronologisch (19:00 vandaag vóór 01:00 morgen)<br>
-          🔁 Automatische CLV retry 5 min later als eerste poging faalt</div>
+          <div style="font-weight:600;margin-bottom:5px">Preferred bookies + final-only rendering</div>
+          <div style="color:var(--muted);line-height:1.7">🏦 Edge-evaluatie op jouw bookies (Bet365 + Unibet default); picks vallen niet meer weg omdat een andere bookie hogere odds had<br>
+          🎯 Scan toont picks pas als volledig klaar — geen flicker meer<br>
+          🗑️ Live scan uit prematch flow verwijderd (legacy)<br>
+          🎚️ Strict ML parser: bet id 1 alleen met exact 2 values {Home, Away}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v9.1</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">3-way ML Poisson + preferred bookies UI + diagnostics</div>
+          <div style="color:var(--muted);line-height:1.7">🕐 Nieuw: 3-way ML 60-min via bivariate Poisson voor hockey + handbal (🏠/🤝/✈️)<br>
+          🏦 Settings → Bookies: toggle welke bookies je gebruikt<br>
+          ⏰ Scan-tijden accepteren HH:MM formaat (default 07:30)<br>
+          📊 Per Sport kaart in inbox met win rate per sport<br>
+          🧠 Sport-bucket fix: NHL/NBA/etc bets mixen niet meer met football_* in calibratie<br>
+          📊 CLV backfill knop in Mijn Bets UI + probe endpoint voor diagnose</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v9.0</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">Analyzer multi-sport + CLV backfill + nachtwedstrijden</div>
+          <div style="color:var(--muted);line-height:1.7">🔍 Analyzer vindt ook niet-gescande wedstrijden; multi-sport support<br>
+          🌙 Pre-match + CLV checks werken voor nachtwedstrijden (gisteren/vandaag/morgen)<br>
+          💾 fixture_id wordt opgeslagen voor robuuste re-scheduling na deploy<br>
+          🔁 Automatische CLV retry na 5 min<br>
+          📅 Mijn Bets sorteert chronologisch (19:00 vandaag vóór 01:00 morgen)</div>
         </div>
       </div>
 
