@@ -1200,7 +1200,21 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v9.0.2</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v9.0.3</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">Analyzer multi-sport + CLV backfill</div>
+          <div style="color:var(--muted);line-height:1.7">🔍 Analyzer vindt nu óók niet-gescande wedstrijden (threshold versoepeld 100 → 70, beide teams fuzzy)<br>
+          🏀🏒⚾🏈🤾 Analyzer herkent sport-hints (nhl, nba, mlb, nfl, handbal) en doorzoekt andere sporten als football niks oplevert<br>
+          🔁 Nieuwe admin endpoint <code>POST /api/clv/backfill</code> vult ontbrekende CLV voor settled bets aan<br>
+          🔔 Notificatie per succesvolle CLV-backfill</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v9.0.2</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
