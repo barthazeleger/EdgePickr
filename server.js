@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.0.9';
+const APP_VERSION    = '9.1.0';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -4875,14 +4875,17 @@ async function findGameIdVerbose(sport, matchName, anchorDate = null, windowDays
 }
 
 // Haal odds op voor elke sport en match elke markt
-async function fetchCurrentOdds(sport, gameId, markt, bookmaker) {
+async function fetchCurrentOdds(sport, gameId, markt, bookmaker, opts = {}) {
   if (!gameId) return null;
   const cfg = getSportApiConfig(sport);
   const oddsData = await afGet(cfg.host, cfg.oddsPath, { [cfg.fixtureParam]: gameId }).catch(() => []);
   const rawBks = oddsData?.[0]?.bookmakers || [];
-  const userBk = (bookmaker || 'bet365').toLowerCase();
-  const bk = rawBks.find(b => b.name?.toLowerCase().includes(userBk))
-          || rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
+  const userBk = (bookmaker || '').toLowerCase();
+  const strictBookie = opts.strictBookie === true;
+  let bk = userBk ? rawBks.find(b => b.name?.toLowerCase().includes(userBk)) : null;
+  if (!bk && !strictBookie) {
+    bk = rawBks.find(b => b.name?.toLowerCase().includes('bet365')) || rawBks[0];
+  }
   if (!bk) return null;
 
   const m = markt.toLowerCase();
@@ -5098,7 +5101,7 @@ async function scheduleCLVCheck(bet) {
       // Gebruik sport-aware helpers voor alle sport APIs
       const betSport = bet.sport || 'football';
       const fxId = bet.fixtureId || await findGameId(betSport, matchName);
-      const closingOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip);
+      const closingOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip, { strictBookie: true });
       const usedBookie = bet.tip || 'Bet365';
 
       if (!closingOdds) {
@@ -5300,10 +5303,11 @@ app.post('/api/clv/backfill', requireAdmin, async (req, res) => {
           await new Promise(rs => setTimeout(rs, 200));
           continue;
         }
-        const closingOdds = await fetchCurrentOdds(sport, fxId, markt, r.tip);
+        const closingOdds = await fetchCurrentOdds(sport, fxId, markt, r.tip, { strictBookie: true });
         if (!closingOdds || !loggedOdds) {
           failed++;
-          details.push({ id, wedstrijd, sport, fxId, reason: 'closing odds niet beschikbaar' });
+          details.push({ id, wedstrijd, sport, fxId, bookie: r.tip,
+                         reason: `closing odds niet beschikbaar voor bookie "${r.tip}"` });
           await new Promise(rs => setTimeout(rs, 200));
           continue;
         }
