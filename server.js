@@ -103,14 +103,24 @@ async function refreshMarketSampleCounts() {
   } catch { /* swallow */ }
 }
 
+// Bootstrap-fase: tot we minimum totale settled bets hebben gebruiken we
+// base MIN_EDGE overal. Anders strangulen we dataverzameling tijdens de
+// eerste weken waarin per-markt n=0 en alle markten op 8% threshold zouden vallen.
+const BOOTSTRAP_MIN_TOTAL_BETS = 100;
+
 // Returns adjusted MIN_EDGE for given sport+market based on settled bet history.
-// < 30 settled bets → 8% edge required (conservative)
-// 30-100 → 6.5% (moderate)
-// 100+ → base MIN_EDGE (proven market)
+// Bootstrap (<100 totaal): base MIN_EDGE everywhere — eerst data verzamelen.
+// Post-bootstrap per-markt:
+//   < 30 settled bets → 8% edge required (conservative)
+//   30-100 → 6.5% (moderate)
+//   100+ → base MIN_EDGE (proven market)
 function adaptiveMinEdge(sport, marktLabel, baseMinEdge) {
   if (Date.now() - _marketSampleCache.at > MARKET_SAMPLE_TTL_MS) {
     refreshMarketSampleCounts().catch(() => {});
   }
+  const totalSettled = Object.values(_marketSampleCache.data).reduce((a, b) => a + b, 0);
+  // Bootstrap: nog te weinig globale data om strict per-markt te gaan
+  if (totalSettled < BOOTSTRAP_MIN_TOTAL_BETS) return baseMinEdge;
   const key = `${normalizeSport(sport)}_${detectMarket(marktLabel || 'other')}`;
   const n = _marketSampleCache.data[key] || 0;
   if (n >= 100) return baseMinEdge;
@@ -298,7 +308,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.1.4';
+const APP_VERSION    = '10.1.5';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -5973,13 +5983,18 @@ app.get('/api/admin/v2/market-thresholds', requireAdmin, async (req, res) => {
   try {
     if (Date.now() - _marketSampleCache.at > MARKET_SAMPLE_TTL_MS) await refreshMarketSampleCounts();
     const baseMinEdge = 0.055;
+    const totalSettled = Object.values(_marketSampleCache.data).reduce((a, b) => a + b, 0);
+    const bootstrap = totalSettled < BOOTSTRAP_MIN_TOTAL_BETS;
     const tiers = Object.entries(_marketSampleCache.data).map(([key, n]) => {
-      const tier = n >= 100 ? 'PROVEN' : n >= 30 ? 'EARLY' : 'UNPROVEN';
-      const minEdge = n >= 100 ? baseMinEdge : n >= 30 ? Math.max(baseMinEdge, 0.065) : Math.max(baseMinEdge, 0.08);
+      const tier = bootstrap ? 'BOOTSTRAP' : n >= 100 ? 'PROVEN' : n >= 30 ? 'EARLY' : 'UNPROVEN';
+      const minEdge = bootstrap ? baseMinEdge : n >= 100 ? baseMinEdge : n >= 30 ? Math.max(baseMinEdge, 0.065) : Math.max(baseMinEdge, 0.08);
       return { key, n, tier, min_edge_pct: +(minEdge * 100).toFixed(1) };
     }).sort((a, b) => b.n - a.n);
     res.json({
       base_min_edge_pct: baseMinEdge * 100,
+      bootstrap_active: bootstrap,
+      total_settled: totalSettled,
+      bootstrap_threshold: BOOTSTRAP_MIN_TOTAL_BETS,
       tiers,
       thresholds: { proven_min_n: 100, early_min_n: 30, unproven_min_edge_pct: 8.0, early_min_edge_pct: 6.5 },
     });

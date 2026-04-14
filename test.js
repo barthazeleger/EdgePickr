@@ -2128,6 +2128,24 @@ test('adaptiveMinEdge: tier-based threshold per sample size', () => {
   assert.strictEqual(compute(500), 0.055);
 });
 
+test('adaptiveMinEdge: bootstrap mode bypass tot 100 totaal', () => {
+  const BOOTSTRAP = 100;
+  const baseMinEdge = 0.055;
+  const compute = (totalSettled, marketN) => {
+    if (totalSettled < BOOTSTRAP) return baseMinEdge;
+    if (marketN >= 100) return baseMinEdge;
+    if (marketN >= 30) return Math.max(baseMinEdge, 0.065);
+    return Math.max(baseMinEdge, 0.08);
+  };
+  // Bootstrap fase: alles op base ondanks per-markt 0
+  assert.strictEqual(compute(0, 0), 0.055, 'geen data globaal → base');
+  assert.strictEqual(compute(50, 5), 0.055, 'in bootstrap → bypass adaptive');
+  assert.strictEqual(compute(99, 0), 0.055, 'net onder bootstrap drempel → base');
+  // Post-bootstrap: tiers actief
+  assert.strictEqual(compute(100, 0), 0.08, 'post-bootstrap, n=0 → strict 8%');
+  assert.strictEqual(compute(500, 50), 0.065, 'post-bootstrap, n=50 → 6.5%');
+});
+
 test('adaptiveMinEdge: nooit lager dan baseMinEdge', () => {
   const compute = (n, base) => n >= 100 ? base : n >= 30 ? Math.max(base, 0.065) : Math.max(base, 0.08);
   // Als baseMinEdge hoger is dan tier-defaults, gebruik base
