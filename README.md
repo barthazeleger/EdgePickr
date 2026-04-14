@@ -1,4 +1,4 @@
-# EdgePickr v10.2
+# EdgePickr v10.3
 
 **Quantitative market-disagreement engine** voor multi-sport betting analytics.
 Markt = baseline truth, model = residual overlay. Volledig autonoom met

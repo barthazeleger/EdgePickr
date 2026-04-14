@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.3.0] - 2026-04-14
+
+### Changed (IA reorganisatie)
+- Nieuwe **Model**-tab (admin-only): signal gewichten, markt multipliers, per-sport, model updates samen
+- **Inbox** uitgekleed tot puur notificatie-feed (geen overlap meer met data/model)
+- **v2 Pipeline Health** verhuisd van Inbox → Status (operational health centraal)
+- **Model updates** verhuisd van Info → Model
+- `loadInbox()` gesplitst in `loadInbox()` + `loadModelTab()` + `loadAppVersion()`
+
+### Fixed
+- Light-mode WCAG contrast: yellow `#f59e0b`→`#b45309`, green `#10b981`→`#047857`, red `#ef4444`→`#b91c1c` (alle 5:1+ AA)
+- Model-log renderer crashte op milestone/signal_tuning/insight entries zonder oldMult/newMult — nu type-aware
+
+### Docs
+- Info-tab: model uitgelegd herschreven naar quantitative market-disagreement framing
+- Databronnen: MLB StatsAPI, NHL public API, OpenWeatherMap, Supabase toegevoegd
+- Abonnementen: deprecated rijen + gratis API-bundle verwijderd, sectie toont reële kosten + Render free
+- Inzetstrategie: €500 startkapitaal, 1U=€25, max 1/match, max 2/sport, adaptive 5.5-8%, bootstrap tot 100 bets
+
 ## [10.2.2] - 2026-04-14
 
 ### Added (autonomy completion)

@@ -475,6 +475,7 @@ nav::-webkit-scrollbar { display: none; }
     <button class="tab-btn" onclick="go('live')">🎯 <span data-i18n="nav_bets">Mijn Bets</span></button>
     <button class="tab-btn" onclick="go('analyse')">🔍 <span data-i18n="nav_analyse">Analyse</span></button>
     <button class="tab-btn admin-only" onclick="go('inbox')" style="display:none">📬 <span data-i18n="nav_inbox">Inbox</span></button>
+    <button class="tab-btn admin-only" onclick="go('model')" style="display:none">🧠 <span data-i18n="nav_model">Model</span></button>
     <button class="tab-btn" onclick="go('status')">🟢 <span data-i18n="nav_status">Status</span></button>
     <button class="tab-btn" onclick="go('info')">📖 <span data-i18n="nav_info">Info</span></button>
   </nav>
@@ -936,26 +937,21 @@ nav::-webkit-scrollbar { display: none; }
     </div>
   </div>
 
+</section>
+
+<!-- ══ MODEL (admin only) ═══════════════════════════════════════════════════ -->
+<section class="page admin-only" id="page-model" style="display:none">
   <!-- Signal Weights -->
   <div class="card" style="margin-bottom:16px">
     <div class="card-title" style="margin-bottom:14px">🔧 Huidige Signal Gewichten</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Gewichten worden automatisch aangepast op basis van prestaties. 1.0 = neutraal, >1.0 = versterkt, &lt;1.0 = afgezwakt.</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Gewichten worden automatisch aangepast op basis van prestaties. 1.0 = neutraal, &gt;1.0 = versterkt, &lt;1.0 = afgezwakt, 0 = inactief (logged-only).</div>
     <div id="inbox-weights" style="font-size:13px">
       <div style="color:var(--muted)">Nog geen signal data</div>
     </div>
   </div>
 
-  <!-- Per Sport -->
-  <div class="card">
-    <div class="card-title" style="margin-bottom:14px">🏆 Per Sport</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Win rate en P/L per sport, gebaseerd op settled bets.</div>
-    <div id="inbox-per-sport" style="font-size:13px">
-      <div style="color:var(--muted)">Nog geen data per sport</div>
-    </div>
-  </div>
-
-  <!-- Market Multipliers -->
-  <div class="card">
+  <!-- Markt Multipliers -->
+  <div class="card" style="margin-bottom:16px">
     <div class="card-title" style="margin-bottom:14px">📊 Markt Multipliers</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Calibratie per markttype na 8+ bets. Hoog = model vertrouwt deze markt meer.</div>
     <div id="inbox-markets" style="font-size:13px">
@@ -963,13 +959,22 @@ nav::-webkit-scrollbar { display: none; }
     </div>
   </div>
 
-  <!-- v2 Health Dashboard -->
-  <div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div class="card-title">🧪 v2 Pipeline Health</div>
-      <button class="btn btn-ghost btn-sm" onclick="loadV2Dashboard()">↻ Refresh</button>
+  <!-- Per Sport -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="margin-bottom:14px">🏆 Per Sport</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Win rate en P/L per sport, gebaseerd op settled bets.</div>
+    <div id="inbox-per-sport" style="font-size:13px">
+      <div style="color:var(--muted)">Nog geen data per sport</div>
     </div>
-    <div id="v2-dash" style="font-size:13px"><div style="color:var(--muted)">Klik refresh om v2 stats op te halen.</div></div>
+  </div>
+
+  <!-- Model Updates (verhuisd uit Info) -->
+  <div class="card" id="model-log-card">
+    <div class="card-hd" style="margin-bottom:12px">
+      <div class="card-title">🧠 Model updates</div>
+      <span id="model-log-badge" style="display:none;background:var(--accent);color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">nieuw</span>
+    </div>
+    <div id="model-log-body" style="font-size:13px;color:var(--muted)">Laden...</div>
   </div>
 </section>
 
@@ -989,6 +994,14 @@ nav::-webkit-scrollbar { display: none; }
   <div class="card admin-only" style="margin-bottom:16px;display:none">
     <div class="card-title" style="margin-bottom:14px">🧠 Model Status</div>
     <div id="status-model"></div>
+  </div>
+  <!-- v2 Pipeline Health (verhuisd uit Inbox) -->
+  <div class="card admin-only" style="margin-bottom:16px;display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="card-title">🧪 v2 Pipeline Health</div>
+      <button class="btn btn-ghost btn-sm" onclick="loadV2Dashboard()">↻ Refresh</button>
+    </div>
+    <div id="v2-dash" style="font-size:13px"><div style="color:var(--muted)">Klik refresh om v2 stats op te halen.</div></div>
   </div>
   <div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -1205,15 +1218,6 @@ nav::-webkit-scrollbar { display: none; }
     </div>
   </div>
 
-  <!-- Model updates (admin only) -->
-  <div class="card admin-only" style="margin-bottom:16px;display:none" id="model-log-card">
-    <div class="card-hd" style="margin-bottom:12px">
-      <div class="card-title">🧠 Model updates</div>
-      <span id="model-log-badge" style="display:none;background:var(--accent);color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">nieuw</span>
-    </div>
-    <div id="model-log-body" style="font-size:13px;color:var(--muted)">Laden...</div>
-  </div>
-
   <!-- Tour restart -->
   <div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
     <div>
@@ -1230,7 +1234,23 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v10.1.3</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v10.3.0</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">IA reorganisatie + light-mode contrast fix</div>
+          <div style="color:var(--muted);line-height:1.7">🧠 Nieuwe Model-tab (admin): signal gewichten, markt multipliers, per sport, model updates op één plek<br>
+          📬 Inbox uitgekleed tot puur notificatie-feed (geen overlap meer met data/model)<br>
+          🧪 v2 Pipeline Health verhuisd naar Status (operational health centraal)<br>
+          🎨 Light-mode contrast: yellow/green/red text shades nu WCAG AA (5:1+)<br>
+          🔧 Model-log render fix: crashte op milestone/signal/insight entries zonder oldMult<br>
+          📖 Info-tab refresh: model uitgelegd, databronnen, abonnementen up-to-date</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v10.1.3</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
@@ -1900,7 +1920,7 @@ function toggleDark() {
 }
 
 // ── NAVIGATION ───────────────────────────────────────────────────────────────
-const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','status','info'];
+const TAB_IDS = ['scans','tracker','data','live','analyse','inbox','model','status','info'];
 function go(name) {
   if (name !== 'settings') localStorage.setItem('activeTab', name);
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', TAB_IDS[i] === name));
@@ -1912,8 +1932,9 @@ function go(name) {
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
   if (name === 'analyse') refreshAnalyse();
   if (name === 'inbox')   loadInbox();
+  if (name === 'model')   loadModelTab();
   if (name === 'status')  loadStatus();
-  if (name === 'info')    loadModelLog();
+  if (name === 'info')    loadAppVersion();
 }
 
 // ── SCANS ────────────────────────────────────────────────────────────────────
@@ -4087,11 +4108,31 @@ async function loadInbox() {
     const d = await api('/api/model-feed').then(r => r?.json());
     if (!d) return;
     inboxData = d;
-    document.getElementById('inbox-settled').textContent = `${d.totalSettled} settled bets`;
+    const setEl = document.getElementById('inbox-settled');
+    if (setEl) setEl.textContent = `${d.totalSettled} settled bets`;
     renderInboxFeed(d.log);
+  } catch {}
+}
+
+async function loadModelTab() {
+  try {
+    const d = await api('/api/model-feed').then(r => r?.json());
+    if (!d) return;
+    inboxData = d;
     renderInboxWeights(d.signalWeights);
     renderInboxPerSport(d.perSport);
     renderInboxMarkets(d.markets);
+  } catch {}
+  // Model log + version-string
+  loadModelLog();
+}
+
+async function loadAppVersion() {
+  try {
+    const d = await api('/api/version').then(r => r?.json());
+    if (!d) return;
+    const vs = document.getElementById('app-version-str');
+    if (vs) vs.textContent = `versie ${d.version}`;
   } catch {}
 }
 
@@ -4792,7 +4833,8 @@ const TOUR_STEPS = [
   { target: '.bets-table', title: 'Bet Tracker', text: 'Al je bets op een rij. Klik op odds, units of bookmaker om aan te passen. Sorteer op elke kolom.', tab: 'tracker' },
   { target: '#page-live', title: 'Mijn Bets Live', text: 'Volg je open bets in real-time. Scores updaten elke 60 seconden. Groen = winnend, rood = verliezend.', tab: 'live' },
   { target: '#ch-bankroll', title: 'Data & Analyse', text: 'Bankroll grafiek, hit rates per markt/score, CLV analyse, variance tracker en signal attribution.', tab: 'data' },
-  { target: '#page-inbox', title: 'Inbox', text: 'Alle model updates, calibraties en inzichten. Het model leert van elke bet en meldt hier wat er verandert.', tab: 'inbox' },
+  { target: '#page-inbox', title: 'Inbox', text: 'Alerts, milestones, drift- en CLV-meldingen.', tab: 'inbox' },
+  { target: '#page-model', title: 'Model', text: 'Live model-state: signal gewichten, markt-multipliers, per-sport prestaties en historische tunes.', tab: 'model' },
 ];
 
 function startTour() {
@@ -4893,6 +4935,7 @@ if (_origApplyLanguage) {
     <div class="bnav-menu" id="bnav-menu">
       <button class="bnav-menu-item" onclick="goMobile('analyse')">🔍 Analyse</button>
       <button class="bnav-menu-item admin-only" onclick="goMobile('inbox')" style="display:none">📬 Inbox</button>
+      <button class="bnav-menu-item admin-only" onclick="goMobile('model')" style="display:none">🧠 Model</button>
       <button class="bnav-menu-item" onclick="goMobile('status')">🟢 Status</button>
       <button class="bnav-menu-item" onclick="goMobile('info')">📖 Info</button>
       <button class="bnav-menu-item" onclick="closeBnavMenu(); openProfileModal()">⚙️ <span data-i18n="nav_settings">Instellingen</span></button>
