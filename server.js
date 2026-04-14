@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.0.1';
+const APP_VERSION    = '9.0.2';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -876,6 +876,21 @@ const tg = async (text, type = 'info', userId = null) => {
     url: '/',
   }).catch(() => {});
 };
+
+// Log een gefaalde pre-match/CLV check naar de notifications tabel,
+// zodat de user het in de 🔔 dropdown ziet (niet alleen op Telegram).
+async function logCheckFailure(type, wedstrijd, reason) {
+  try {
+    const label = type === 'clv' ? 'CLV check' : 'Pre-match check';
+    const title = `Check mislukt: ${wedstrijd}`.slice(0, 100);
+    const body = `⚠️ ${label}: kon geen odds ophalen voor ${wedstrijd} · ${reason || 'controleer handmatig'}`;
+    await supabase.from('notifications').insert({
+      type: 'check_failed', title, body, read: false, user_id: null
+    });
+  } catch (e) {
+    console.warn('[logCheckFailure]', e.message);
+  }
+}
 
 // ── FORM & SIGNALS ─────────────────────────────────────────────────────────────
 function calcForm(evts, tid) {
@@ -4313,6 +4328,7 @@ async function readBets(userId = null) {
     tip: r.tip || 'Bet365', uitkomst: r.uitkomst || 'Open', wl: r.wl || 0,
     tijd: r.tijd || '', score: r.score || null,
     signals: r.signals || '', clvOdds: r.clv_odds || null, clvPct: r.clv_pct || null,
+    fixtureId: r.fixture_id || null,
   }));
   return { bets, stats: calcStats(bets), _raw: data };
 }
@@ -4321,14 +4337,32 @@ async function writeBet(bet, userId = null) {
   const inzet = bet.units * UNIT_EUR;
   const wl = bet.uitkomst === 'W' ? +((bet.odds-1)*inzet).toFixed(2)
            : bet.uitkomst === 'L' ? -inzet : 0;
-  const { error } = await supabase.from('bets').insert({
+  const base = {
     bet_id: bet.id, datum: bet.datum, sport: bet.sport, wedstrijd: bet.wedstrijd,
     markt: bet.markt, odds: bet.odds, units: bet.units, inzet, tip: bet.tip || 'Bet365',
     uitkomst: bet.uitkomst || 'Open', wl, tijd: bet.tijd || '', score: bet.score || null,
     signals: bet.signals || '',
     user_id: userId || null,
-  });
-  if (error) throw new Error(error.message);
+  };
+  // Probeer insert mét fixture_id; val terug zonder fixture_id voor oude DB-schemas
+  try {
+    const { error } = await supabase.from('bets').insert({ ...base, fixture_id: bet.fixtureId || null });
+    if (error) {
+      if ((error.message || '').toLowerCase().includes('column')) {
+        const { error: err2 } = await supabase.from('bets').insert(base);
+        if (err2) throw new Error(err2.message);
+      } else {
+        throw new Error(error.message);
+      }
+    }
+  } catch (e) {
+    if ((e.message || '').toLowerCase().includes('column')) {
+      const { error: err2 } = await supabase.from('bets').insert(base);
+      if (err2) throw new Error(err2.message);
+    } else {
+      throw e;
+    }
+  }
 }
 
 async function updateBetOutcome(id, uitkomst, userId = null) {
@@ -4713,32 +4747,53 @@ function teamMatchScore(apiName, queryName) {
 }
 
 // Zoek fixture/game ID op teamnamen voor elke sport
+// Zoekt over gisteren + vandaag + morgen (Amsterdam-tz) zodat nachtwedstrijden
+// (NHL/NBA 01:00-04:00) die onder een Amerikaanse datum vallen ook gevonden worden.
 async function findGameId(sport, matchName) {
   const cfg = getSportApiConfig(sport);
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
   const parts = (matchName || '').split(' vs ').map(s => s.trim());
   if (parts.length < 2) return null;
   const [qHome, qAway] = parts;
 
-  const games = await afGet(cfg.host, cfg.fixturesPath, { date: today }).catch(() => []);
-  const list = games || [];
+  // Bouw date-range: gisteren, vandaag, morgen in Europe/Amsterdam (sv-SE = yyyy-mm-dd)
+  const now = Date.now();
+  const dates = [-1, 0, 1].map(offset => {
+    const d = new Date(now + offset * 86400000);
+    return d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  });
 
-  // Scoor elke game en kies de beste
+  // Haal fixtures op per datum en dedupe op id
+  const seen = new Set();
+  const list = [];
+  for (const date of dates) {
+    const games = await afGet(cfg.host, cfg.fixturesPath, { date }).catch(() => []);
+    for (const g of (games || [])) {
+      const gid = sport === 'football' ? g.fixture?.id : g.id;
+      if (gid == null || seen.has(gid)) continue;
+      seen.add(gid);
+      list.push(g);
+    }
+  }
+
+  // Scoor elke game en kies de beste; hou de top-3 bij voor debug
   let best = null, bestScore = 0;
+  const scored = [];
   for (const g of list) {
     const home = g.teams?.home?.name || '';
     const away = g.teams?.away?.name || '';
     const sHome = teamMatchScore(home, qHome);
     const sAway = teamMatchScore(away, qAway);
     const score = sHome + sAway;
+    scored.push({ home, away, score });
     // Minimum: beide teams moeten enige match hebben (geen 0)
     if (sHome > 0 && sAway > 0 && score > bestScore) {
       best = g; bestScore = score;
     }
   }
 
-  if (!best || bestScore < 60) {
-    console.warn(`[findGameId] geen match voor "${matchName}" in sport=${sport} (${list.length} games, beste score=${bestScore})`);
+  if (!best || bestScore < 50) {
+    const top3 = scored.sort((a, b) => b.score - a.score).slice(0, 3);
+    console.warn(`[findGameId] geen match voor "${matchName}" sport=${sport}, ${list.length} fixtures, top3: ${top3.map(x => `${x.home} vs ${x.away} (${x.score})`).join(' | ')}`);
     return null;
   }
   // Football: match.fixture.id, other sports: match.id
@@ -4917,6 +4972,7 @@ async function schedulePreKickoffCheck(bet) {
         }
       } else {
         lines.push(`\n⚠️ Kon geen huidige odds ophalen · controleer odds handmatig.`);
+        logCheckFailure('prematch', matchName, 'controleer handmatig').catch(() => {});
       }
 
       lines.push(`\n🟢 Succes! (automatische check 30 min voor aftrap)`);
@@ -4971,7 +5027,19 @@ async function scheduleCLVCheck(bet) {
       const closingOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip);
       const usedBookie = bet.tip || 'Bet365';
 
-      if (!closingOdds) return;
+      if (!closingOdds) {
+        // 1x retry over 5 min als eerste poging faalt
+        if (!bet._clvRetried) {
+          bet._clvRetried = true;
+          setTimeout(() => {
+            scheduleCLVCheck({ ...bet, tijd: new Date(Date.now() + 3 * 60000).toISOString() });
+          }, 5 * 60000);
+          console.log(`[CLV] retry gepland over 5 min voor "${matchName}"`);
+          return;
+        }
+        logCheckFailure('clv', matchName, 'closing odds niet beschikbaar').catch(() => {});
+        return;
+      }
 
       const clvPct = +((loggedOdds - closingOdds) / closingOdds * 100).toFixed(2);
       const clvIcon = clvPct > 0 ? '✅' : '❌';

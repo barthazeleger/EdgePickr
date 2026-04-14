@@ -1200,7 +1200,22 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v8.3</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v9.0.2</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">Pre-match &amp; CLV checks betrouwbaar voor nachtwedstrijden</div>
+          <div style="color:var(--muted);line-height:1.7">🌙 Pre-match + CLV werken nu ook voor nachtwedstrijden (zoekt gisteren/vandaag/morgen)<br>
+          💾 fixture_id wordt opgeslagen zodat checks na server-herstart betrouwbaar zijn<br>
+          🔔 Falende checks krijgen nu een notificatie in het belletje<br>
+          📅 Mijn Bets sorteert nu chronologisch (19:00 vandaag vóór 01:00 morgen)<br>
+          🔁 Automatische CLV retry 5 min later als eerste poging faalt</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v8.3</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
@@ -2145,18 +2160,28 @@ function renderBetsTable(bets) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="15">Nog geen bets geregistreerd.</td></tr>';
     return;
   }
+  // Combineer datum (dd-mm-yyyy) + tijd (HH:MM) tot één timestamp zodat
+  // 19:00 vandaag vóór 01:00 morgen sorteert (i.p.v. puur op HH:MM).
+  const kickoffTs = (bt) => {
+    const d = parseDatum(bt.datum);
+    if (!d) return 0;
+    const t = (bt.tijd || '').match(/^(\d{1,2}):(\d{2})/);
+    if (t) { d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0); }
+    else   { d.setHours(23, 59, 0, 0); } // fallback als tijd ontbreekt
+    return d.getTime();
+  };
   // Sorteer
   const sorted = [...bets].sort((a, b) => {
     const f = currentSort.field;
-    let va = a[f], vb = b[f];
-    // Speciale gevallen
-    if (f === 'tijd') { va = va || '99:99'; vb = vb || '99:99'; }
-    if (f === 'datum') {
-      const pa = parseDatum(va), pb = parseDatum(vb);
-      va = pa ? pa.getTime() : 0; vb = pb ? pb.getTime() : 0;
+    let va, vb;
+    // 'tijd' en 'datum' beide: sorteer chronologisch op kickoff timestamp
+    if (f === 'tijd' || f === 'datum') {
+      va = kickoffTs(a); vb = kickoffTs(b);
+    } else {
+      va = a[f]; vb = b[f];
+      if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb||'').toLowerCase(); }
+      if (va == null) va = -Infinity; if (vb == null) vb = -Infinity;
     }
-    if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb||'').toLowerCase(); }
-    if (va == null) va = -Infinity; if (vb == null) vb = -Infinity;
     const cmp = va < vb ? -1 : va > vb ? 1 : 0;
     return currentSort.dir === 'asc' ? cmp : -cmp;
   });
