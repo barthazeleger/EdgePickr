@@ -175,7 +175,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.7.0';
+const APP_VERSION    = '9.7.1';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -2292,6 +2292,21 @@ async function runBasketball(emit) {
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const sharedNotes = `${posStr}${formNote}${b2bNote}${ppgNote}${rebNote}${splitNote}`;
 
+        // v2: feature_snapshot + pick_candidates voor ML
+        snap.writeFeatureSnapshot(supabase, gameId, {
+          sport: 'basketball', fpHome, fpAway, adjHome, adjAway, ha,
+          posAdj, formAdj, b2bAdj, ppgAdj, rebAdj, homeSplitAdj,
+        }, { standings_present: !!(hmSt && awSt) }).catch(() => {});
+        if (_currentModelVersionId) {
+          snap.recordMl2WayEvaluation({
+            supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+            marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
+            bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
+            maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            debug: { sport: 'basketball', ha, signals: matchSignals },
+          }).catch(() => {});
+        }
+
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
@@ -3302,6 +3317,26 @@ async function runBaseball(emit) {
         const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note}` : '';
         const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}`;
 
+        // v2: feature_snapshot + pick_candidates voor MLB ML
+        snap.writeFeatureSnapshot(supabase, gameId, {
+          sport: 'baseball', fpHome, fpAway, adjHome, adjAway, ha,
+          posAdj, formAdj, runDiffAdj, homeAwayAdj, streakAdj,
+          pitcherAdj: pitcherSig.adj, pitcherValid: pitcherSig.valid,
+        }, {
+          standings_present: !!(hmSt && awSt),
+          pitcher_signal_valid: pitcherSig.valid,
+          mlb_match_found: !!mlbMatch,
+        }).catch(() => {});
+        if (_currentModelVersionId) {
+          snap.recordMl2WayEvaluation({
+            supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+            marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
+            bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
+            maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            debug: { sport: 'baseball', ha, pitcher_valid: pitcherSig.valid, signals: matchSignals },
+          }).catch(() => {});
+        }
+
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
@@ -3693,6 +3728,21 @@ async function runFootballUS(emit) {
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const sharedNotes = `${posStr}${formNote}${byeNote}${ptsDiffNote}${homeRecordNote}${divisionNote}`;
+
+        // v2: feature_snapshot + pick_candidates voor NFL ML
+        snap.writeFeatureSnapshot(supabase, gameId, {
+          sport: 'american-football', fpHome, fpAway, adjHome, adjAway, ha,
+          posAdj, formAdj, byeAdj, ptsDiffAdj, homeRecordAdj, divisionAdj,
+        }, { standings_present: !!(hmSt && awSt) }).catch(() => {});
+        if (_currentModelVersionId) {
+          snap.recordMl2WayEvaluation({
+            supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+            marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
+            bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
+            maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            debug: { sport: 'american-football', ha, signals: matchSignals },
+          }).catch(() => {});
+        }
 
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS)
@@ -4091,6 +4141,25 @@ async function runHandball(emit) {
             mkP(`${hm} vs ${aw}`, league.name, `🕐 ${aw} wint (60-min)`, bA3.price,
               `3-way: ${(p3.pAway*100).toFixed(1)}% | Markt: ${marketFairHb ? (marketFairHb.away*100).toFixed(1)+'%' : 'n/a'} | ${bA3.bookie}: ${bA3.price}${threeNote} | ${ko}`,
               Math.round(p3.pAway*100), e3A * 0.26, kickoffTime, bA3.bookie, [...matchSignals, '3way_ml', 'sanity_ok']);
+        }
+
+        // v2: feature_snapshot + pick_candidates voor handbal ML
+        snap.writeFeatureSnapshot(supabase, gameId, {
+          sport: 'handball', fpHome, fpAway, adjHome, adjAway, ha,
+          posAdj, formAdj, goalDiffAdj, homeWRAdj, formMomentumAdj,
+          marketHomeProb: marketFairHb?.home, marketDrawProb: marketFairHb?.draw, marketAwayProb: marketFairHb?.away,
+        }, {
+          standings_present: !!(hmSt && awSt),
+          three_way_bookies: marketFairHb?.bookieCount || 0,
+        }).catch(() => {});
+        if (_currentModelVersionId) {
+          snap.recordMl2WayEvaluation({
+            supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+            marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
+            bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
+            maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            debug: { sport: 'handball', ha, signals: matchSignals },
+          }).catch(() => {});
         }
 
         // Moneyline picks
@@ -4507,6 +4576,59 @@ async function runPrematch(emit) {
         const reasonH = `Consensus: ${(fp.home*100).toFixed(1)}%→${(adjHome2*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`;
         const reasonA = `Consensus: ${(fp.away*100).toFixed(1)}%→${(adjAway2*100).toFixed(1)}% | ${bA.bookie}: ${bA.price}${sharedNotes} | ${ko}`;
         const reasonD = `Gelijkspel: ${((fp.draw||0)*100).toFixed(1)}% | ${bD?.bookie}: ${bD?.price}${sharedNotes} | ${ko}`;
+
+        // v2: feature_snapshot + model_run + pick_candidates voor voetbal 1X2
+        snap.writeFeatureSnapshot(supabase, fid, {
+          sport: 'football', fpHome: fp.home, fpDraw: fp.draw, fpAway: fp.away,
+          adjHome: adjHome2, adjDraw: adjDraw || 0, adjAway: adjAway2,
+          ha, posAdj, splitAdj, predAdj,
+          lineupPenaltyHome: lineupPenalty?.home, lineupPenaltyAway: lineupPenalty?.away,
+          formMomentumDiff: typeof formMomentumDiff !== 'undefined' ? formMomentumDiff : null,
+          h2hAdjHome: typeof h2hAdj !== 'undefined' ? h2hAdj : null,
+        }, {
+          referee: !!refereeName,
+          lineup_known: !!(lineupPenalty?.home != null || lineupPenalty?.away != null),
+          weather_used: !!weatherNote,
+        }).catch(() => {});
+
+        if (_currentModelVersionId) {
+          (async () => {
+            try {
+              const baseline = { home: fp.home, draw: fp.draw || 0, away: fp.away };
+              const finalP = { home: adjHome2, draw: adjDraw || 0, away: adjAway2 };
+              const runId = await snap.writeModelRun(supabase, {
+                fixtureId: fid, modelVersionId: _currentModelVersionId,
+                marketType: '1x2', line: null,
+                baselineProb: baseline,
+                modelDelta: { home: adjHome2 - fp.home, draw: (adjDraw || 0) - (fp.draw || 0), away: adjAway2 - fp.away },
+                finalProb: finalP,
+                debug: { sport: 'football', ha, signals: matchSignals, multipliers: { home: cm.home?.multiplier, draw: cm.draw?.multiplier, away: cm.away?.multiplier } },
+              });
+              if (!runId) return;
+              const evals = [
+                { side: 'home', edge: homeEdge, prob: adjHome2, best: bH, gateOk: (bA.price > BLOWOUT_OPP_MAX) },
+                { side: 'draw', edge: drawEdge, prob: adjDraw || 0, best: bD || { price: 0, bookie: 'none' }, gateOk: true, minThreshold: MIN_EDGE + 0.01 },
+                { side: 'away', edge: awayEdge, prob: adjAway2, best: bA, gateOk: (bH.price > BLOWOUT_OPP_MAX) },
+              ];
+              for (const ev of evals) {
+                const min = ev.minThreshold != null ? ev.minThreshold : MIN_EDGE;
+                let rejected = null;
+                if (!ev.best || ev.best.price <= 0) rejected = 'no_bookie_price';
+                else if (ev.best.price < 1.60) rejected = `price_too_low (${ev.best.price})`;
+                else if (ev.side !== 'draw' && ev.best.price > MAX_WINNER_ODDS) rejected = `price_too_high (${ev.best.price})`;
+                else if (!ev.gateOk) rejected = 'blowout_opp_too_low';
+                else if (ev.edge < min) rejected = `edge_below_min (${(ev.edge * 100).toFixed(1)}% < ${(min * 100).toFixed(1)}%)`;
+                snap.writePickCandidate(supabase, {
+                  modelRunId: runId, fixtureId: fid, selectionKey: ev.side,
+                  bookmaker: ev.best.bookie || 'none', bookmakerOdds: ev.best.price,
+                  fairProb: ev.prob, edgePct: ev.edge,
+                  passedFilters: !rejected, rejectedReason: rejected,
+                  signals: matchSignals,
+                }).catch(() => {});
+              }
+            } catch (e) { /* swallow */ }
+          })();
+        }
 
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && bA.price > BLOWOUT_OPP_MAX)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price, reasonH, Math.round(adjHome2*100), homeEdge * 0.28 * (cm.home?.multiplier ?? 1), kickoffTime, bH.bookie, matchSignals, refereeName);
@@ -5328,6 +5450,82 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
     const users = await loadUsers(true);
     res.json(users.map(u => ({ id: u.id, email: u.email, role: u.role, status: u.status, createdAt: u.createdAt })));
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
+});
+
+// ── v2 Admin: pick_candidates analytics ─────────────────────────────────────
+// GET /api/admin/v2/pick-candidates-summary?hours=24
+// Toont aggregaties: totaal kandidaten, accepted ratio, top reject reasons,
+// top sporten, breakdown per markt. Helpt bij modelsturing zonder DB-tools.
+app.get('/api/admin/v2/pick-candidates-summary', requireAdmin, async (req, res) => {
+  try {
+    const hours = Math.max(1, Math.min(168, parseInt(req.query.hours) || 24));
+    const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    const { data: candidates, error } = await supabase
+      .from('pick_candidates')
+      .select('id, fixture_id, selection_key, bookmaker, bookmaker_odds, fair_prob, edge_pct, passed_filters, rejected_reason, model_run_id, created_at')
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(5000);
+    if (error) return res.status(500).json({ error: error.message });
+    const list = candidates || [];
+    if (!list.length) {
+      return res.json({ hours, total: 0, accepted: 0, rejected: 0, byReason: {}, byBookie: {}, recentRejected: [] });
+    }
+    const accepted = list.filter(c => c.passed_filters).length;
+    const rejected = list.length - accepted;
+    // Group rejected by reason category (strip dynamic numbers)
+    const byReason = {};
+    for (const c of list) {
+      if (c.passed_filters) continue;
+      const cat = (c.rejected_reason || 'unknown').split(' (')[0];
+      byReason[cat] = (byReason[cat] || 0) + 1;
+    }
+    // Group by bookmaker
+    const byBookie = {};
+    for (const c of list) {
+      const b = c.bookmaker || 'none';
+      if (!byBookie[b]) byBookie[b] = { total: 0, accepted: 0 };
+      byBookie[b].total++;
+      if (c.passed_filters) byBookie[b].accepted++;
+    }
+    // Last 10 rejected for inspection
+    const recentRejected = list.filter(c => !c.passed_filters).slice(0, 10).map(c => ({
+      id: c.id, fixture_id: c.fixture_id, selection: c.selection_key,
+      bookie: c.bookmaker, odds: c.bookmaker_odds, edge: c.edge_pct,
+      reason: c.rejected_reason, at: c.created_at,
+    }));
+    res.json({
+      hours, total: list.length, accepted, rejected,
+      acceptanceRate: +(accepted / list.length * 100).toFixed(1),
+      byReason: Object.fromEntries(Object.entries(byReason).sort((a, b) => b[1] - a[1])),
+      byBookie,
+      recentRejected,
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Interne fout' });
+  }
+});
+
+// GET /api/admin/v2/snapshot-counts — quick health check op v2 tabellen
+app.get('/api/admin/v2/snapshot-counts', requireAdmin, async (req, res) => {
+  try {
+    const hours = Math.max(1, Math.min(168, parseInt(req.query.hours) || 24));
+    const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    const tables = ['fixtures', 'odds_snapshots', 'feature_snapshots', 'market_consensus', 'model_runs', 'pick_candidates'];
+    const counts = {};
+    for (const t of tables) {
+      // Eerst totaal
+      const { count: total } = await supabase.from(t).select('*', { count: 'exact', head: true });
+      // Dan recent
+      const recentField = t === 'fixtures' ? 'created_at' : 'created_at';
+      const { count: recent } = await supabase.from(t).select('*', { count: 'exact', head: true })
+        .gte(t === 'odds_snapshots' || t === 'feature_snapshots' || t === 'market_consensus' || t === 'model_runs' ? 'captured_at' : 'created_at', sinceIso);
+      counts[t] = { total: total || 0, recent: recent || 0 };
+    }
+    res.json({ hours, counts, sinceIso });
+  } catch (e) {
+    res.status(500).json({ error: (e && e.message) || 'Interne fout' });
+  }
 });
 
 app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
