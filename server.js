@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.7.18';
+const APP_VERSION    = '10.7.19';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -7576,6 +7576,10 @@ app.put('/api/bets/:id', async (req, res) => {
     if (units != null) { updates.units = parseFloat(units); updates.inzet = +(parseFloat(units) * userUe).toFixed(2); }
     if (tip) updates.tip = tip;
     if (sport) updates.sport = sport;
+    // Score override (voor corrigeren van picks die met buggy edge-calc zijn gelogd)
+    if (req.body.score === null || typeof req.body.score === 'number') {
+      updates.score = req.body.score;
+    }
     if (Object.keys(updates).length) {
       let updateQuery = supabase.from('bets').update(updates).eq('bet_id', id);
       if (userId) updateQuery = updateQuery.eq('user_id', userId);
