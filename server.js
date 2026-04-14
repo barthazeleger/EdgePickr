@@ -298,7 +298,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.1.1';
+const APP_VERSION    = '10.1.2';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -6169,6 +6169,13 @@ app.post('/api/prematch', (req, res) => {
       if (skippedReasons.same_sport_cap) emit({ log: `🎯 ${skippedReasons.same_sport_cap} pick(s) geskipt: max ${MAX_PER_SPORT} per sport bereikt` });
       if (droppedCount > 0) emit({ log: `🎯 ${topPicks.length}/${MAX_PICKS} picks geselecteerd (${droppedCount} weggelaten door diversification + ranking)` });
 
+      // Bevestigend signaal als selectie kleiner is dan max — geen alarmistische "geen edges":
+      if (topPicks.length === 0) {
+        emit({ log: `✋ Geen picks vandaag — ons systeem zag te weinig value. Dat is goed: niet elke dag is een edge-dag.` });
+      } else if (topPicks.length <= 2) {
+        emit({ log: `✋ ${topPicks.length} pick(s) — kwaliteit boven volume. Strenge filters hebben hun werk gedaan.` });
+      }
+
       // Tag elke pick met selected=true/false zodat POTD/UI alleen uit selectie kiezen
       // maar audit/training het volledige lijstje heeft.
       const topSet = new Set(topPicks);
@@ -7006,7 +7013,13 @@ app.delete('/api/bets/:id', async (req, res) => {
 
 // Laatste picks ophalen (voor analyse tab)
 app.get('/api/picks', (req, res) => {
-  res.json({ prematch: lastPrematchPicks, live: lastLivePicks });
+  // SECURITY: same projection als /api/scan-history en /api/analyze.
+  // Non-admin krijgt alleen public-safe veldset; geen reason/kelly/ep/strength/expectedEur/signals.
+  const isAdmin = req.user?.role === 'admin';
+  res.json({
+    prematch: safePicksList(lastPrematchPicks, isAdmin),
+    live:     safePicksList(lastLivePicks, isAdmin),
+  });
 });
 
 // POTD (Pick of the Day) post generator voor Reddit + X
@@ -8332,7 +8345,7 @@ function scheduleHealthAlerts() {
 
   async function runHealthCheck() {
     try {
-      // CLV milestone alert
+      // CLV milestone alert: globaal totaal + per-markt verdict
       const { data: clvBets } = await supabase.from('bets')
         .select('clv_pct, sport, markt').not('clv_pct', 'is', null);
       const all = (clvBets || []).filter(b => typeof b.clv_pct === 'number');
@@ -8344,7 +8357,25 @@ function scheduleHealthAlerts() {
                       : avgClv > 0 ? '🟢 mild positief'
                       : avgClv > -2 ? '🟡 neutraal'
                       : '🔴 STRUCTUREEL NEGATIEF';
-        await tg(`📊 CLV Milestone\n${all.length} settled bets met CLV data\nGemiddelde CLV: ${avgClv > 0 ? '+' : ''}${avgClv.toFixed(2)}%\n${positive}/${all.length} positief (${posPct}%)\n${verdict}`).catch(() => {});
+        // Per-markt breakdown (≥10 samples per markt om noise te beperken)
+        const byMarket = {};
+        for (const b of all) {
+          const key = `${normalizeSport(b.sport)}_${detectMarket(b.markt || 'other')}`;
+          if (!byMarket[key]) byMarket[key] = { n: 0, sumClv: 0 };
+          byMarket[key].n++;
+          byMarket[key].sumClv += b.clv_pct;
+        }
+        const marketLines = Object.entries(byMarket)
+          .filter(([, d]) => d.n >= 10)
+          .map(([k, d]) => {
+            const m = d.sumClv / d.n;
+            const ico = m > 1 ? '✅' : m > 0 ? '🟢' : m > -2 ? '🟡' : '🔴';
+            return `${ico} ${k}: ${m > 0 ? '+' : ''}${m.toFixed(2)}% (n=${d.n})`;
+          })
+          .sort()
+          .join('\n');
+        const marketSummary = marketLines || '(nog geen markt met ≥10 samples)';
+        await tg(`📊 CLV Milestone\n${all.length} settled bets met CLV data\nGemiddelde CLV: ${avgClv > 0 ? '+' : ''}${avgClv.toFixed(2)}%\n${positive}/${all.length} positief (${posPct}%)\n${verdict}\n\nPer markt (≥10 bets):\n${marketSummary}`).catch(() => {});
         _lastClvAlertN = all.length;
       }
 
