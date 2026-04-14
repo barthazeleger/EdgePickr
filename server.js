@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.7.3';
+const APP_VERSION    = '10.7.4';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -2595,7 +2595,7 @@ async function runBasketball(emit) {
           nbaInjTotal++;
         }
       }
-      emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams)` });
+      emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams, api returned ${nbaInjResp?.length || 0} rows)` });
 
       // Yesterday's fixtures for back-to-back detection
       await sleep(80);
@@ -3072,13 +3072,16 @@ async function runHockey(emit) {
       }).catch(() => []);
       apiCallsUsed++;
       const nhlInjuryMap = {};
+      let nhlInjTotal = 0;
       for (const inj of (nhlInjResp || [])) {
         const tid = inj.team?.id;
         if (!tid) continue;
         if (isInjured(inj.player?.status || inj.status)) {
           nhlInjuryMap[tid] = (nhlInjuryMap[tid] || 0) + 1;
+          nhlInjTotal++;
         }
       }
+      emit({ log: `🏒 ${league.name}: ${nhlInjTotal} blessures geladen (${Object.keys(nhlInjuryMap).length} teams, api returned ${nhlInjResp?.length || 0} rows)` });
 
       // Yesterday's fixtures for back-to-back detection
       await sleep(80);
@@ -3725,7 +3728,7 @@ async function runBaseball(emit) {
           mlbInjTotal++;
         }
       }
-      emit({ log: `⚾ ${league.name}: ${mlbInjTotal} blessures geladen (${Object.keys(mlbInjuryMap).length} teams)` });
+      emit({ log: `⚾ ${league.name}: ${mlbInjTotal} blessures geladen (${Object.keys(mlbInjuryMap).length} teams, api returned ${mlbInjResp?.length || 0} rows)` });
 
       // Build standings lookup
       const standingsMap = {};
@@ -4229,7 +4232,7 @@ async function runFootballUS(emit) {
           nflInjTotal++;
         }
       }
-      emit({ log: `🏈 ${league.name}: ${nflInjTotal} blessures geladen (${Object.keys(injuryCountMap).length} teams)` });
+      emit({ log: `🏈 ${league.name}: ${nflInjTotal} blessures geladen (${Object.keys(injuryCountMap).length} teams, api returned ${injuriesResp?.length || 0} rows)` });
 
       for (const g of games) {
         const gameId = g.id;
@@ -4615,7 +4618,7 @@ async function runHandball(emit) {
           hbInjTotal++;
         }
       }
-      emit({ log: `🤾 ${league.name}: ${hbInjTotal} blessures geladen (${Object.keys(hbInjuryMap).length} teams)` });
+      emit({ log: `🤾 ${league.name}: ${hbInjTotal} blessures geladen (${Object.keys(hbInjuryMap).length} teams, api returned ${hbInjResp?.length || 0} rows)` });
 
       // Standings
       await sleep(120);

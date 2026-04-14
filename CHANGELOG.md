@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.7.4] - 2026-04-14
+
+### Debug
+- Multi-sport injury logs tonen nu raw api-rows naast matched count: `🏀 NBA: 0 blessures geladen (0 teams, api returned N rows)`. Bij N=0 ligt het aan api-sports tier; bij N>0 maar 0 matched ligt het aan status-keywords die isInjured() niet matched.
+- NHL injury-log toegevoegd (was vergeten in 10.7.1).
+
+### Observaties na live-scan (gebruiker)
+- Football injuries: 142 teams geladen ✓ (was 0 voor 10.7.0)
+- Pre-fetch skipte 50/59 inactieve competities ✓
+- Call-reductie: ~40% vs vorige scans ✓
+- Multi-sport injuries: 0 across all — root cause nog te bepalen (api-sports tier of status-naming). Debug-log helpt dit isoleren in volgende scan.
+
 ## [10.7.3] - 2026-04-14
 
 ### Changed (ALLOWED_BKMS dynamisch)
