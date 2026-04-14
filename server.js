@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.0.7';
+const APP_VERSION    = '9.0.8';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -5283,8 +5283,14 @@ app.post('/api/clv/backfill', requireAdmin, async (req, res) => {
         let fxId = r.fixture_id;
         let verbose = null;
         if (!fxId) {
-          verbose = await findGameIdVerbose(sport, wedstrijd);
+          let anchorDate = null;
+          const dm = (r.datum || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+          if (dm) anchorDate = `${dm[3]}-${dm[2]}-${dm[1]}`;
+          verbose = await findGameIdVerbose(sport, wedstrijd, anchorDate, [-3, -2, -1, 0, 1]);
           fxId = verbose.fxId;
+          if (fxId) {
+            await supabase.from('bets').update({ fixture_id: fxId }).eq('bet_id', id).catch(() => {});
+          }
         }
         if (!fxId) {
           failed++;
