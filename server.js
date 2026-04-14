@@ -169,6 +169,7 @@ function adaptiveMinEdge(sport, marktLabel, baseMinEdge) {
 const modelMath = require('./lib/model-math');
 const {
   NHL_OT_HOME_SHARE, MODEL_MARKET_DIVERGENCE_THRESHOLD, KELLY_FRACTION,
+  getKellyFraction, setKellyFraction, KELLY_FRACTION_MIN, KELLY_FRACTION_MAX, KELLY_FRACTION_STEP,
   poisson, poissonOver, poisson3Way,
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck,
   normalizeTeamName, teamMatchScore, normalizeSport,
@@ -345,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.3.1';
+const APP_VERSION    = '10.4.0';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -648,6 +649,87 @@ async function saveSignalWeights(w) {
 const SIGNAL_KILL_MIN_N = 50;        // minimum samples voor kill-besluit
 const SIGNAL_KILL_CLV_PCT = -3.0;    // gemiddelde CLV onder -3% → mute
 
+// ── Kelly-fraction auto-stepup ───────────────────────────────────────────────
+// Verhoogt KELLY_FRACTION (bv. 0.50 → 0.55 → 0.60 ... → 0.75 cap) als bewezen
+// edge over voldoende bets. Stapsgewijs (max 1 stap/dag), nooit naar full Kelly
+// automatisch (handmatige override vereist via setKellyFraction).
+const KELLY_STEPUP_MIN_TOTAL_BETS = 200;  // start pas na 200 settled bets totaal
+const KELLY_STEPUP_RECENT_WINDOW  = 200;  // criterium over laatste N bets
+const KELLY_STEPUP_MIN_AVG_CLV    = 2.0;  // gem. CLV > 2% over recent window
+const KELLY_STEPUP_MIN_ROI        = 5.0;  // ROI > 5% over recent window
+const KELLY_STEPUP_COOLDOWN_DAYS  = 30;   // min 30 dagen tussen stappen
+
+async function evaluateKellyAutoStepup() {
+  const c = loadCalib();
+  const cur = getKellyFraction();
+  if (cur >= KELLY_FRACTION_MAX) return { stepped: false, reason: 'at_max' };
+  if ((c.totalSettled || 0) < KELLY_STEPUP_MIN_TOTAL_BETS) {
+    return { stepped: false, reason: 'insufficient_total_bets' };
+  }
+  // Cooldown check
+  const lastStep = c.kellyHistory?.[0]?.date ? new Date(c.kellyHistory[0].date).getTime() : 0;
+  if (lastStep && (Date.now() - lastStep) < KELLY_STEPUP_COOLDOWN_DAYS * 86400000) {
+    return { stepped: false, reason: 'cooldown' };
+  }
+  // Recent CLV + ROI check via Supabase
+  let recentBets;
+  try {
+    const r = await supabase.from('bets')
+      .select('clv,wl,inzet,uitkomst')
+      .in('uitkomst', ['W','L'])
+      .order('datum', { ascending: false })
+      .limit(KELLY_STEPUP_RECENT_WINDOW);
+    if (r.error) throw new Error(r.error.message);
+    recentBets = r.data || [];
+  } catch (e) {
+    return { stepped: false, reason: `bets_fetch_failed:${e.message}` };
+  }
+  if (recentBets.length < KELLY_STEPUP_RECENT_WINDOW) {
+    return { stepped: false, reason: 'insufficient_recent_bets' };
+  }
+  const clvVals = recentBets.map(b => parseFloat(b.clv)).filter(v => isFinite(v));
+  const avgClv = clvVals.length ? clvVals.reduce((a,b) => a+b, 0) / clvVals.length : null;
+  const totalStake = recentBets.reduce((a,b) => a + (parseFloat(b.inzet) || 0), 0);
+  const totalPnl   = recentBets.reduce((a,b) => a + (parseFloat(b.wl)    || 0), 0);
+  const roi = totalStake > 0 ? (totalPnl / totalStake) * 100 : 0;
+  // Kill-switch check: als markten gekild zijn afgelopen 30 dagen → niet stepup
+  const killedRecently = (c.modelLog || []).some(e =>
+    e.type === 'kill_switch' &&
+    new Date(e.date).getTime() > Date.now() - 30 * 86400000);
+  if (killedRecently) return { stepped: false, reason: 'kill_switch_active' };
+  if (avgClv === null || avgClv < KELLY_STEPUP_MIN_AVG_CLV) {
+    return { stepped: false, reason: `avg_clv_${avgClv?.toFixed(2)}` };
+  }
+  if (roi < KELLY_STEPUP_MIN_ROI) {
+    return { stepped: false, reason: `roi_${roi.toFixed(2)}` };
+  }
+  // Alle criteria gehaald → step up
+  const next = Math.min(KELLY_FRACTION_MAX, cur + KELLY_FRACTION_STEP);
+  setKellyFraction(next);
+  c.kellyFraction = next;
+  c.kellyHistory = [{
+    date: new Date().toISOString(), from: cur, to: next,
+    avgClv: +avgClv.toFixed(2), roi: +roi.toFixed(2), totalSettled: c.totalSettled
+  }, ...(c.kellyHistory || [])].slice(0, 20);
+  c.modelLog = [{
+    date: new Date().toISOString(), type: 'kelly_stepup',
+    note: `🚀 Kelly-fraction verhoogd: ${cur.toFixed(2)} → ${next.toFixed(2)} (avg CLV ${avgClv.toFixed(2)}%, ROI ${roi.toFixed(2)}% over ${recentBets.length} bets)`
+  }, ...(c.modelLog || [])].slice(0, 50);
+  await saveCalib(c);
+  // Notifications
+  const msg = `🚀 KELLY-FRACTION VERHOOGD\n${cur.toFixed(2)} → ${next.toFixed(2)}\n📈 Avg CLV: ${avgClv.toFixed(2)}% · ROI: ${roi.toFixed(2)}%\n📊 Over ${recentBets.length} bets · totaal ${c.totalSettled}`;
+  await tg(msg).catch(() => {});
+  try {
+    await supabase.from('notifications').insert({
+      type: 'kelly_stepup',
+      title: `🚀 Kelly-fraction: ${cur.toFixed(2)} → ${next.toFixed(2)}`,
+      body: `Bewezen edge over ${recentBets.length} bets (CLV ${avgClv.toFixed(2)}%, ROI ${roi.toFixed(2)}%). Cap: ${KELLY_FRACTION_MAX}.`,
+      read: false, user_id: null,
+    });
+  } catch {}
+  return { stepped: true, from: cur, to: next, avgClv, roi };
+}
+
 async function autoTuneSignalsByClv() {
   // Operator failsafe: signal-kill mode kan worden uitgeschakeld via dashboard.
   // Dan tunet de functie nog wel weights, maar de mute (weight=0) wordt overgeslagen.
@@ -679,7 +761,7 @@ async function autoTuneSignalsByClv() {
     for (const [name, s] of Object.entries(signalStats)) {
       if (s.n < 20) continue;
       const avgClv = s.sumClv / s.n;
-      const old = weights[name] || 1.0;
+      const old = weights[name] !== undefined ? weights[name] : 1.0;
       let newW = old;
       let reason = null;
       // KILL-SWITCH: structureel negatieve CLV met genoeg samples → mute
@@ -688,6 +770,10 @@ async function autoTuneSignalsByClv() {
         newW = 0;
         reason = `auto_disabled (avg_clv ${avgClv.toFixed(2)}% over ${s.n} bets)`;
         muted++;
+      } else if (old === 0 && s.n >= SIGNAL_KILL_MIN_N && avgClv > 0) {
+        // AUTO-PROMOTE: signal stond op 0 (logged-only of gemute) maar bewijst nu edge → activeren
+        newW = 0.5;
+        reason = `auto_promoted (avg_clv +${avgClv.toFixed(2)}% over ${s.n} bets · weight 0 → 0.5)`;
       } else if (avgClv < -2) newW = Math.max(0.3, old * 0.92);
       else if (avgClv > 2) newW = Math.min(1.5, old * 1.05);
       else if (avgClv < -0.5) newW = Math.max(0.3, old * 0.97);
@@ -1293,7 +1379,7 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
 
     // Half-Kelly unit sizing met drawdown protection
     const ddMult = getDrawdownMultiplier();
-    const hk = k * KELLY_FRACTION * ddMult;
+    const hk = k * getKellyFraction() * ddMult;
     const u  = kellyToUnits(hk);
     const edge = Math.round((ep * odd - 1) * 100 * 10) / 10;
 
@@ -5199,7 +5285,7 @@ async function runPrematch(emit) {
     if (ep < MIN_EP) return;
     const kc  = ((ep*(co-1)) - (1-ep)) / (co-1);
     if (kc <= 0.015) return;
-    const hkc = kc * KELLY_FRACTION;
+    const hkc = kc * getKellyFraction();
     const legStr = legs.map(p => `${Math.round(p.ep*100)}%`).join('×');
     const oddsStr = legs.map(p => p.odd).join('×');
     picks.push({
@@ -7701,10 +7787,14 @@ app.get('/api/status', (req, res) => {
           handball:            { calls: sportRateLimits.handball?.callsToday            || 0, limit: 7500 },
         },
       },
-      espn: { status: 'active', plan: 'Free', note: 'Onbeperkt · live scores auto-refresh' },
-      supabase: { status: 'active', plan: 'Free', note: 'Database voor bets + users + calibratie' },
-      telegram: { status: 'active', plan: 'Free', note: 'Picks, alerts, model updates' },
-      render: { status: 'active', plan: 'Free', note: 'Hosting + keep-alive elke 14 min' },
+      espn: { status: 'active', plan: 'Free', unlimited: true, note: 'Live scores auto-refresh' },
+      supabase: { status: 'active', plan: 'Free', unlimited: true, note: 'PostgreSQL · 500MB · bets/users/calibratie/snapshots' },
+      telegram: { status: TOKEN ? 'active' : 'no token', plan: 'Free', unlimited: true, note: 'Picks, alerts, model updates' },
+      webPush: { status: (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) ? 'active' : 'no key', plan: 'Free', unlimited: true, note: 'PWA browser push (VAPID)' },
+      render: { status: 'active', plan: 'Free', unlimited: true, note: 'Hosting + keep-alive elke 14 min' },
+      mlbStats: { status: 'active', plan: 'Free', unlimited: true, note: 'MLB pitcher stats (api.mlb.com/api/v1)' },
+      nhlPublic: { status: 'active', plan: 'Free', unlimited: true, note: 'NHL shots-differential + lineups' },
+      openMeteo: { status: 'active', plan: 'Free', unlimited: true, note: 'Weer voor outdoor wedstrijden (open-meteo.com)' },
     },
     model: {
       totalSettled: c.totalSettled || 0,
@@ -9212,6 +9302,15 @@ app.listen(PORT, () => {
   // Operator state laden VÓÓR kill-switch refresh zodat market_auto_kill_enabled correct staat
   loadOperatorState().then(() => refreshKillSwitch())
     .then(() => console.log(`🛑 Kill-switch geladen (${KILL_SWITCH.set.size} actief, OPERATOR: scan=${OPERATOR.master_scan_enabled}, market-kill=${OPERATOR.market_auto_kill_enabled}, signal-kill=${OPERATOR.signal_auto_kill_enabled}, panic=${OPERATOR.panic_mode})`));
+
+  // Kelly-fraction laden uit calibration store (default 0.50)
+  loadCalibAsync().then(c => {
+    const persisted = parseFloat(c?.kellyFraction);
+    if (isFinite(persisted) && persisted >= KELLY_FRACTION_MIN && persisted <= 1.0) {
+      setKellyFraction(persisted);
+    }
+    console.log(`💰 Kelly-fraction actief: ${getKellyFraction().toFixed(2)} (max auto: ${KELLY_FRACTION_MAX})`);
+  }).catch(() => {});
   setInterval(refreshKillSwitch, 30 * 60 * 1000);
 
   // Market sample counts cache voor adaptive MIN_EDGE
@@ -9361,6 +9460,8 @@ function scheduleDailyResultsCheck() {
 
     // Auto-tune signalen na resultatencheck
     await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
+    // Kelly-fraction auto-stepup check (na elke resultatencheck, max 1 stap/dag)
+    await evaluateKellyAutoStepup().catch(e => console.error('Kelly auto-stepup fout:', e.message));
     // CLV-based autotune (sneller signal dan W/L) — draait dagelijks na results
     const clvTune = await autoTuneSignalsByClv().catch(e => ({ tuned: 0, error: e.message }));
     if (clvTune.tuned > 0) {

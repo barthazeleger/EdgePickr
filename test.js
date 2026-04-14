@@ -1743,11 +1743,18 @@ test('residualModelDelta: clamped binnen ±0.15', () => {
 });
 
 test('residualModelActive: drempel = RESIDUAL_MIN_TRAINING_PICKS', () => {
-  assert.strictEqual(residualModelActive(499), false);
+  assert.strictEqual(residualModelActive(99), false);
+  assert.strictEqual(residualModelActive(100), true);
   assert.strictEqual(residualModelActive(500), true);
-  assert.strictEqual(residualModelActive(1000), true);
   assert.strictEqual(residualModelActive(0), false);
   assert.strictEqual(residualModelActive(null), false);
+});
+
+test('residualModelActive: backtest-gate (negatieve brierDelta = beter)', () => {
+  assert.strictEqual(residualModelActive(150, { brierDelta: -0.01 }), true);  // beter
+  assert.strictEqual(residualModelActive(150, { brierDelta: 0.01 }),  false); // slechter
+  assert.strictEqual(residualModelActive(150, { brierDelta: 0 }),     false); // gelijk
+  assert.strictEqual(residualModelActive(50,  { brierDelta: -0.05 }), false); // sample te laag
 });
 
 // ── INTEGRATION: end-to-end snapshot flow met mock supabase ────────────────

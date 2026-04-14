@@ -1243,7 +1243,22 @@ nav::-webkit-scrollbar { display: none; }
 
       <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
         <div style="flex-shrink:0;width:56px;text-align:right">
-          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v10.3.0</span><br>
+          <span style="background:var(--accent);color:#fff;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700">v10.4.0</span><br>
+          <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
+        </div>
+        <div>
+          <div style="font-weight:600;margin-bottom:5px">Autonome model-evolutie: Kelly auto-stepup + signal auto-promote</div>
+          <div style="color:var(--muted);line-height:1.7">🚀 Kelly-fraction auto-stepup: 0.50 → 0.55 → ... → 0.75 cap bij bewezen CLV > 2% + ROI > 5% over 200 bets (cooldown 30d, Telegram + inbox notif)<br>
+          ✨ Signal auto-promote: signalen op weight=0 die n≥50 + CLV > 0% halen worden automatisch geactiveerd (symmetrisch met mute-logic)<br>
+          📉 Residual model threshold 500 → 100 picks/markt (was onbereikbaar bij 2 bets/dag) + backtest-gate (alleen actief als walk-forward Brier verbetert)<br>
+          🌐 Status page: 9 services (Web Push, MLB StatsAPI, NHL public, open-meteo toegevoegd) + ∞ icoon voor gratis APIs<br>
+          ✅ 190 tests · KELLY_FRACTION volledig dynamisch via getKellyFraction()</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="flex-shrink:0;width:56px;text-align:right">
+          <span style="background:var(--surface2);color:var(--muted);padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--border)">v10.3.0</span><br>
           <span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">apr 2026</span>
         </div>
         <div>
@@ -4390,20 +4405,25 @@ async function loadStatus() {
     // Services
     const svc = d.services || {};
     const serviceNames = {
-      apiFootball: { icon: '⚽', name: 'api-football Pro', desc: 'Odds, fixtures, stats, predictions' },
-      espn: { icon: '📺', name: 'ESPN', desc: 'Live scores auto-refresh' },
-      googleSheets: { icon: '📋', name: 'Google Sheets', desc: 'Database' },
+      apiFootball: { icon: '🌐', name: 'api-sports All Sports', desc: 'Odds, fixtures, stats, predictions' },
+      espn: { icon: '📺', name: 'ESPN', desc: 'Live scores' },
+      supabase: { icon: '🗄️', name: 'Supabase', desc: 'Database' },
       telegram: { icon: '📱', name: 'Telegram', desc: 'Notificaties' },
+      webPush: { icon: '🔔', name: 'Web Push', desc: 'PWA notifications (VAPID)' },
       render: { icon: '☁️', name: 'Render', desc: 'Hosting' },
+      mlbStats: { icon: '⚾', name: 'MLB StatsAPI', desc: 'Pitcher stats' },
+      nhlPublic: { icon: '🏒', name: 'NHL public API', desc: 'Shots-differential' },
+      openMeteo: { icon: '🌦️', name: 'open-meteo', desc: 'Weer outdoor wedstrijden' },
     };
     document.getElementById('status-services').innerHTML = Object.entries(svc).map(([k, s]) => {
       const info = serviceNames[k] || { icon: '🔧', name: k, desc: '' };
-      const dot = s.status === 'active' ? '#34d399' : s.status === 'no key' ? '#f87171' : '#fbbf24';
+      const dot = s.status === 'active' ? '#34d399' : (s.status === 'no key' || s.status === 'no token') ? '#f87171' : '#fbbf24';
+      const planLabel = s.unlimited ? `${s.plan} ∞` : s.plan;
       return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="font-size:18px">${info.icon}</div>
         <div style="flex:1">
           <div style="font-weight:600;font-size:13px">${info.name}</div>
-          <div style="font-size:11px;color:var(--muted)">${s.note || info.desc} · ${s.plan}</div>
+          <div style="font-size:11px;color:var(--muted)">${s.note || info.desc} · ${planLabel}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <div style="width:8px;height:8px;border-radius:50%;background:${dot}"></div>
