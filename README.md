@@ -1,8 +1,10 @@
-# EdgePickr v10.1
+# EdgePickr v10.2
 
 **Quantitative market-disagreement engine** voor multi-sport betting analytics.
-Markt = baseline truth, model = residual overlay. Self-learning via point-in-time
-snapshots, CLV-first KPI, en kill-switch enforcement.
+Markt = baseline truth, model = residual overlay. Volledig autonoom met
+self-learning via point-in-time snapshots, CLV-first KPI, kill-switch
+enforcement, en minimale operator failsafes voor noodgevallen.
+
 
 Multi-sport betting analytics platform met een zelflerend Poisson-model per sport, market-derived sanity checks, CLV-tracking, PWA met push notificaties en een admin-panel.
 
