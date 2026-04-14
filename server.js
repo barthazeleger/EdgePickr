@@ -52,7 +52,7 @@ async function refreshKillSwitch() {
 
 function isMarketKilled(sport, marktLabel) {
   if (!KILL_SWITCH.enabled || !KILL_SWITCH.set.size) return false;
-  const key = `${normalizeSport(sport)}_${modelMath.detectMarket(marktLabel || 'other')}`;
+  const key = `${normalizeSport(sport)}_${detectMarket(marktLabel || 'other')}`;
   return KILL_SWITCH.set.has(key);
 }
 
@@ -219,7 +219,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.0.0';
+const APP_VERSION    = '10.0.1';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1292,14 +1292,20 @@ function saveAfUsage() {
   }
 }
 
+const AF_TIMEOUT_MS = 8000; // 8s hard timeout op api-sports calls; voorkomt scan-stalling
+
 async function afGet(host, path, params = {}) {
   if (!AF_KEY) return [];
   const qs = Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   const url = `https://${host}${path}${qs ? '?' + qs : ''}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AF_TIMEOUT_MS);
   try {
     const r = await fetch(url, {
-      headers: { 'x-apisports-key': AF_KEY, Accept: 'application/json' }
+      headers: { 'x-apisports-key': AF_KEY, Accept: 'application/json' },
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     // Lees rate limit headers uit elke response
     const rem = r.headers.get('x-ratelimit-requests-remaining');
     const lim = r.headers.get('x-ratelimit-requests-limit');
@@ -1324,7 +1330,12 @@ async function afGet(host, path, params = {}) {
     saveAfUsage();
     const d = await r.json().catch(() => ({}));
     return d.response || [];
-  } catch { return []; }
+  } catch (e) {
+    clearTimeout(timer);
+    // Log naar console voor zichtbaarheid; teruggeven [] zodat scan doorgaat (fail-soft).
+    if (e?.name === 'AbortError') console.warn(`⏱  afGet timeout (${AF_TIMEOUT_MS}ms): ${host}${path}`);
+    return [];
+  }
 }
 
 // Mapping voor enrichWithApiSports: gebouwd vanuit AF_FOOTBALL_LEAGUES
@@ -5941,19 +5952,46 @@ app.post('/api/prematch', (req, res) => {
       ]);
 
       let allPicks = [...footballPicks, ...nbaPicks, ...nhlPicks, ...mlbPicks, ...nflPicks, ...handballPicks];
-      // Preferred-bookies filter is al in bestFromArr toegepast: elke pick.bookie hoort bij jouw bookies.
+
+      // ── KILL-SWITCH ENFORCEMENT (v10.0.1) ─────────────────────────────
+      // Filter picks die in een geblokkeerde markt vallen vóór ranking.
+      const beforeKill = allPicks.length;
+      allPicks = allPicks.filter(p => !isMarketKilled(p.sport, p.label));
+      const killedCount = beforeKill - allPicks.length;
+      if (killedCount > 0) emit({ log: `🛑 Kill-switch: ${killedCount} pick(s) geblokkeerd op markt-CLV regels` });
+
+      // Sorteer op expectedEur (hoogste eerst)
       allPicks.sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0));
 
-      // Top 5 picks over alle sporten (gesorteerd op verwachte waarde)
-      const MAX_PICKS = 5;
-      const topPicks = allPicks.slice(0, MAX_PICKS);
+      // ── DIVERSIFICATION (v10.0.1) ─────────────────────────────────────
+      // Reviewer: max 1 pick per match, max 2 per sport. Voorkomt over-exposure
+      // op één wedstrijd (correlatierisico) en concentratie in 1 sport.
+      const MAX_PICKS = 5;            // maximum (kan minder zijn als minder kandidaten)
+      const MAX_PER_MATCH = 1;        // anti-correlatie
+      const MAX_PER_SPORT = 2;        // anti-concentratie
+      const seenMatches = new Map();  // match key → count
+      const seenSports = new Map();   // sport → count
+      const topPicks = [];
+      const skippedReasons = { same_match: 0, same_sport_cap: 0 };
+      for (const p of allPicks) {
+        if (topPicks.length >= MAX_PICKS) break;
+        const matchKey = (p.match || '').toLowerCase().trim();
+        const sportKey = p.sport || 'unknown';
+        if (matchKey && (seenMatches.get(matchKey) || 0) >= MAX_PER_MATCH) { skippedReasons.same_match++; continue; }
+        if ((seenSports.get(sportKey) || 0) >= MAX_PER_SPORT) { skippedReasons.same_sport_cap++; continue; }
+        topPicks.push(p);
+        if (matchKey) seenMatches.set(matchKey, (seenMatches.get(matchKey) || 0) + 1);
+        seenSports.set(sportKey, (seenSports.get(sportKey) || 0) + 1);
+      }
       const droppedCount = allPicks.length - topPicks.length;
 
-      emit({ log: `🌐 Totaal: ${footballPicks.length} voetbal + ${nbaPicks.length} basketball + ${nhlPicks.length} hockey + ${mlbPicks.length} baseball + ${nflPicks.length} NFL + ${handballPicks.length} handball = ${allPicks.length} kandidaten` });
-      if (droppedCount > 0) emit({ log: `🎯 Top ${MAX_PICKS} geselecteerd (${droppedCount} zwakkere kandidaten weggelaten)` });
+      emit({ log: `🌐 Totaal: ${footballPicks.length} voetbal + ${nbaPicks.length} basketball + ${nhlPicks.length} hockey + ${mlbPicks.length} baseball + ${nflPicks.length} NFL + ${handballPicks.length} handball = ${beforeKill} kandidaten` });
+      if (skippedReasons.same_match) emit({ log: `🎯 ${skippedReasons.same_match} pick(s) geskipt: zelfde wedstrijd al in selectie (correlatie)` });
+      if (skippedReasons.same_sport_cap) emit({ log: `🎯 ${skippedReasons.same_sport_cap} pick(s) geskipt: max ${MAX_PER_SPORT} per sport bereikt` });
+      if (droppedCount > 0) emit({ log: `🎯 ${topPicks.length}/${MAX_PICKS} picks geselecteerd (${droppedCount} weggelaten door diversification + ranking)` });
 
-      // Save ALL combined picks to scan history
-      saveScanEntry(topPicks, 'prematch', allPicks.length);
+      // Save ALL gerankede picks (incl. niet-geselecteerde) naar scan history voor audit
+      saveScanEntry(allPicks, 'prematch', beforeKill);
 
       // 1 gecombineerd Telegram bericht met alle sport picks
       if (topPicks.length > 0) {
