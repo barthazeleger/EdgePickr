@@ -56,6 +56,41 @@ function isMarketKilled(sport, marktLabel) {
   return KILL_SWITCH.set.has(key);
 }
 
+// Adaptive MIN_EDGE: voor markten met weinig settled bets vereisen we strenger
+// edge (8% i.p.v. 5.5%) zodat we niet vroeg te veel risico nemen op markten
+// waar we nog geen historische CLV-bewijs hebben.
+// Reviewer-lijn: "alleen markten spelen waar CLV en execution zich beginnen te bewijzen"
+const _marketSampleCache = { data: {}, at: 0 };
+const MARKET_SAMPLE_TTL_MS = 30 * 60 * 1000; // 30 min
+
+async function refreshMarketSampleCounts() {
+  try {
+    const { data: bets } = await supabase.from('bets')
+      .select('sport, markt, uitkomst').in('uitkomst', ['W', 'L']);
+    const counts = {};
+    for (const b of (bets || [])) {
+      const key = `${normalizeSport(b.sport)}_${detectMarket(b.markt || 'other')}`;
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    _marketSampleCache = { data: counts, at: Date.now() };
+  } catch { /* swallow */ }
+}
+
+// Returns adjusted MIN_EDGE for given sport+market based on settled bet history.
+// < 30 settled bets → 8% edge required (conservative)
+// 30-100 → 6.5% (moderate)
+// 100+ → base MIN_EDGE (proven market)
+function adaptiveMinEdge(sport, marktLabel, baseMinEdge) {
+  if (Date.now() - _marketSampleCache.at > MARKET_SAMPLE_TTL_MS) {
+    refreshMarketSampleCounts().catch(() => {});
+  }
+  const key = `${normalizeSport(sport)}_${detectMarket(marktLabel || 'other')}`;
+  const n = _marketSampleCache.data[key] || 0;
+  if (n >= 100) return baseMinEdge;
+  if (n >= 30) return Math.max(baseMinEdge, 0.065);
+  return Math.max(baseMinEdge, 0.08);
+}
+
 // Pure math & model helpers — geïmporteerd uit lib zodat test.js dezelfde code test
 const modelMath = require('./lib/model-math');
 const {
@@ -236,7 +271,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.0.2';
+const APP_VERSION    = '10.0.3';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -533,6 +568,12 @@ async function saveSignalWeights(w) {
 // als een signal al consistent NEGATIEVE CLV oplevert, daalt zijn weight
 // veel sneller dan via W/L (waar variance maanden duurt om uit te middelen).
 // Returns {tuned: number, adjustments: [...]}.
+// Signal-level kill-switch threshold: bij structureel negatieve CLV → weight = 0
+// (effectief uitgezet). Conservatiever dan tuning: vereist meer samples + harder
+// criterium. Reviewer-aanbeveling: "signalen zonder bewijs van lift eerder uitzetten".
+const SIGNAL_KILL_MIN_N = 50;        // minimum samples voor kill-besluit
+const SIGNAL_KILL_CLV_PCT = -3.0;    // gemiddelde CLV onder -3% → mute
+
 async function autoTuneSignalsByClv() {
   try {
     const { data: bets } = await supabase.from('bets')
@@ -557,27 +598,32 @@ async function autoTuneSignalsByClv() {
 
     const weights = loadSignalWeights();
     const adjustments = [];
-    let tuned = 0;
+    let tuned = 0, muted = 0;
     for (const [name, s] of Object.entries(signalStats)) {
       if (s.n < 20) continue;
       const avgClv = s.sumClv / s.n;
       const old = weights[name] || 1.0;
       let newW = old;
-      // CLV-driven: avg < -2% → daal sneller, > +2% → stijg
-      if (avgClv < -2) newW = Math.max(0.3, old * 0.92);
+      let reason = null;
+      // KILL-SWITCH: structureel negatieve CLV met genoeg samples → mute
+      if (s.n >= SIGNAL_KILL_MIN_N && avgClv <= SIGNAL_KILL_CLV_PCT) {
+        newW = 0;
+        reason = `auto_disabled (avg_clv ${avgClv.toFixed(2)}% over ${s.n} bets)`;
+        muted++;
+      } else if (avgClv < -2) newW = Math.max(0.3, old * 0.92);
       else if (avgClv > 2) newW = Math.min(1.5, old * 1.05);
       else if (avgClv < -0.5) newW = Math.max(0.3, old * 0.97);
       else if (avgClv > 0.5) newW = Math.min(1.5, old * 1.02);
-      else newW = old * 0.99 + 0.01; // langzaam naar 1.0 als neutraal
+      else newW = old * 0.99 + 0.01;
 
-      if (Math.abs(newW - old) >= 0.02) {
+      if (Math.abs(newW - old) >= 0.02 || reason) {
         weights[name] = +newW.toFixed(3);
-        adjustments.push({ name, old: +old.toFixed(3), new: +newW.toFixed(3), avgClv: +avgClv.toFixed(2), n: s.n });
+        adjustments.push({ name, old: +old.toFixed(3), new: +newW.toFixed(3), avgClv: +avgClv.toFixed(2), n: s.n, reason });
         tuned++;
       }
     }
     if (tuned) await saveSignalWeights(weights);
-    return { tuned, adjustments };
+    return { tuned, muted, adjustments };
   } catch (e) {
     return { tuned: 0, adjustments: [], error: e.message };
   }
@@ -5837,6 +5883,24 @@ app.get('/api/admin/v2/signal-performance', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
+// GET /api/admin/v2/market-thresholds — toon huidige adaptive MIN_EDGE per markt
+app.get('/api/admin/v2/market-thresholds', requireAdmin, async (req, res) => {
+  try {
+    if (Date.now() - _marketSampleCache.at > MARKET_SAMPLE_TTL_MS) await refreshMarketSampleCounts();
+    const baseMinEdge = 0.055;
+    const tiers = Object.entries(_marketSampleCache.data).map(([key, n]) => {
+      const tier = n >= 100 ? 'PROVEN' : n >= 30 ? 'EARLY' : 'UNPROVEN';
+      const minEdge = n >= 100 ? baseMinEdge : n >= 30 ? Math.max(baseMinEdge, 0.065) : Math.max(baseMinEdge, 0.08);
+      return { key, n, tier, min_edge_pct: +(minEdge * 100).toFixed(1) };
+    }).sort((a, b) => b.n - a.n);
+    res.json({
+      base_min_edge_pct: baseMinEdge * 100,
+      tiers,
+      thresholds: { proven_min_n: 100, early_min_n: 30, unproven_min_edge_pct: 8.0, early_min_edge_pct: 6.5 },
+    });
+  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
+});
+
 // POST /api/admin/v2/autotune-clv — run CLV-based signal weight tuning
 app.post('/api/admin/v2/autotune-clv', requireAdmin, async (req, res) => {
   try {
@@ -8635,6 +8699,13 @@ app.listen(PORT, () => {
   // Kill-switch initial load + 30-min refresh
   refreshKillSwitch().then(() => console.log(`🛑 Kill-switch geladen (${KILL_SWITCH.set.size} actief)`));
   setInterval(refreshKillSwitch, 30 * 60 * 1000);
+
+  // Market sample counts cache voor adaptive MIN_EDGE
+  refreshMarketSampleCounts().then(() => {
+    const total = Object.values(_marketSampleCache.data).reduce((a, b) => a + b, 0);
+    console.log(`📈 Market sample cache geladen (${Object.keys(_marketSampleCache.data).length} markten, ${total} settled)`);
+  });
+  setInterval(() => refreshMarketSampleCounts().catch(() => {}), 30 * 60 * 1000);
 
   // Registreer huidige model_version (idempotent) zodat model_runs ernaar kunnen wijzen
   snap.registerModelVersion(supabase, {
