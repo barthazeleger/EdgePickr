@@ -160,7 +160,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.0.2';
+const APP_VERSION    = '9.0.3';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -5167,6 +5167,87 @@ app.post('/api/bets/recalculate', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
+// CLV backfill · admin-only · vul clv_odds + clv_pct voor bets die het missen
+// Nuttig na API-outages of voor oudere bets waar de scheduled check faalde.
+// POST /api/clv/backfill  (optioneel body: { all: true } → ook andere users in admin-mode)
+app.post('/api/clv/backfill', requireAdmin, async (req, res) => {
+  try {
+    const all = req.body?.all === true;
+    const userId = (!all && req.user?.id) ? req.user.id : null;
+
+    // Haal bets op met lege CLV
+    let q = supabase.from('bets').select('*').is('clv_pct', null);
+    if (userId) q = q.eq('user_id', userId);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Filter: alleen settled OF kickoff in verleden (pre-match heeft dan meestal closing odds)
+    const nowMs = Date.now();
+    const candidates = (data || []).filter(r => {
+      if (r.uitkomst && r.uitkomst !== 'Open') return true;
+      // kickoff voorbij? parse tijd + datum
+      if (r.datum && r.tijd) {
+        const m = r.datum.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (m) {
+          const iso = `${m[3]}-${m[2]}-${m[1]}T${r.tijd}:00`;
+          const ms = Date.parse(iso);
+          if (!isNaN(ms) && ms < nowMs) return true;
+        }
+      }
+      return false;
+    });
+
+    const details = [];
+    let filled = 0, failed = 0;
+    for (const r of candidates) {
+      const id = r.bet_id;
+      const wedstrijd = r.wedstrijd || '';
+      const sport = r.sport || 'football';
+      const markt = r.markt || '';
+      const loggedOdds = parseFloat(r.odds);
+      try {
+        const fxId = r.fixture_id || await findGameId(sport, wedstrijd);
+        if (!fxId) {
+          failed++;
+          details.push({ id, wedstrijd, reason: 'fixture niet gevonden' });
+          await new Promise(rs => setTimeout(rs, 200));
+          continue;
+        }
+        const closingOdds = await fetchCurrentOdds(sport, fxId, markt, r.tip);
+        if (!closingOdds || !loggedOdds) {
+          failed++;
+          details.push({ id, wedstrijd, reason: 'closing odds niet beschikbaar' });
+          await new Promise(rs => setTimeout(rs, 200));
+          continue;
+        }
+        const clvPct = +((loggedOdds - closingOdds) / closingOdds * 100).toFixed(2);
+        await supabase.from('bets').update({ clv_odds: closingOdds, clv_pct: clvPct }).eq('bet_id', id);
+        filled++;
+        details.push({ id, wedstrijd, clvPct });
+
+        // Notificatie per succesvolle backfill
+        const icon = clvPct > 0 ? '✅' : '❌';
+        await supabase.from('notifications').insert({
+          type: 'clv_backfill',
+          title: `CLV ingevuld: ${wedstrijd}`.slice(0, 100),
+          body: `${icon} ${wedstrijd} · ${loggedOdds} → ${closingOdds} · CLV ${clvPct > 0 ? '+' : ''}${clvPct}%`.slice(0, 200),
+          read: false,
+          user_id: r.user_id || null,
+        }).catch(() => {});
+      } catch (e) {
+        failed++;
+        details.push({ id, wedstrijd, reason: (e && e.message) || 'error' });
+      }
+      // Rate limit: 200ms per bet om API budget te sparen
+      await new Promise(rs => setTimeout(rs, 200));
+    }
+
+    res.json({ scanned: candidates.length, filled, failed, details });
+  } catch (e) {
+    res.status(500).json({ error: (e && e.message) || 'Interne fout' });
+  }
+});
+
 // Debug: settled bets data (voor bankroll diagnose)
 app.get('/api/debug/wl', requireAdmin, async (req, res) => {
   try {
@@ -5390,52 +5471,102 @@ app.post('/api/analyze', async (req, res) => {
     });
 
     if (!matches.length) {
-      // Try to find upcoming fixtures via API (wider search)
-      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-      const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+      // Try to find upcoming fixtures via API (wider search, multi-sport)
+      // Zoek gisteren + vandaag + morgen (Amsterdam) zodat nachtwedstrijden (NHL/NBA) ook gevonden worden.
+      const now = Date.now();
+      const dateRange = [-1, 0, 1].map(o => new Date(now + o * 86400000)
+        .toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' }));
       let foundFixtures = [];
-      const liveStatuses = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE'];
-      try {
-        // Eerste poging: gerichte search op teamA (strenge match)
-        let fixtures = await afGet('v3.football.api-sports.io', '/fixtures', {
-          from: today, to: tomorrow, status: 'NS', search: teamA,
-        });
-        // Fallback: bredere zoekopdracht op datum zonder team filter als niks gevonden.
-        // Dan kandidaten fuzzy matchen op beide teams.
-        if ((!fixtures || !fixtures.length)) {
-          const allToday = await afGet('v3.football.api-sports.io', '/fixtures', {
-            date: today,
-          }).catch(() => []);
-          const allTomorrow = await afGet('v3.football.api-sports.io', '/fixtures', {
-            date: tomorrow,
-          }).catch(() => []);
-          const pool = [...(allToday || []), ...(allTomorrow || [])];
-          fixtures = pool.filter(f => {
-            if (liveStatuses.includes(f.fixture?.status?.short)) return false;
-            const home = f.teams?.home?.name || '';
-            const away = f.teams?.away?.name || '';
-            const hs = teamA ? teamMatchScore(home, teamA) : 0;
-            const as = teamB ? teamMatchScore(away, teamB) : 0;
-            const anyMatch = Math.max(teamMatchScore(home, teamA), teamMatchScore(away, teamA)) >= 60;
-            return anyMatch && (teamB ? (hs + as) >= 100 : true);
-          }).slice(0, 10);
-        }
-        if (fixtures && fixtures.length) {
-          // Live/bezig → geen pre-match analyse mogelijk
-          const liveOnes = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
-          if (liveOnes.length && fixtures.length === liveOnes.length) {
-            return res.json({ error: 'Wedstrijd is al bezig. Pre-match analyse niet mogelijk.' });
+      const liveStatuses = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE', 'Q1', 'Q2', 'Q3', 'Q4', 'OT'];
+      const qLc = query.toLowerCase();
+
+      // Sport hints: woorden in de query → bijbehorende sport
+      const sportHints = [
+        { sport: 'hockey',             re: /\b(hockey|nhl|ijshockey|ice hockey)\b/i },
+        { sport: 'basketball',         re: /\b(basketball|basketbal|nba|ncaa)\b/i },
+        { sport: 'baseball',           re: /\b(baseball|honkbal|mlb)\b/i },
+        { sport: 'american-football',  re: /\b(nfl|american football|amerikaans voetbal)\b/i },
+        { sport: 'handball',           re: /\b(handbal|handball)\b/i },
+        { sport: 'football',           re: /\b(voetbal|soccer|football)\b/i },
+      ];
+      const matched = sportHints.find(h => h.re.test(qLc));
+      // Probeer hint eerst, anders football, daarna fallback andere sporten (max 3 extra API rondes)
+      const trySports = matched
+        ? [matched.sport]
+        : ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'];
+
+      // Helper: fetch + score een sport over date range; retourneert topN candidates
+      async function searchSport(sport) {
+        const cfg = getSportApiConfig(sport);
+        const seen = new Set();
+        const pool = [];
+        for (const d of dateRange) {
+          const games = await afGet(cfg.host, cfg.fixturesPath, { date: d }).catch(() => []);
+          for (const g of (games || [])) {
+            const gid = sport === 'football' ? g.fixture?.id : g.id;
+            if (gid == null || seen.has(gid)) continue;
+            seen.add(gid);
+            pool.push(g);
           }
-          foundFixtures = fixtures
-            .filter(f => !liveStatuses.includes(f.fixture?.status?.short))
-            .map(f => ({
-              match: `${f.teams?.home?.name} vs ${f.teams?.away?.name}`,
-              league: f.league?.name || '',
-              kickoff: f.fixture?.date ? new Date(f.fixture.date).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam' }) : '',
-            }));
         }
+        const scored = [];
+        for (const f of pool) {
+          const status = sport === 'football' ? f.fixture?.status?.short : f.status?.short;
+          if (liveStatuses.includes(status)) continue;
+          const home = f.teams?.home?.name || '';
+          const away = f.teams?.away?.name || '';
+          const hs = teamA ? teamMatchScore(home, teamA) : 0;
+          const as = teamB ? teamMatchScore(away, teamB) : 0;
+          const anyA = teamA ? Math.max(teamMatchScore(home, teamA), teamMatchScore(away, teamA)) : 0;
+          const anyB = teamB ? Math.max(teamMatchScore(home, teamB), teamMatchScore(away, teamB)) : 0;
+          // Versoepelde threshold: 70 ipv 100 (was té streng, kwam alleen door bij perfecte match)
+          const score = teamB ? (hs + as) : anyA;
+          const pass  = teamB ? (score >= 70 && anyA >= 40 && anyB >= 40) : (anyA >= 60);
+          if (!pass) continue;
+          const kickoffIso = sport === 'football' ? f.fixture?.date : (f.date || f.time);
+          scored.push({
+            score,
+            match: `${home} vs ${away}`,
+            league: f.league?.name || '',
+            kickoff: kickoffIso
+              ? new Date(kickoffIso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam' })
+              : '',
+            sport,
+          });
+        }
+        scored.sort((a, b) => b.score - a.score);
+        return scored;
+      }
+
+      try {
+        let all = [];
+        let extraCalls = 0;
+        for (const sport of trySports) {
+          // Budget-bewaking: max 3 fallback sports (na football/hint)
+          if (extraCalls >= 3) break;
+          const found = await searchSport(sport).catch(() => []);
+          if (found.length) all.push(...found);
+          // Alleen extra sporten proberen als er nog niks is gevonden en geen hint
+          if (!matched && sport !== 'football') extraCalls++;
+          if (!matched && all.length >= 5) break; // genoeg kandidaten
+        }
+        // Dedupe op match+sport, sorteer op score, top 10
+        const dedupe = new Map();
+        for (const f of all) {
+          const key = `${f.sport}|${f.match}`;
+          if (!dedupe.has(key) || dedupe.get(key).score < f.score) dedupe.set(key, f);
+        }
+        foundFixtures = Array.from(dedupe.values())
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 10)
+          .map(({ score, ...rest }) => rest);
       } catch {}
-      return res.json({ error: `Geen analyse beschikbaar voor "${query}". Start een scan om deze wedstrijd te analyseren.`, matches: foundFixtures });
+
+      return res.json({
+        error: `Geen analyse beschikbaar voor "${query}". Start een scan om deze wedstrijd te analyseren.`,
+        matches: foundFixtures,
+        foundFixtures,
+      });
     }
 
     // Check of deze wedstrijd al bezig is (live) – dan geen pre-match analyse.
