@@ -219,7 +219,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '9.10.0';
+const APP_VERSION    = '10.0.0';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -5791,6 +5791,24 @@ app.get('/api/admin/v2/walkforward', requireAdmin, async (req, res) => {
   }
 });
 
+// POST /api/admin/v2/training-examples-build — schrijf training_examples voor settled bets
+app.post('/api/admin/v2/training-examples-build', requireAdmin, async (req, res) => {
+  try {
+    const written = await writeTrainingExamplesForSettled();
+    res.json({ written });
+  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
+});
+
+// GET /api/admin/v2/signal-performance — historische signal stats
+app.get('/api/admin/v2/signal-performance', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('signal_stats')
+      .select('*').order('avg_clv', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ signals: data || [] });
+  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
+});
+
 // POST /api/admin/v2/autotune-clv — run CLV-based signal weight tuning
 app.post('/api/admin/v2/autotune-clv', requireAdmin, async (req, res) => {
   try {
@@ -8067,6 +8085,105 @@ function scheduleKickoffWindowPolling() {
   console.log('📸 Kickoff-window polling actief (t-6h/1h/15m, elke 5 min)');
 }
 
+// ── SIGNAL STATS REFRESH (v9.11.0) ──────────────────────────────────────────
+// Wekelijks: aggregeer per signal de avg CLV, avg PnL, lift vs market.
+// Schrijft naar signal_stats tabel; dashboard kan hier signal-performance zien.
+function scheduleSignalStatsRefresh() {
+  const INTERVAL_MS = 24 * 3600 * 1000; // dagelijks
+
+  async function refresh() {
+    if (!_currentModelVersionId) return;
+    try {
+      const { data: bets } = await supabase.from('bets')
+        .select('signals, clv_pct, wl, uitkomst, sport, markt, odds')
+        .not('clv_pct', 'is', null);
+      const all = (bets || []).filter(b => typeof b.clv_pct === 'number' && b.signals);
+      if (!all.length) return;
+
+      const stats = {}; // signalName → aggregates
+      for (const b of all) {
+        let sigs;
+        try { sigs = typeof b.signals === 'string' ? JSON.parse(b.signals) : b.signals; } catch { continue; }
+        if (!Array.isArray(sigs)) continue;
+        const odds = parseFloat(b.odds) || 0;
+        const impliedP = odds > 1 ? 1 / odds : 0.5;
+        const won = b.uitkomst === 'W' ? 1 : b.uitkomst === 'L' ? 0 : null;
+        for (const sig of sigs) {
+          const name = String(sig).split(':')[0];
+          if (!name) continue;
+          if (!stats[name]) stats[name] = { n: 0, sumClv: 0, sumPnl: 0, lifts: [] };
+          stats[name].n++;
+          stats[name].sumClv += b.clv_pct;
+          stats[name].sumPnl += parseFloat(b.wl || 0);
+          if (won != null) stats[name].lifts.push(won - impliedP);
+        }
+      }
+
+      const weights = loadSignalWeights();
+      let written = 0;
+      for (const [name, s] of Object.entries(stats)) {
+        if (s.n < 10) continue;
+        await snap.upsertSignalStat(supabase, {
+          modelVersionId: _currentModelVersionId,
+          signalName: name,
+          sampleSize: s.n,
+          avgClv: s.sumClv / s.n,
+          avgPnl: s.sumPnl / s.n,
+          liftVsMarket: s.lifts.length ? s.lifts.reduce((a, b) => a + b, 0) / s.lifts.length : null,
+          weight: weights[name] || 1.0,
+        });
+        written++;
+      }
+      console.log(`📊 Signal stats refresh: ${written} signals geüpdatet`);
+    } catch (e) {
+      console.error('Signal stats refresh fout:', e.message);
+    }
+  }
+
+  setTimeout(() => { refresh(); setInterval(refresh, INTERVAL_MS); }, 30 * 60 * 1000);
+  console.log('📊 Signal stats refresh actief (dagelijks vanaf +30min)');
+}
+
+// ── TRAINING EXAMPLES WRITER (v9.11.0) ──────────────────────────────────────
+// Bij elke result-check: voor settled bets met fixture_id én feature_snapshot,
+// schrijf training_examples row zodat residual model later kan trainen.
+// Idempotent: dedupe per (fixture, market_type) — herhaalde calls schrijven niet 2x.
+async function writeTrainingExamplesForSettled() {
+  try {
+    const { data: bets } = await supabase.from('bets')
+      .select('bet_id, fixture_id, markt, sport, uitkomst, datum')
+      .in('uitkomst', ['W', 'L']).not('fixture_id', 'is', null);
+    if (!bets?.length) return 0;
+    let written = 0;
+    for (const b of bets) {
+      const marketType = detectMarket(b.markt || 'other');
+      // Check of al bestaat
+      const { data: existing } = await supabase.from('training_examples')
+        .select('id').eq('fixture_id', b.fixture_id).eq('market_type', marketType).maybeSingle();
+      if (existing?.id) continue;
+      // Pak laatste feature_snapshot voor deze fixture
+      const { data: feat } = await supabase.from('feature_snapshots')
+        .select('id, captured_at').eq('fixture_id', b.fixture_id)
+        .order('captured_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: cons } = await supabase.from('market_consensus')
+        .select('id').eq('fixture_id', b.fixture_id).eq('market_type', marketType)
+        .order('captured_at', { ascending: false }).limit(1).maybeSingle();
+      // Label: 1 voor W, 0 voor L — generic; uitbreidbaar per markt-type later
+      const label = { won: b.uitkomst === 'W' ? 1 : 0 };
+      await snap.writeTrainingExample(supabase, {
+        fixtureId: b.fixture_id, marketType,
+        snapshotTime: feat?.captured_at || new Date().toISOString(),
+        featureSnapshotId: feat?.id || null,
+        marketConsensusId: cons?.id || null,
+        label,
+      });
+      written++;
+    }
+    if (written) console.log(`📚 Training examples geschreven: ${written}`);
+    return written;
+  } catch (e) { console.error('writeTrainingExamples fout:', e.message); return 0; }
+}
+
 // ── AUTO-RETRAINING SCHEDULER (v9.10.0) ─────────────────────────────────────
 // Wekelijks: check voor elke (sport, market_type) of er ≥500 settled
 // pick_candidates zijn. Als ja: log dat deze markt klaar is voor residual
@@ -8442,6 +8559,7 @@ app.listen(PORT, () => {
   scheduleFixtureSnapshotPolling();
   scheduleKickoffWindowPolling();
   scheduleAutoRetraining();
+  scheduleSignalStatsRefresh();
 
   // Kill-switch initial load + 30-min refresh
   refreshKillSwitch().then(() => console.log(`🛑 Kill-switch geladen (${KILL_SWITCH.set.size} actief)`));

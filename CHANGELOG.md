@@ -2,6 +2,33 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.0.0] - 2026-04-14
+
+### Major release: complete v2 architecture
+EdgePickr is gepivotteerd van "scan-app met calibratie" naar een echte
+**quantitative market-disagreement engine** met point-in-time snapshots,
+residual modeling boven market consensus, en self-learning via CLV.
+
+### Added (v2 completion)
+- `signal_stats`, `execution_logs`, `training_examples`, `raw_api_events` tabellen (4 reviewer-tabellen die in v9.10 nog ontbraken)
+- Signal stats dagelijkse refresh job: aggregeert avg CLV/PnL/lift per signal
+- Training examples writer: koppelt feature_snapshots aan settled outcomes voor latere model training
+- Execution logs schema voor toekomstige bookie-API slippage tracking
+- `POST /api/admin/v2/training-examples-build` — bouw training set uit settled bets
+- `GET /api/admin/v2/signal-performance` — historische signal stats per signal_name
+
+### Architecture
+- 11/12 reviewer-tabellen geïmplementeerd (12e = bets, was al aanwezig)
+- 7-layered pipeline: ingest → feature store → consensus → model → pick engine → execution → learning
+- Pure helpers in `lib/model-math.js` (geen test-mirrors meer)
+- Snapshot writers in `lib/snapshots.js` (allemaal fail-safe)
+
+### Migration
+- `migrations/v10.0.0_v2_completion.sql` — laatste 4 tabellen
+
+### Tests
+- 171/171 pass (3 nieuwe security regressies + clamp validatie)
+
 ## [9.10.0] - 2026-04-14
 
 ### Added
