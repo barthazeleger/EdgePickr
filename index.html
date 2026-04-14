@@ -1973,7 +1973,7 @@ async function loadBets() {
   if (!d) return null;
   betData = d;
   renderStats(d.stats);
-  renderBetsTable(d.bets);
+  refreshBets(d.bets);
   updateDashStats(d.stats, d.bets);
   return d;
 }
@@ -2072,11 +2072,13 @@ function clearPeriodActive() {
 }
 
 function setPeriodToday() {
-  // Vandaag = zelfde datum voor from en to, gesorteerd op aftrap
+  // Vandaag + morgen (om nachtwedstrijden die op morgen staan mee te pakken)
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const tm = new Date(Date.now() + 86400000);
+  const tmStr = `${tm.getFullYear()}-${String(tm.getMonth()+1).padStart(2,'0')}-${String(tm.getDate()).padStart(2,'0')}`;
   document.getElementById('f-from').value = todayStr;
-  document.getElementById('f-to').value   = todayStr;
+  document.getElementById('f-to').value   = tmStr;
   document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.days === '1'));
   currentSort = { field: 'tijd', dir: 'asc' }; // sorteer op aftrap
   applyPeriodFilter();
@@ -2183,6 +2185,15 @@ function sortBets(field) {
   }
 }
 
+// Slim: als er een periode-filter actief is, respecteer die; anders alles tonen.
+function refreshBets(bets) {
+  if (bets) betData = { ...(betData || {}), bets };
+  const fromVal = document.getElementById('f-from')?.value;
+  const toVal = document.getElementById('f-to')?.value;
+  if (fromVal || toVal) { applyPeriodFilter(); return; }
+  renderBetsTable((betData && betData.bets) || bets || []);
+}
+
 function renderBetsTable(bets) {
   const tbody = document.getElementById('bets-body');
   tbody.innerHTML = '';
@@ -2249,7 +2260,7 @@ function renderBetsTable(bets) {
 function setOutcome(id, v) {
   api('/api/bets/' + id, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ uitkomst: v })
-  }).then(r => r?.json()).then(d => { if(d){ betData = d; renderStats(d.stats); renderBetsTable(d.bets); } });
+  }).then(r => r?.json()).then(d => { if(d){ betData = d; renderStats(d.stats); refreshBets(d.bets); } });
 }
 
 function editBetField(id, field, currentVal) {
@@ -2262,7 +2273,7 @@ function editBetField(id, field, currentVal) {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ [field]: num })
   }).then(r => r?.json()).then(d => {
-    if (d) { betData = d; renderStats(d.stats); renderBetsTable(d.bets); }
+    if (d) { betData = d; renderStats(d.stats); refreshBets(d.bets); }
   });
 }
 
@@ -2274,7 +2285,7 @@ function editSport(id, currentVal) {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ sport: val })
   }).then(r => r?.json()).then(d => {
-    if (d) { betData = d; renderStats(d.stats); renderBetsTable(d.bets); }
+    if (d) { betData = d; renderStats(d.stats); refreshBets(d.bets); }
   });
 }
 
@@ -2286,7 +2297,7 @@ function editBookie(id, currentVal) {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ tip: val })
   }).then(r => r?.json()).then(d => {
-    if (d) { betData = d; renderStats(d.stats); renderBetsTable(d.bets); }
+    if (d) { betData = d; renderStats(d.stats); refreshBets(d.bets); }
   });
 }
 
@@ -2294,7 +2305,7 @@ function removeBet(id) {
   if (!confirm('Bet #' + id + ' verwijderen?')) return;
   api('/api/bets/' + id, { method: 'DELETE' })
     .then(r => r?.json())
-    .then(d => { if(d){ betData = d; renderStats(d.stats); renderBetsTable(d.bets); } });
+    .then(d => { if(d){ betData = d; renderStats(d.stats); applyPeriodFilter(); } });
 }
 
 function addBet() {
@@ -2320,7 +2331,7 @@ function addBet() {
     })
   }).then(r => r?.json()).then(d => {
     if(!d) return;
-    betData = d; renderStats(d.stats); renderBetsTable(d.bets);
+    betData = d; renderStats(d.stats); refreshBets(d.bets);
     clearForm();
     if (d.correlationWarning) {
       showMsg('form-msg', `⚠️ Bet toegevoegd — ${d.correlationWarning.message}`, '#f59e0b');
@@ -2372,7 +2383,7 @@ async function backfillTimes() {
     const updated = d.results.filter(r => r.status === 'bijgewerkt');
     const notFound = d.results.filter(r => r.status === 'niet gevonden');
     msg.textContent = `✓ ${updated.length} bijgewerkt${notFound.length ? `, ${notFound.length} niet gevonden` : ''}`;
-    if (updated.length) { const bets = await api('/api/bets').then(r => r?.json()); if(bets){ betData = bets; renderStats(bets.stats); renderBetsTable(bets.bets); } }
+    if (updated.length) { const bets = await api('/api/bets').then(r => r?.json()); if(bets){ betData = bets; renderStats(bets.stats); refreshBets(bets.bets); } }
   } catch(e) { msg.textContent = 'Netwerkfout'; }
   finally { btn.disabled = false; btn.textContent = '⏰ Tijden invullen'; }
 }
@@ -3690,7 +3701,7 @@ async function recalcWL() {
     const d = await api('/api/bets/recalculate', { method: 'POST' }).then(r => r?.json());
     if (d.error) { msg.textContent = 'Fout: ' + d.error; return; }
     msg.textContent = `✓ ${d.fixed} W/L waarden herberekend`;
-    betData = d; renderStats(d.stats); renderBetsTable(d.bets);
+    betData = d; renderStats(d.stats); refreshBets(d.bets);
   } catch { msg.textContent = 'Netwerkfout'; }
   finally { btn.disabled = false; btn.textContent = '🔧 Herbereken W/L'; }
 }
@@ -3721,7 +3732,7 @@ async function checkResults() {
       : `📋 Scores gevonden — zie hieronder`;
 
     // Re-render tabel met nieuwe data
-    if (d.bets) { betData = { bets: d.bets, stats: d.stats }; renderStats(d.stats); renderBetsTable(d.bets); }
+    if (d.bets) { betData = { bets: d.bets, stats: d.stats }; renderStats(d.stats); refreshBets(d.bets); }
 
     // Toon resultaten
     area.style.display = 'block';
