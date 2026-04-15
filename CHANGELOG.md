@@ -21,6 +21,9 @@ Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](http
 ### Tests
 9 nieuwe tests in `test.js` voor 4-tier modal advice + Padres scenario (1.91→1.80) edge case. Totaal **249 tests, 0 failed** (was 240).
 
+### Docs
+- **Info-tab up-to-date** voor alle v10.8.0-9 features: knockout/aggregate score, rest-days alle 6 sporten, new-season damping, signal performance dashboard, projections met regression-to-mean + safe ladder, 18 market buckets, 9-bucket unit ladder, modal 4-tier line-move. Inzetstrategie-card uitgebreid van 6 naar 9 buckets.
+
 ## [10.8.8] - 2026-04-15
 
 ### Fixed (code review v10.8.0-7 findings)
