@@ -1879,7 +1879,7 @@ function renderBetsTable(bets) {
       <td><strong style="cursor:pointer" onclick="editBetField(${parseInt(b.id)||0},'odds',${parseFloat(b.odds)||0})" title="Klik om aan te passen">${b.odds}</strong></td>
       <td style="cursor:pointer" onclick="editBetField(${parseInt(b.id)||0},'units',${parseFloat(b.units)||0})" title="Klik om aan te passen">${b.units}U</td>
       <td style="cursor:pointer;font-size:11px;color:var(--muted)" onclick="editBookie(${parseInt(b.id)||0},'${escHtml((b.tip||'Bet365').replace(/'/g,"\\'"))}')" title="Klik om aan te passen">${escHtml(b.tip||'—')}</td>
-      <td>€${b.inzet}</td>
+      <td>€${(b.inzet != null ? Number(b.inzet) : 0).toFixed(2)}</td>
       <td style="text-align:center">${b.score != null ? `<span style="font-size:11px;font-weight:700;color:${b.score>=8?'#34d399':b.score>=6?'#fbbf24':'#94a3b8'}">${b.score}/10</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td>
         <select class="sel-outcome" onchange="setOutcome(${parseInt(b.id)||0}, this.value)">
@@ -1888,7 +1888,7 @@ function renderBetsTable(bets) {
           <option ${b.uitkomst==='L'?'selected':''}>L</option>
         </select>
       </td>
-      <td class="${wCls}">${b.wl !== 0 ? (b.wl>0?'+':'')+'€'+b.wl : b.uitkomst==='Open' ? `<span style="color:var(--muted);font-size:11px" title="Potentiële winst">+€${+((b.odds-1)*b.inzet).toFixed(2)}</span>` : '—'}</td>
+      <td class="${wCls}">${b.wl !== 0 ? (b.wl>0?'+':'')+'€'+Number(b.wl).toFixed(2) : b.uitkomst==='Open' ? `<span style="color:var(--muted);font-size:11px" title="Potentiële winst">+€${+((b.odds-1)*b.inzet).toFixed(2)}</span>` : '—'}</td>
       <td>${b.clvPct != null && !isNaN(b.clvPct) ? `<span style="font-size:11px;font-weight:700;color:${b.clvPct>0?'#34d399':b.clvPct<0?'#f87171':'#9ca3af'}">${b.clvPct>0?'+':''}${b.clvPct}%</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td><button class="del-btn" onclick="removeBet(${parseInt(b.id)||0})" title="Verwijderen">🗑</button></td>`;
     tbody.appendChild(tr);
@@ -2638,7 +2638,7 @@ function filterLive() {
         <div style="display:flex;gap:10px;margin-top:4px;font-size:11px;color:var(--muted)">
           <span>@ <strong style="color:var(--text)">${myBet.odds}</strong></span>
           <span>${myBet.units}U</span>
-          <span>€${myBet.inzet}</span>
+          <span>€${(myBet.inzet != null ? Number(myBet.inzet) : 0).toFixed(2)}</span>
           <span style="color:#4ade80">pot. +€${+((myBet.odds-1)*myBet.inzet).toFixed(2)}</span>
         </div>
       </div>` : ''}

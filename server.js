@@ -1872,31 +1872,47 @@ async function enrichWithApiSports(emit, activeSoccerKeys = null) {
 async function fetchAggregateScore(hmId, awId, roundStr, seasonYear) {
   if (!AF_KEY || !hmId || !awId) return null;
   try {
-    // H2H recent 5 matches — 1e leg is meestal 1-2 weken eerder, recent genoeg.
+    // H2H recent 5 matches — 1e leg is meestal 1-2 weken eerder.
     const rows = await afGet('v3.football.api-sports.io', '/fixtures/headtohead', {
       h2h: `${hmId}-${awId}`, last: 5
     });
     if (!Array.isArray(rows) || !rows.length) return null;
-    // Vind 1e leg: zelfde season + round ENDS met "1st leg" / "1st Leg"
-    const firstLegHint = roundStr.replace(/2nd\s*leg/i, '1st Leg').replace(/second\s*leg/i, '1st Leg');
-    const firstLeg = rows.find(f => {
+
+    // v10.7.25: api-sports labelt leg niet altijd expliciet — soms alleen
+    // "Semi-finals" voor beide legs. Zoek breed: zelfde season, status FT,
+    // binnen 30 dagen, en stage-match (quarter/semi/final/round of X).
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 86400000;
+    const currentStage = (roundStr.match(/(quarter|semi|final|round of \d+)/i) || [])[1]?.toLowerCase();
+
+    const candidates = rows.filter(f => {
       const rd = String(f.league?.round || '').toLowerCase();
+      const status = f.fixture?.status?.short;
+      const kickoff = new Date(f.fixture?.date || 0).getTime();
       const sameSeason = !seasonYear || f.league?.season === seasonYear;
-      return sameSeason && /1st\s*leg|first\s*leg/i.test(rd);
+      const finished = status === 'FT' || status === 'AET' || status === 'PEN';
+      const recent = kickoff > 0 && (now - kickoff) < THIRTY_DAYS;
+      // Stage match: als we weten wat de stage is, eis dezelfde stage; anders accepteer
+      const stageMatch = !currentStage || rd.includes(currentStage);
+      return sameSeason && finished && recent && stageMatch;
     });
-    if (!firstLeg) return null;
+    if (!candidates.length) return null;
+
+    // Kies de meest recente kandidaat (1e leg)
+    candidates.sort((a, b) => new Date(b.fixture?.date || 0) - new Date(a.fixture?.date || 0));
+    const firstLeg = candidates[0];
+
     const hG1 = firstLeg.goals?.home ?? 0;
     const aG1 = firstLeg.goals?.away ?? 0;
     const firstHome = firstLeg.teams?.home?.id;
     const firstAway = firstLeg.teams?.away?.id;
-    // In de 2e leg zijn de teams OMGEDRAAID (home wordt away):
-    // Huidig hmId was uit in 1e leg, dus aggregate_home (total voor huidige thuis-team)
-    //   = aG1 als hmId === firstAway, anders hG1
+    // In de 2e leg zijn teams meestal omgedraaid (home wordt away).
     let aggHome, aggAway;
     if (hmId === firstAway) { aggHome = aG1; aggAway = hG1; }
     else if (hmId === firstHome) { aggHome = hG1; aggAway = aG1; }
-    else return null; // team mismatch, veilige exit
-    return { aggHome, aggAway, firstLegScore: `${hG1}-${aG1}`, firstLegFxId: firstLeg.fixture?.id };
+    else return null;
+    return { aggHome, aggAway, firstLegScore: `${hG1}-${aG1}`, firstLegFxId: firstLeg.fixture?.id,
+             firstLegRound: firstLeg.league?.round };
   } catch (e) {
     console.warn('fetchAggregateScore failed:', e.message);
     return null;
