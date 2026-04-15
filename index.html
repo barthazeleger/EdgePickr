@@ -1512,7 +1512,10 @@ function renderPicks(el, picks) {
       });
     }
   });
-  el._picks = dedupedPicks;
+  // v10.8.12: bewaar ORIGINELE picks array (met secondaries), niet deduped.
+  // Bij re-render (loadBets race) dedupt renderPicks opnieuw — anders gaan
+  // "See also" secondary picks verloren na re-render.
+  el._picks = picks;
 }
 
 function toggleReason(i) {
@@ -5042,7 +5045,10 @@ async function refreshScanHistory(force) {
     const ageMs = Date.now() - _lastHistoryFetch;
     if (!force && ageMs < 30000) return;
     _lastHistoryFetch = Date.now();
-    const hist = await api('/api/scan-history').then(r => r?.json()) || [];
+    // v10.8.12: cache-bust query param om browser/CDN caching te ontwijken.
+    // Zonder dit kwam in praktijk bij sommige setups nog een stale response
+    // terug ondanks /api endpoints normaal niet gecached worden.
+    const hist = await api('/api/scan-history?_=' + Date.now()).then(r => r?.json()) || [];
     if (!hist.length) return;
     const latest = hist.find(h => h.type === 'prematch' && h.picks?.length);
     if (!latest) return;

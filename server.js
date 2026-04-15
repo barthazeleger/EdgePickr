@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.8.11';
+const APP_VERSION    = '10.8.12';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -8412,6 +8412,9 @@ function safePicksList(picks, isAdmin) {
 }
 
 app.get('/api/scan-history', async (req, res) => {
+  // v10.8.12: expliciet no-store zodat browser/CDN nooit een stale response
+  // cached — auto-refresh zou anders oude picks blijven zien.
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   const isAdmin = req.user?.role === 'admin';
   try {
     let query = supabase.from('scan_history').select('*')

@@ -2,6 +2,12 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.8.12] - 2026-04-15
+
+### Fixed
+- **"See also" secondaries verdwenen na re-render**: in `renderPicks()` werd `el._picks = dedupedPicks` gezet (alleen primaries). Bij re-render (via `loadBets()` voor Gelogd-chip fix) gingen secondary BTTS/O2.5 picks verloren. Nu `el._picks = picks` (origineel, incl secondaries) — renderPicks dedupt opnieuw.
+- **Auto-refresh pakte nog steeds geen nieuwe scans op**: cache-bust query param (`?_=<ts>`) op `/api/scan-history` fetch + server stuurt nu `Cache-Control: no-store`. Dekt browser + eventuele CDN edge-cache.
+
 ## [10.8.11] - 2026-04-15
 
 ### Fixed
