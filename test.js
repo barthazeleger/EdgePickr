@@ -2754,37 +2754,57 @@ test('knockout parser: detecteert leg en stage uit f.league.round', () => {
   assert.deepStrictEqual(parse('Round of 32 2nd leg'), { isKnockout: true, leg: 2, stageLabel: '1/16 finale' });
 });
 
-test('projection (v10.8.2): monthly unit-review = 10% van bankroll model', () => {
-  // Reproduceer renderProjections project() logic met maand-review
+test('projection (v10.8.6): timeline returnt {bankroll, unit, stake, profit}', () => {
+  // Reproduceer renderProjections project() — returns array of objects
   const project = (bankroll, unitEur, betsPerMonth, avgUnits, effRoi) => {
-    const out = [bankroll];
+    const timeline = [{ month: 0, bankroll, unit: unitEur, stake: unitEur * avgUnits, profit: 0 }];
     let curBank = bankroll;
     let curUnit = unitEur;
     for (let m = 1; m <= 12; m++) {
       const stakePerBet = curUnit * avgUnits;
       const monthProfit = betsPerMonth * stakePerBet * effRoi;
       curBank = +(curBank + monthProfit).toFixed(2);
-      out.push(curBank);
-      curUnit = Math.max(1, Math.round(curBank * 0.10));
+      const newUnit = Math.max(1, Math.round(curBank * 0.10));
+      timeline.push({ month: m, bankroll: curBank, unit: newUnit, stake: stakePerBet, profit: +monthProfit.toFixed(2) });
+      curUnit = newUnit;
     }
-    return out;
+    return timeline;
   };
-  // Bankroll 250, unit 25 (=10%), 90 bets/maand × 0.75U avg, ROI 6%
-  // Maand 1: stake = 25 × 0.75 = 18.75 → profit = 90 × 18.75 × 0.06 = €101.25
-  // Bankroll na maand 1: 250 + 101.25 = 351.25
-  // Nieuwe unit: round(351.25 × 0.10) = 35
+  // Bankroll 250, unit 25, 90 bets, 0.75U, ROI 6%
   const p = project(250, 25, 90, 0.75, 0.06);
-  assert.strictEqual(p[0], 250);
-  assert.strictEqual(p[1], 351.25, '1e maand: 250 + 101.25');
-  // Maand 2: nieuwe unit=35, stake=26.25 → profit = 90 × 26.25 × 0.06 = 141.75
-  // Bankroll = 351.25 + 141.75 = 493
-  assert.strictEqual(p[2], 493, '2e maand met grotere unit');
+  assert.strictEqual(p[0].bankroll, 250);
+  assert.strictEqual(p[1].profit, 101.25, 'M1 profit');
+  assert.strictEqual(p[1].bankroll, 351.25, 'M1 bankroll');
+  assert.strictEqual(p[1].unit, 35, 'M1 nieuwe unit');
+  // M2: unit=35 stake=26.25 profit=141.75
+  assert.strictEqual(p[2].profit, 141.75);
+  assert.strictEqual(p[2].bankroll, 493);
   // Bij negative ROI: bankroll daalt
   const neg = project(250, 25, 90, 0.75, -0.05);
-  assert.ok(neg[12] < 250, 'negatieve ROI = bankroll daalt');
+  assert.ok(neg[12].bankroll < 250, 'negatieve ROI = bankroll daalt');
   // Zero ROI = constant
   const zero = project(250, 25, 90, 0.75, 0);
-  assert.strictEqual(zero[12], 250);
+  assert.strictEqual(zero[12].bankroll, 250);
+});
+
+test('projection: €3k milestone detection', () => {
+  // Met effROI 7.78% (regression-blended uit observed 15.3% × weight 0.27)
+  const project = (bankroll, unitEur, betsPerMonth, avgUnits, effRoi) => {
+    const timeline = [{ month: 0, profit: 0 }];
+    let curBank = bankroll;
+    let curUnit = unitEur;
+    for (let m = 1; m <= 12; m++) {
+      const stakePerBet = curUnit * avgUnits;
+      const monthProfit = betsPerMonth * stakePerBet * effRoi;
+      curBank = +(curBank + monthProfit).toFixed(2);
+      timeline.push({ month: m, bankroll: curBank, unit: Math.round(curBank * 0.10), profit: +monthProfit.toFixed(2) });
+      curUnit = Math.max(1, Math.round(curBank * 0.10));
+    }
+    return timeline;
+  };
+  const p = project(250, 25, 90, 0.75, 0.0778);
+  const m3kIdx = p.findIndex(r => r.profit >= 3000);
+  assert.ok(m3kIdx >= 7 && m3kIdx <= 10, `€3k bereikt rond M8-9, got M${m3kIdx}`);
 });
 
 test('projection: scenarios factor werken lineair op ROI', () => {
