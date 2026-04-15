@@ -9500,6 +9500,26 @@ function scheduleHealthAlerts() {
       const { data: clvBets } = await supabase.from('bets')
         .select('clv_pct, sport, markt').not('clv_pct', 'is', null);
       const all = (clvBets || []).filter(b => typeof b.clv_pct === 'number');
+      // v10.7.23: persist _lastClvAlertN in calibration store zodat deploys
+      // de counter niet resetten. Eerder werd de milestone elke deploy
+      // herhaald omdat in-memory counter=0 + 25 <= huidig totaal.
+      if (_lastClvAlertN === 0) {
+        try {
+          const cCur = loadCalib();
+          if (typeof cCur.lastClvAlertN === 'number') {
+            _lastClvAlertN = cCur.lastClvAlertN;
+          } else {
+            // Eerste run na upgrade: snap naar floor(count / 25) * 25 zodat
+            // we niet onmiddellijk retroactief 1 of meer milestones afvuren.
+            _lastClvAlertN = Math.floor(all.length / CLV_ALERT_INTERVAL) * CLV_ALERT_INTERVAL;
+            cCur.lastClvAlertN = _lastClvAlertN;
+            await saveCalib(cCur);
+          }
+        } catch (e) {
+          console.warn('CLV milestone counter init failed:', e.message);
+          _lastClvAlertN = all.length; // fail-safe: voorkom spam
+        }
+      }
       if (all.length >= _lastClvAlertN + CLV_ALERT_INTERVAL) {
         const avgClv = all.reduce((s, b) => s + b.clv_pct, 0) / all.length;
         const positive = all.filter(b => b.clv_pct > 0).length;
@@ -9528,6 +9548,12 @@ function scheduleHealthAlerts() {
         const marketSummary = marketLines || '(nog geen markt met ≥10 samples)';
         await tg(`📊 CLV Milestone\n${all.length} settled bets met CLV data\nGemiddelde CLV: ${avgClv > 0 ? '+' : ''}${avgClv.toFixed(2)}%\n${positive}/${all.length} positief (${posPct}%)\n${verdict}\n\nPer markt (≥10 bets):\n${marketSummary}`).catch(() => {});
         _lastClvAlertN = all.length;
+        // v10.7.23: persist counter zodat volgende deploy niet opnieuw triggert
+        try {
+          const cPersist = loadCalib();
+          cPersist.lastClvAlertN = all.length;
+          await saveCalib(cPersist);
+        } catch (e) { console.warn('Could not persist _lastClvAlertN:', e.message); }
       }
 
       // Drift alert: detect markten/signalen die recent significant verslechteren
