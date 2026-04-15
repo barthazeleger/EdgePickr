@@ -2,6 +2,42 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.7.24] - 2026-04-15
+
+### Added (rest-days signal — alle 6 sporten)
+Tussen wedstrijden verstreken dagen als signaal, met sport-aware thresholds:
+- **NBA / NHL**: <2 dagen = tired (back-to-back)
+- **NFL**: <4 dagen = short week (Thursday Night effect)
+- **Football**: <3 dagen = midweek (na CL/EL impact)
+- **MLB / handbal**: <1 dag = tired
+
+**Signalen** (weight=0 default, auto-promote via `autoTuneSignalsByClv` bij positieve CLV over ≥20 samples):
+- `rest_days_home_tired` / `rest_days_away_tired` — absoluut flag bij team onder threshold
+- `rest_mismatch_home_advantage` / `rest_mismatch_away_advantage` — als verschil ≥3 dagen
+
+**Human-note** in pick reason: `🛌 rust: thuis 1d / uit 3d`
+
+**humanizePickReason** vertaalt naar: "thuis op korte rust, uit fris" of "uit op korte rust, thuis fris" of "groot verschil in rustdagen tussen teams".
+
+**Helper** `fetchLastPlayedDate(sport, cfg, teamId, kickoffMs)`:
+- Cached per (sport, teamId) binnen scan-session
+- Null-cached ook (voorkomt herhaalde failed calls)
+- ~80ms sleep tussen calls voor rate-limit respect
+
+**API-kosten**: ~2 extra calls per fixture (1 per team), gedecupliceerd per scan. Budget impact ~100-200 calls/dag totaal over alle sporten (binnen 7500/dag budget).
+
+### Fixed (CLV milestone spam)
+`_lastClvAlertN` leefde alleen in-memory → elke deploy → eerste health-check triggert milestone weer. Nu gepersisteerd in calibration store. Bij eerste init na deploy: snap naar `floor(count/25)*25` zodat we niet retroactief milestones vuren.
+
+### Fixed (debug endpoint: include date/status/league)
+`/api/debug/odds` gaf alleen id/home/away/bookmakers. Voor de Padres-diagnose bleek dat een FT-match (afgelopen nacht) werd getoond ipv de aankomende NS-match. Nu ook: `dateUTC`, `dateNL` (Europe/Amsterdam), `status.short`, `league.name`. Geen bugfix maar UX van admin-tool.
+
+### Fixed (duplicate hmId declaration in football scan loop)
+Tijdens rest-days wire-up kreeg de football-loop `const hmId = f.teams?.home?.id` toegevoegd, wat conflicteerde met verderop `const hmId = hmSt?.teamId`. Latere declaration hernoemd naar `hmIdResolved` met fallback.
+
+### Tests
+1 nieuwe test voor rest-days signal logica (NBA back-to-back, NFL short week, football midweek, missing data). Totaal **227 tests, 0 failed**.
+
 ## [10.7.23] - 2026-04-15
 
 ### Added (knockout / 2-leg tie awareness — v1: logging)

@@ -346,7 +346,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.7.23';
+const APP_VERSION    = '10.7.24';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1489,6 +1489,7 @@ const afCache = {
   injuries:  {},   // key=sport_key, value: { teamNameLower: [{ player, type }] }
   referees:  {},   // key='home vs away' (lower), value: { name, yellowsPerGame, redsPerGame }
   h2h:       {},   // key='id1-id2', value: { hmW, awW, dr, n, avgGoals, bttsRate }
+  lastPlayed:{},   // v10.7.24: key=sport, value: { teamId: ISO date string of last completed fixture }
 };
 
 // ── API-FOOTBALL RATE LIMIT TRACKER ─────────────────────────────────────────
@@ -1861,6 +1862,70 @@ async function enrichWithApiSports(emit, activeSoccerKeys = null) {
   }
   emit({ log: `✅ ⚽ Scheidsrechters voetbal: ${Object.keys(afCache.referees).length} wedstrijden (${callsUsed} calls)` });
   emit({ log: `📊 Voetbal-enrichment klaar · ${callsUsed} calls (multi-sport data wordt per-league binnen elk sport-loop opgehaald)` });
+}
+
+// v10.7.24: rest-days helper — haalt laatste gespeelde fixture op en cached
+// per (sport, teamId). Rest-days is een edge-signaal vooral voor NBA/NHL
+// back-to-back situaties, MLB lange road-trips, en voetbal midweek-CL effect.
+// Phase 1: signaal logging only (weight=0, auto-promote via CLV).
+async function fetchLastPlayedDate(sport, cfg, teamId, beforeKickoffMs) {
+  if (!AF_KEY || !teamId) return null;
+  if (!afCache.lastPlayed[sport]) afCache.lastPlayed[sport] = {};
+  const cached = afCache.lastPlayed[sport][teamId];
+  if (cached !== undefined) return cached; // null ook geldig (= niet gevonden)
+  try {
+    const path = cfg.host.includes('football') ? '/fixtures' : '/games';
+    const rows = await afGet(cfg.host, path, { team: teamId, last: 1 });
+    // Extract date from response — structure varies per sport api-sports
+    let dateStr = null;
+    const row = rows?.[0];
+    if (row) {
+      dateStr = row.fixture?.date || row.date || row.timestamp || null;
+    }
+    // Cache ook null zodat we niet nogmaals fetchen voor onbekende team
+    afCache.lastPlayed[sport][teamId] = dateStr;
+    await sleep(80);
+    return dateStr;
+  } catch (e) {
+    console.warn(`fetchLastPlayedDate failed voor ${sport}/${teamId}:`, e.message);
+    afCache.lastPlayed[sport][teamId] = null;
+    return null;
+  }
+}
+
+// Bereken rest-days + maak signal/note.
+// Thresholds per sport:
+//   NBA/NHL: <2 dagen = tired (back-to-back)
+//   MLB:     <1 dag = tired (uncommon, usually off-days)
+//   NFL:     <4 dagen = short week
+//   Football:<3 dagen = midweek after CL/EL
+function buildRestDaysInfo(sport, kickoffMs, homeLastDate, awayLastDate) {
+  const msPerDay = 86400000;
+  const hmDays = homeLastDate ? Math.max(0, (kickoffMs - new Date(homeLastDate).getTime()) / msPerDay) : null;
+  const awDays = awayLastDate ? Math.max(0, (kickoffMs - new Date(awayLastDate).getTime()) / msPerDay) : null;
+  const threshold = sport === 'basketball' || sport === 'hockey' ? 2
+                  : sport === 'american-football' ? 4
+                  : sport === 'football' ? 3 : 1;
+  const homeTired = hmDays !== null && hmDays < threshold;
+  const awayTired = awDays !== null && awDays < threshold;
+  // Signaal: logging-only (waarde=0%, weight=0 default in autoTune, promote via CLV)
+  const signals = [];
+  if (homeTired) signals.push('rest_days_home_tired:0%');
+  if (awayTired) signals.push('rest_days_away_tired:0%');
+  // Mismatch: 1 team rust, ander niet
+  if (hmDays !== null && awDays !== null && Math.abs(hmDays - awDays) >= 3) {
+    signals.push(hmDays > awDays ? 'rest_mismatch_home_advantage:0%' : 'rest_mismatch_away_advantage:0%');
+  }
+  // Menselijke note
+  let note = '';
+  if (hmDays !== null && awDays !== null) {
+    const hmStr = hmDays < 1 ? `${(hmDays*24).toFixed(0)}u` : `${Math.round(hmDays)}d`;
+    const awStr = awDays < 1 ? `${(awDays*24).toFixed(0)}u` : `${Math.round(awDays)}d`;
+    if (homeTired || awayTired || Math.abs(hmDays - awDays) >= 2) {
+      note = ` | 🛌 rust: thuis ${hmStr} / uit ${awStr}`;
+    }
+  }
+  return { hmDays, awDays, homeTired, awayTired, signals, note };
 }
 
 // Haal H2H op voor twee teams (lazy-loaded, max 5x per scan)
@@ -2790,6 +2855,17 @@ async function runBasketball(emit) {
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
 
+        // v10.7.24: rest-days (phase 1) — kritiek voor NBA back-to-backs
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgBk = { host: 'v1.basketball.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('basketball', cfgBk, hmId, kickoffMs),
+            fetchLastPlayedDate('basketball', cfgBk, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('basketball', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (basketball) fetch failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.basketball.api-sports.io', '/odds', { game: gameId });
@@ -2954,10 +3030,12 @@ async function runBasketball(emit) {
         if (nbaRestDaysDiff !== 0) matchSignals.push(`nba_rest_days_diff:${nbaRestDaysDiff>0?'+':''}${nbaRestDaysDiff}`);
         if (nbaInjuryDiff !== 0) matchSignals.push(`nba_injury_diff:${nbaInjuryDiff>0?'+':''}${nbaInjuryDiff}`);
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
+        // v10.7.24: generic rest-days (phase 1 logging, weight=0) — naast bestaande nbaRestDaysDiff
+        if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${b2bNote}${ppgNote}${rebNote}${splitNote}`;
+        const sharedNotes = `${posStr}${formNote}${b2bNote}${ppgNote}${rebNote}${splitNote}${restInfo.note}`;
 
         // v2: feature_snapshot + pick_candidates voor ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -3249,6 +3327,17 @@ async function runHockey(emit) {
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
 
+        // v10.7.24: rest-days (phase 1) — kritiek voor NHL back-to-backs
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgHk = { host: 'v1.hockey.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('hockey', cfgHk, hmId, kickoffMs),
+            fetchLastPlayedDate('hockey', cfgHk, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('hockey', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (hockey) fetch failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.hockey.api-sports.io', '/odds', { game: gameId });
@@ -3382,11 +3471,13 @@ async function runHockey(emit) {
         if (shotsSig.valid && Math.abs(shotsSig.adj) >= 0.003) matchSignals.push(`nhl_shots_diff:${shotsSig.adj>0?'+':''}${(shotsSig.adj*100).toFixed(1)}%`);
         if (nhlInjDiff !== 0) matchSignals.push(`nhl_injury_diff:${nhlInjDiff>0?'+':''}${nhlInjDiff}`);
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
+        // v10.7.24: generic rest-days (weight=0 logging)
+        if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const shotsNote = shotsSig.valid ? ` | ${shotsSig.note}` : '';
-        const sharedNotes = `${posStr}${formNote}${b2bNote}${goalDiffNote}${homeRecordNote}${shotsNote}`;
+        const sharedNotes = `${posStr}${formNote}${b2bNote}${goalDiffNote}${homeRecordNote}${shotsNote}${restInfo.note}`;
 
         // Per-game diagnostics (admin-only)
         const picksBefore = picks.length;
@@ -3912,6 +4003,17 @@ async function runBaseball(emit) {
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
 
+        // v10.7.24: rest-days (phase 1, logging only)
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgBb = { host: 'v1.baseball.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('baseball', cfgBb, hmId, kickoffMs),
+            fetchLastPlayedDate('baseball', cfgBb, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('baseball', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (baseball) fetch failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.baseball.api-sports.io', '/odds', { game: gameId });
@@ -4061,11 +4163,13 @@ async function runBaseball(emit) {
         if (mlbInjDiff !== 0) matchSignals.push(`mlb_injury_diff:${mlbInjDiff>0?'+':''}${mlbInjDiff}`);
         if (hmStakesM.adj !== 0 || awStakesM.adj !== 0) matchSignals.push(`stakes:${((hmStakesM.adj - awStakesM.adj)*100).toFixed(1)}%`);
         if (mlbWeatherAdj !== 0) matchSignals.push(`weather:${mlbWeatherAdj>0?'+':''}${(mlbWeatherAdj*100).toFixed(1)}%`);
+        // v10.7.24: rest-days (phase 1 logging)
+        if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
         const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note}` : '';
-        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}${mlbWeatherNote}`;
+        const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}${mlbWeatherNote}${restInfo.note}`;
 
         // v2: feature_snapshot + pick_candidates voor MLB ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -4400,6 +4504,17 @@ async function runFootballUS(emit) {
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
 
+        // v10.7.24: rest-days (phase 1)
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgNfl = { host: 'v1.american-football.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('american-football', cfgNfl, hmId, kickoffMs),
+            fetchLastPlayedDate('american-football', cfgNfl, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('american-football', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (NFL) fetch failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.american-football.api-sports.io', '/odds', { game: gameId });
@@ -4540,10 +4655,12 @@ async function runFootballUS(emit) {
         if (nflInjuryDiff !== 0) matchSignals.push(`nfl_injury_diff:${nflInjuryDiff>0?'+':''}${nflInjuryDiff}`);
         if (hmStakesN.adj !== 0 || awStakesN.adj !== 0) matchSignals.push(`stakes:${((hmStakesN.adj - awStakesN.adj)*100).toFixed(1)}%`);
         if (weatherAdj !== 0) matchSignals.push(`weather:${weatherAdj>0?'+':''}${(weatherAdj*100).toFixed(1)}%`);
+        // v10.7.24: rest-days (phase 1)
+        if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${byeNote}${ptsDiffNote}${homeRecordNote}${divisionNote}${weatherNote}`;
+        const sharedNotes = `${posStr}${formNote}${byeNote}${ptsDiffNote}${homeRecordNote}${divisionNote}${weatherNote}${restInfo.note}`;
 
         // v2: feature_snapshot + pick_candidates voor NFL ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -4815,6 +4932,17 @@ async function runHandball(emit) {
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
 
+        // v10.7.24: rest-days (phase 1)
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgHb = { host: 'v1.handball.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('handball', cfgHb, hmId, kickoffMs),
+            fetchLastPlayedDate('handball', cfgHb, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('handball', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (handball) fetch failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.handball.api-sports.io', '/odds', { game: gameId });
@@ -4938,10 +5066,12 @@ async function runHandball(emit) {
         if (Math.abs(formMomentumAdj) >= 0.005) matchSignals.push(`momentum:${formMomentumAdj>0?'+':''}${(formMomentumAdj*100).toFixed(1)}%`);
         if (hbInjDiff !== 0) matchSignals.push(`handball_injury_diff:${hbInjDiff>0?'+':''}${hbInjDiff}`);
         if (hmStakesH.adj !== 0 || awStakesH.adj !== 0) matchSignals.push(`stakes:${((hmStakesH.adj - awStakesH.adj)*100).toFixed(1)}%`);
+        // v10.7.24: rest-days
+        if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${goalDiffNote}${homeWRNote}${momentumNote}`;
+        const sharedNotes = `${posStr}${formNote}${goalDiffNote}${homeWRNote}${momentumNote}${restInfo.note}`;
 
         // ── 3-weg ML voor handbal (Home/Draw/Away 60-min) via Poisson ──
         // Handbal heeft vaak een 3-weg markt (gelijkspel in reguliere tijd is mogelijk).
@@ -5163,12 +5293,25 @@ async function runPrematch(emit) {
         const fid = f.fixture?.id;
         const hm  = f.teams?.home?.name;
         const aw  = f.teams?.away?.name;
+        const hmId = f.teams?.home?.id;
+        const awId = f.teams?.away?.id;
         if (!fid || !hm || !aw) continue;
 
         const kickoffMs  = new Date(f.fixture?.date).getTime();
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const ko = new Date(kickoffMs)
           .toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+
+        // v10.7.24: rest-days signaal (phase 1: logging, weight=0 default)
+        let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
+        try {
+          const cfgFootball = { host: 'v3.football.api-sports.io' };
+          const [hmLast, awLast] = await Promise.all([
+            fetchLastPlayedDate('football', cfgFootball, hmId, kickoffMs),
+            fetchLastPlayedDate('football', cfgFootball, awId, kickoffMs),
+          ]);
+          restInfo = buildRestDaysInfo('football', kickoffMs, hmLast, awLast);
+        } catch (e) { console.warn('Rest-days (football) fetch failed:', e.message); }
 
         // ── Knockout / leg-info (CL, EL, Conference, domestic cups) ───
         // v10.7.23: parse f.league.round. Voorbeelden: "Round of 16 - 1st Leg",
@@ -5332,9 +5475,12 @@ async function runPrematch(emit) {
         const refNote = refereeName ? ` | 🟨 Scheidsrechter: ${refereeName}` : '';
 
         let h2hAdj = 0, h2hNote = '';
-        const hmId = hmSt?.teamId, awId = awSt?.teamId;
-        if (hmId && awId) {
-          const h2h = await fetchH2H(hmId, awId);
+        // v10.7.24: hmId/awId al eerder gedeclareerd uit f.teams; fallback
+        // naar standings-teamId als fixture.teams.id leeg was.
+        const hmIdResolved = hmId || hmSt?.teamId;
+        const awIdResolved = awId || awSt?.teamId;
+        if (hmIdResolved && awIdResolved) {
+          const h2h = await fetchH2H(hmIdResolved, awIdResolved);
           if (h2h && h2h.n >= 3) {
             h2hAdj = Math.max(-0.03, Math.min(0.03, ((h2h.hmW - h2h.awW) / h2h.n) * 0.03));
             h2hNote = ` | H2H: ${h2h.hmW}W-${h2h.dr}D-${h2h.awW}L (${h2h.n}x, ${h2h.avgGoals} goals/game, BTTS ${Math.round(h2h.bttsRate*100)}%)`;
@@ -5439,6 +5585,8 @@ async function runPrematch(emit) {
             else if (knockoutInfo.stageLabel === 'halve finale') sigs.push('knockout_semi:0%');
             else if (knockoutInfo.stageLabel === 'kwartfinale') sigs.push('knockout_quarter:0%');
           }
+          // v10.7.24: rest-days signaal
+          if (restInfo.signals.length) sigs.push(...restInfo.signals);
           return sigs;
         };
         const matchSignals = buildSignals();
@@ -5448,7 +5596,7 @@ async function runPrematch(emit) {
           ? ` | 🥊 ${knockoutInfo.leg ? `${knockoutInfo.leg}e leg ` : ''}${knockoutInfo.stageLabel || 'knock-out'}`
           : '';
 
-        const sharedNotes = `${posStr}${splitNote}${formNote}${injNote}${h2hNote}${refNote}${predNote}${lineupNote}${weatherNote}${poissonNote}${congestionNote}${knockoutNote}`;
+        const sharedNotes = `${posStr}${splitNote}${formNote}${injNote}${h2hNote}${refNote}${predNote}${lineupNote}${weatherNote}${poissonNote}${congestionNote}${knockoutNote}${restInfo.note}`;
         const reasonH = `Consensus: ${(fp.home*100).toFixed(1)}%→${(adjHome2*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`;
         const reasonA = `Consensus: ${(fp.away*100).toFixed(1)}%→${(adjAway2*100).toFixed(1)}% | ${bA.bookie}: ${bA.price}${sharedNotes} | ${ko}`;
         const reasonD = `Gelijkspel: ${((fp.draw||0)*100).toFixed(1)}% | ${bD?.bookie}: ${bD?.price}${sharedNotes} | ${ko}`;

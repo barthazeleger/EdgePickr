@@ -2597,6 +2597,49 @@ test('humanize narrative XSS: escape helper werkt', () => {
   assert.strictEqual(escape('normaal'), 'normaal');
 });
 
+test('rest-days helper: signalen en note logica', () => {
+  // Reproduceer buildRestDaysInfo logic uit server.js
+  const build = (sport, kickoffMs, hmLast, awLast) => {
+    const msPerDay = 86400000;
+    const hmDays = hmLast ? Math.max(0, (kickoffMs - new Date(hmLast).getTime()) / msPerDay) : null;
+    const awDays = awLast ? Math.max(0, (kickoffMs - new Date(awLast).getTime()) / msPerDay) : null;
+    const threshold = sport === 'basketball' || sport === 'hockey' ? 2
+                    : sport === 'american-football' ? 4
+                    : sport === 'football' ? 3 : 1;
+    const homeTired = hmDays !== null && hmDays < threshold;
+    const awayTired = awDays !== null && awDays < threshold;
+    const signals = [];
+    if (homeTired) signals.push('rest_days_home_tired:0%');
+    if (awayTired) signals.push('rest_days_away_tired:0%');
+    if (hmDays !== null && awDays !== null && Math.abs(hmDays - awDays) >= 3) {
+      signals.push(hmDays > awDays ? 'rest_mismatch_home_advantage:0%' : 'rest_mismatch_away_advantage:0%');
+    }
+    return { hmDays, awDays, homeTired, awayTired, signals };
+  };
+  const now = Date.now();
+  // NBA back-to-back: home speelde gister, away 3 dagen geleden → home tired + mismatch
+  const r1 = build('basketball', now, new Date(now - 1*86400000).toISOString(), new Date(now - 4*86400000).toISOString());
+  assert.ok(r1.homeTired, 'home met 1d rust = tired (NBA threshold 2)');
+  assert.ok(!r1.awayTired, 'away met 4d rust = niet tired');
+  assert.ok(r1.signals.includes('rest_days_home_tired:0%'));
+  assert.ok(r1.signals.includes('rest_mismatch_away_advantage:0%'), 'away heeft edge bij grote rust-mismatch');
+
+  // NFL short week: home 3d → tired (threshold 4), away 7d → niet
+  const r2 = build('american-football', now, new Date(now - 3*86400000).toISOString(), new Date(now - 7*86400000).toISOString());
+  assert.ok(r2.homeTired);
+  assert.ok(!r2.awayTired);
+
+  // Football midweek: beide 2d rust → home tired (threshold 3)
+  const r3 = build('football', now, new Date(now - 2*86400000).toISOString(), new Date(now - 2*86400000).toISOString());
+  assert.ok(r3.homeTired && r3.awayTired);
+  assert.strictEqual(r3.signals.filter(s => s.includes('mismatch')).length, 0, 'geen mismatch bij gelijke rust');
+
+  // Missing data: beide null → geen signalen
+  const r4 = build('football', now, null, null);
+  assert.strictEqual(r4.signals.length, 0);
+  assert.strictEqual(r4.hmDays, null);
+});
+
 test('knockout parser: detecteert leg en stage uit f.league.round', () => {
   // Reproduceer de knockoutInfo logic uit server.js runPrematch
   const parse = (round) => {
