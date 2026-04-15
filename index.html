@@ -1534,6 +1534,19 @@ function humanizePickReason(pick) {
     else if (/wind/i.test(wx)) facts.push('harde wind verwacht');
   }
 
+  // Rest-days: "🛌 rust: thuis 1d / uit 3d"
+  const rest = parts.find(p => /🛌|rust:/i.test(p));
+  if (rest) {
+    const m = rest.match(/thuis\s+(\d+)([du])\s*\/\s*uit\s+(\d+)([du])/i);
+    if (m) {
+      const hmDays = m[2] === 'u' ? parseInt(m[1]) / 24 : parseInt(m[1]);
+      const awDays = m[4] === 'u' ? parseInt(m[3]) / 24 : parseInt(m[3]);
+      if (hmDays < 1.5 && awDays >= 2) facts.push('thuis op korte rust, uit fris');
+      else if (awDays < 1.5 && hmDays >= 2) facts.push('uit op korte rust, thuis fris');
+      else if (Math.abs(hmDays - awDays) >= 3) facts.push('groot verschil in rustdagen tussen teams');
+    }
+  }
+
   // Knockout / 2-leg tie: "🥊 2e leg kwartfinale"
   const knockout = parts.find(p => /🥊|leg|knock/i.test(p));
   if (knockout) {
