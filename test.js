@@ -13,6 +13,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 const modelMath = require('./lib/model-math');
 const appMeta = require('./lib/app-meta');
 const pkg = require('./package.json');
+const { createCalibrationStore } = require('./lib/calibration-store');
 const { buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
@@ -2027,8 +2028,75 @@ test('summarizeExecutionQuality: geeft no_target_bookie als gelogde bookie ontbr
   assert.strictEqual(summary.anchor.best_preferred.odds, 2.04);
 });
 
+test('calibration store: loadSync valt terug op default zonder file', () => {
+  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'edgepickr-calib-'));
+  const store = createCalibrationStore({ baseDir: tmpDir });
+  const calib = store.loadSync();
+  assert.strictEqual(calib.totalSettled, 0);
+  calib.totalSettled = 99;
+  const freshStore = createCalibrationStore({ baseDir: tmpDir });
+  assert.strictEqual(freshStore.loadSync().totalSettled, 0);
+});
+
+test('calibration store: loadSync leest lokale fallbackfile', () => {
+  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'edgepickr-calib-'));
+  const file = path.join(tmpDir, 'calibration.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, totalSettled: 42, markets: {}, epBuckets: {}, leagues: {}, lossLog: [] }));
+  const store = createCalibrationStore({ baseDir: tmpDir });
+  const calib = store.loadSync();
+  assert.strictEqual(calib.totalSettled, 42);
+});
+
+test('calibration store: async load gebruikt supabase en cachet resultaat', async () => {
+  let calls = 0;
+  const fakeSupabase = {
+    from: (table) => {
+      assert.strictEqual(table, 'calibration');
+      return {
+        select: () => ({
+          eq: (column, value) => {
+            assert.strictEqual(column, 'id');
+            assert.strictEqual(value, 1);
+            return {
+              single: async () => {
+                calls++;
+                return { data: { data: { version: 1, totalSettled: 17, markets: {}, epBuckets: {}, leagues: {}, lossLog: [] } }, error: null };
+              },
+            };
+          },
+        }),
+      };
+    },
+  };
+  const store = createCalibrationStore({ supabase: fakeSupabase, baseDir: __dirname });
+  const first = await store.load();
+  const second = await store.load();
+  assert.strictEqual(first.totalSettled, 17);
+  assert.strictEqual(second.totalSettled, 17);
+  assert.strictEqual(calls, 1);
+});
+
+test('calibration store: save warmt cache en schrijft naar supabase', async () => {
+  let payload = null;
+  const fakeSupabase = {
+    from: (table) => {
+      assert.strictEqual(table, 'calibration');
+      return {
+        upsert: async (row) => { payload = row; return { error: null }; },
+      };
+    },
+  };
+  const store = createCalibrationStore({ supabase: fakeSupabase, baseDir: __dirname });
+  const next = { version: 1, totalSettled: 23, markets: {}, epBuckets: {}, leagues: {}, lossLog: [] };
+  await store.save(next);
+  assert.ok(payload);
+  assert.strictEqual(payload.id, 1);
+  assert.strictEqual(payload.data.totalSettled, 23);
+  assert.strictEqual(store.loadSync().totalSettled, 23);
+});
+
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.5');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.6');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

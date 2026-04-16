@@ -2,6 +2,13 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.6] - 2026-04-16
+
+### Changed
+- **Calibratie-persist uit `server.js` gehaald naar een gedeelde store-module**. Nieuwe `lib/calibration-store.js` beheert nu cache, Supabase-read/write en file-fallback voor calibratie-state. Dat verkleint de inline runtime-state in `server.js` en maakt deze kritieke persistlaag testbaar in isolatie.
+- **Regressietests toegevoegd voor de calibratie-store**. De suite dekt nu default-fallback, file-load, async Supabase-cache en save-path, zodat deze refactor niet ongemerkt terug kan vallen naar kapotte state of dubbele fetches.
+- **Releaseflow opnieuw bijgewerkt naar `10.10.6`**. Versie, changelog, info-page en docs zijn synchroon gehouden volgens de vaste release-discipline.
+
 ## [10.10.5] - 2026-04-16
 
 ### Changed

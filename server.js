@@ -8,6 +8,7 @@ const jwt            = require('jsonwebtoken');
 const bcrypt         = require('bcryptjs');
 const webpush        = require('web-push');
 const { APP_VERSION } = require('./lib/app-meta');
+const { createCalibrationStore } = require('./lib/calibration-store');
 const { buildPickFactory: createPickFactory } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
@@ -517,46 +518,10 @@ const EP_BUCKETS = ['0.28','0.30','0.38','0.45','0.55'];
 // Standaard epW gewichten (worden overschreven door calibratie na 100 bets)
 const DEFAULT_EPW = { '0.28':0.80, '0.30':0.95, '0.38':1.05, '0.45':1.15, '0.55':1.25 };
 
-const DEFAULT_CALIB = { version:1, lastUpdated:null, totalSettled:0, totalWins:0, totalProfit:0,
-  markets:{ home:{n:0,w:0,profit:0,multiplier:1.0}, away:{n:0,w:0,profit:0,multiplier:1.0},
-            draw:{n:0,w:0,profit:0,multiplier:1.0}, over:{n:0,w:0,profit:0,multiplier:1.0},
-            under:{n:0,w:0,profit:0,multiplier:1.0}, other:{n:0,w:0,profit:0,multiplier:1.0} },
-  epBuckets: {}, leagues:{}, lossLog:[] };
-
-let _calibCache = null;
-let _calibCacheAt = 0;
-const CALIB_TTL = 10 * 1000; // 10 sec cache
-
-function loadCalib() {
-  // Synchronous: return cache or default (async load happens at startup)
-  if (_calibCache) return _calibCache;
-  // Try local file as fallback during first load
-  try { _calibCache = JSON.parse(fs.readFileSync(path.join(__dirname, 'calibration.json'), 'utf8')); return _calibCache; }
-  catch { return { ...DEFAULT_CALIB }; }
-}
-
-async function loadCalibAsync() {
-  if (_calibCache && Date.now() - _calibCacheAt < CALIB_TTL) return _calibCache;
-  try {
-    const { data, error } = await supabase.from('calibration').select('data').eq('id', 1).single();
-    if (!error && data?.data) {
-      _calibCache = data.data;
-      _calibCacheAt = Date.now();
-      return _calibCache;
-    }
-  } catch (e) {
-    console.warn('loadCalibAsync failed, using stale cache/file:', e.message);
-  }
-  return loadCalib();
-}
-
-async function saveCalib(c) {
-  _calibCache = c;
-  _calibCacheAt = Date.now();
-  try {
-    await supabase.from('calibration').upsert({ id: 1, data: c, updated_at: new Date().toISOString() });
-  } catch (e) { console.error('saveCalib error:', e.message); }
-}
+const calibrationStore = createCalibrationStore({ supabase, baseDir: __dirname });
+const loadCalib = calibrationStore.loadSync;
+const loadCalibAsync = calibrationStore.load;
+const saveCalib = calibrationStore.save;
 
 // detectMarket() komt uit lib/model-math.js
 
