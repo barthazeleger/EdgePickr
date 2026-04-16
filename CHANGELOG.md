@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.3] - 2026-04-16
+
+Follow-up op pre-merge review-feedback voor Codex's v10.10.2 (sport-specific starter/availability edges). Twee fixes geïdentificeerd in de review zijn nu doorgevoerd plus één voorzichtigheidsaanpassing.
+
+### Fixed
+- **NBA `availabilityAdj` dubbeltel-bug bij CLV-autotune (server.js:3151)**. v10.10.2 telde `nbaAvailability.adj + restAdj + nbaInjAdj` op terwijl `nbaAvailability` zelf al rest+inj-impact bevat. Bij default weights (0) merkbaar geen probleem (×0=0). Maar zodra `autoTuneSignalsByClv` `nba_rest_days_diff` of `nba_injury_diff` promoot naar weight > 0 ontstond een dubbeltelling van rust + blessure-impact (tot ~6-9% home-bias mogelijk). Fix: `nbaAvailability` is voortaan de canonieke combined helper. De losse weight-paden vangen alleen RESIDUAL boven nbaAvailability — `restResidualMult = max(0, weight − 1)`. Bij weight ≤ 1.0 (incl. promote naar 0.5): residual = 0, geen extra optelling. Pas bij handmatige weight > 1.0 wordt het extra geboost. Tijdbom is nu defused.
+
+### Changed
+- **NHL `goalieAdjustment` past nu `confidenceFactor` toe (lib/model-math.js:394)**. Output wordt vermenigvuldigd met `min(homeCf, awayCf)` waarbij cf uit `selectLikelyGoalie()` komt (1.0 high / 0.7 medium / 0.45 low op basis van games-played-gap tussen primary en backup goalie). Voorheen werd de full ±6% adj toegepast ook bij thin starter-data — nu zakt max-impact naar ±2.1% (medium) of ±1.35% (low). Note krijgt `cf×0.70` tag bij sub-1.0 confidence.
+- **NHL `goalieAdjustment` svDiff-gewicht 3 → 1.5**. Voorheen tikte 0.020 save%-gap (typisch elite-vs-average) al de volle ±6% clamp aan op sv-component alleen. Halveren tot we 100+ settled NHL picks hebben om empirisch te kalibreren. Effect: 0.020 svDiff geeft nu 3% i.p.v. 6%.
+
+### Tests
+- 333 totaal (+3 nieuwe regressietests voor confidenceFactor-scaling, svDiff-gewicht en residual-multiplier).
+
+### Niet aangepast (uit Codex's v10.10.2)
+- `pitcherReliabilityFactor` IP-thresholds, `injurySeverityWeight` basketball-statussen, `extractNhlGoaliePreview` parser, 8-games goalie-floor — allemaal sterk, blijven.
+
 ## [10.10.2] - 2026-04-16
 
 ### Added

@@ -3154,17 +3154,29 @@ async function runBasketball(emit) {
         // Auto-promotie via autoTuneSignalsByClv zodra n≥50 en CLV > 0%.
         const _sw = loadSignalWeights();
         const restWeight = _sw.nba_rest_days_diff !== undefined ? _sw.nba_rest_days_diff : 0;
-        const restAdj = nbaRestDaysDiff * 0.008 * restWeight; // 0.8% per dag verschil, gewogen
+        const injWeight = _sw.nba_injury_diff !== undefined ? _sw.nba_injury_diff : 0;
         const nbaInjuryHome = +(nbaInjuryLoadMap[hmId] || 0);
         const nbaInjuryAway = +(nbaInjuryLoadMap[awId] || 0);
         const nbaInjuryDiff = +(nbaInjuryAway - nbaInjuryHome).toFixed(2); // + = away meer blessures = home voordeel
-        const injWeight = _sw.nba_injury_diff !== undefined ? _sw.nba_injury_diff : 0;
-        const nbaInjAdj = nbaInjuryDiff * 0.006 * injWeight; // 0.6% per blessure-verschil (NBA impactvoller dan NFL door kleiner roster)
         const nbaAvailability = nbaAvailabilityAdjustment(
           { restDays: restHome, injuryLoad: nbaInjuryHome },
           { restDays: restAway, injuryLoad: nbaInjuryAway },
         );
-        const availabilityAdj = nbaAvailability.adj + restAdj + nbaInjAdj;
+        // v10.10.3 fix: voorheen werden nbaAvailability.adj + restAdj + nbaInjAdj
+        // domweg opgeteld, terwijl nbaAvailability.adj zelf al rest+inj bevat.
+        // Bij default weights (0) merkbaar geen probleem, maar zodra CLV-autotune
+        // nba_rest_days_diff/nba_injury_diff promoot naar weight>0 ontstond een
+        // dubbeltelling van rust+blessure-impact (tot ~6-9% home-bias).
+        // Nu: nbaAvailability is de canonieke combined rest+injury adjustment.
+        // De losse weight-paden vangen alleen RESIDUAL boven nbaAvailability:
+        // restAdj/nbaInjAdj × (weight-1) als weight ≥ 1.0, anders 0. Voorkomt
+        // dubbele cascadering en houdt CLV-autotune-pad open voor handgematigde
+        // weight-overrides.
+        const restResidualMult = Math.max(0, restWeight - 1);
+        const injResidualMult = Math.max(0, injWeight - 1);
+        const restResidualAdj = nbaRestDaysDiff * 0.008 * restResidualMult;
+        const injResidualAdj = nbaInjuryDiff * 0.006 * injResidualMult;
+        const availabilityAdj = nbaAvailability.adj + restResidualAdj + injResidualAdj;
 
         // Stakes signal (playoff-race / niets te spelen) — logged-only scaffolding
         const nbaTotalTeams = Object.keys(standingsMap).length;

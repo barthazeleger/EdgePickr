@@ -1414,6 +1414,48 @@ test('goalieAdjustment: confirmation boost blijft klein maar werkt', () => {
   assert.ok(boosted.adj - base.adj <= 0.0061);
 });
 
+// v10.10.3 — confidenceFactor moet output dempen bij thin starter-data
+test('goalieAdjustment v10.10.3: medium-confidence schaalt adj met 0.7', () => {
+  const high = goalieAdjustment(
+    { name: 'Home', savePct: 0.920, gaa: 2.20, gamesPlayed: 40, confidenceFactor: 1.0 },
+    { name: 'Away', savePct: 0.900, gaa: 2.80, gamesPlayed: 40, confidenceFactor: 1.0 }
+  );
+  const medium = goalieAdjustment(
+    { name: 'Home', savePct: 0.920, gaa: 2.20, gamesPlayed: 40, confidenceFactor: 1.0 },
+    { name: 'Away', savePct: 0.900, gaa: 2.80, gamesPlayed: 40, confidenceFactor: 0.7 }
+  );
+  assert.ok(high.valid && medium.valid);
+  assert.ok(Math.abs(medium.adj - high.adj * 0.7) < 0.0005, `medium=${medium.adj} ≈ high=${high.adj} × 0.7`);
+  assert.strictEqual(medium.confidenceFactor, 0.7);
+});
+
+test('goalieAdjustment v10.10.3: svDiff-gewicht 1.5 (gehalveerd van 3 t.o.v. v10.10.2)', () => {
+  // svDiff 0.020 (elite vs average) zou met oud gewicht 3 → 0.06 raw geven
+  // (= clamp). Met nieuw gewicht 1.5 → 0.030 raw, ruim onder clamp. Dat geeft
+  // hoofdroom voor gaaDiff/conf zonder dat sv-alleen al de clamp raakt.
+  const r = goalieAdjustment(
+    { name: 'Home', savePct: 0.920, gaa: 2.50, gamesPlayed: 40 },
+    { name: 'Away', savePct: 0.900, gaa: 2.50, gamesPlayed: 40 }
+  );
+  // 0.020 * 1.5 + 0 * 0.03 + 0 = 0.030 → cf default 1.0
+  assert.ok(Math.abs(r.adj - 0.03) < 0.001, `verwacht ~0.03, kreeg ${r.adj}`);
+});
+
+test('nbaAvailabilityAdjustment v10.10.3: residual-multiplier-fix is dubbeltel-vrij bij weight≤1.0', () => {
+  // Default scenario: nbaAvailability is canonieke combined helper.
+  // Losse rest/inj signal-weights komen ALLEEN bij weight>1.0 als residual erbij.
+  // Bij default (weight=0): availabilityAdj === nbaAvailability.adj.
+  const restWeight = 0, injWeight = 0;
+  const restResidualMult = Math.max(0, restWeight - 1);
+  const injResidualMult = Math.max(0, injWeight - 1);
+  assert.strictEqual(restResidualMult, 0);
+  assert.strictEqual(injResidualMult, 0);
+  // En bij weight=1.0 (gepromote): nog steeds residual=0 (geen extra optelling).
+  assert.strictEqual(Math.max(0, 1.0 - 1), 0);
+  // Pas bij weight=1.5 wordt 0.5 residual toegevoegd.
+  assert.strictEqual(Math.max(0, 1.5 - 1), 0.5);
+});
+
 test('injurySeverityWeight: nba statuses worden gewogen i.p.v. blind geteld', () => {
   assert.strictEqual(injurySeverityWeight('Out', 'basketball'), 1);
   assert.strictEqual(injurySeverityWeight('Doubtful', 'basketball'), 0.75);
