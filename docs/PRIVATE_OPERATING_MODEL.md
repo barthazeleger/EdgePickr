@@ -317,3 +317,119 @@ De beste volgende productverbeteringen zijn:
 
 6. Separate single/combi learning
    Zodat combivariantie de single-engine niet vervuilt.
+
+## 14. Open punten — in consolidatie (Claude × Codex)
+
+Laatste sync: 2026-04-16. Onderstaande punten zijn door beide reviewers erkend
+als plekken waar de doctrine nog niet volledig op de codebase aansluit. Zolang
+de sectie open staat worden de hoofdstukken hierboven niet aangepast; bij
+consensus per punt wordt de uitkomst in het relevante hoofdstuk gemerged en
+hier als afgesloten gemarkeerd.
+
+### 14.1 `unit_at_time` als data-correctness fundering
+
+**Consensus:** zonder historische `bets.unit_at_time` is elke CLV- of
+ROI-analyse die over een unit-wisseling heen loopt retroactief vervormd. Dit
+is geen quality-of-life item maar een data-correctness fix die aan alle
+Fase 4-claims voorafgaat.
+
+**Actie:** `bets.unit_at_time` kolom + write-path bij pick-placement, vóór
+verdere signal-expansion. Huidige codebase heeft dit nog als TODO
+(`server.js:6682`).
+
+### 14.2 Price-memory query-laag
+
+**Consensus:** `odds_snapshots` schrijven zonder query-laag is nog geen
+bruikbare price-memory. We hebben een timeline-builder nodig die per
+`(fixtureId, marketKey)` minimaal retourneert:
+- `open` / `first_seen`
+- `first_seen_on_preferred`
+- `scan_anchor`
+- `latest_pre_kickoff`
+- `close`
+- afgeleiden: drift, steam, stale, preferred gap, time-to-move
+
+**Actie:** `getLineTimeline()` helper boven `lib/snapshots.js`. Ontsluit
+daarna bijna alles wat onder execution en scan-timing gepland staat
+(sectie 13.1, 10.A, 10.C).
+
+### 14.3 Execution-quality → Kelly-gate, niet alleen UI
+
+**Consensus:** `execution-quality.js` is nu observability + explainability.
+Doctrine (10.A + roadmap-punt 13.4) vereist dat market-quality het stake
+beïnvloedt. De classifier blijft UI-vriendelijk, maar de Kelly-gate hangt aan
+de ruwe onderliggende metrics (`preferred_gap_pct`, `stale_pct`, `overround`,
+`bookmaker_count`, preferred availability) — niet aan de labels zelf, zodat
+label-hertuning het stake-regime niet stilletjes kantelt.
+
+**Voorlopig werkmodel (Codex-voorstel, nog te kalibreren):**
+
+Beschikbaarheid eerst:
+- `no_target_bookie` → hard skip
+- preferred bookmaker ontbreekt op anchor of latest → hard skip
+
+Stale / preferred-gap:
+- `stale_pct ≥ 2.5%` → `hk × 0.5`
+- `stale_pct 1.0–2.5%` → `hk × 0.7`
+- `preferred_gap_pct ≥ 3.5%` → `hk × 0.6`
+- `preferred_gap_pct 2.0–3.5%` → `hk × 0.8`
+
+Markt-kwaliteit (secundair):
+- 2-way overround > 8% → extra `hk × 0.85`
+- 3-way overround > 12% → extra `hk × 0.85`
+- `bookmaker_count` onder sport-drempel → extra `hk × 0.8`
+
+**Actie:** `applyExecutionGate(hk, metrics)` helper die deze multipliers
+combineert en via `buildPickFactory` ingrijpt op stake. Kalibratie volgt via
+settled-bet review per regime.
+
+### 14.4 `BUSINESS_PLAN.md` archivering
+
+**Consensus:** het document is historisch SaaS-narratief (pricing tiers,
+MRR-projecties, concurrentie-tabel) en trekt refactors en AI-bijdrages terug
+naar multi-user denken, ondanks de disclaimer bovenaan.
+
+**Actie:** verplaatsen naar `docs/_archive/BUSINESS_PLAN.md`. In README en
+doctrine hooguit 1 regel "historische context, niet leidend". Niet
+verwijderen — de inhoud mag vindbaar blijven.
+
+### 14.5 News confidence — per-sport tracks, geen generieke engine
+
+**Consensus:** "news confidence engine" als abstractie is onderschat qua
+scope en fragile. Het zijn vijf onafhankelijke as-of tracks met elk eigen
+bron-rot-risico:
+
+- **MLB**: probable pitcher certainty → late scratch detectie *(deels lopend)*
+- **NHL**: goalie preview → confirmed goalie *(`nhl-goalie-preview.js` +
+  `confidenceFactor` actief sinds v10.10.3)*
+- **NBA**: injury availability / questionable resolution / rest
+  *(residual-multiplier fix in v10.10.3)*
+- **Football**: lineup certainty / rotation risk / fixture congestion
+  *(nog niets)*
+- **NFL**: official injury report / inactive list *(nog niets)*
+
+**Actie:** sectie 10.B herschrijven naar deze lijst zodra consensus op de
+volgorde staat. Scope per sport wordt apart geprioriteerd, niet als één epic.
+
+### 14.6 Single/combi learning — eerst schema-anker
+
+**Consensus:** "aparte learning-lus voor combis" is nu doctrine vooruitlopend
+op het schema. Zonder `combo_id` / `is_combo_leg` / `combo_type` kolommen op
+`bets` kan autotune de paden niet scheiden.
+
+**Actie:** migratie eerst. Pas daarna mogen sectie 10.F en 13.6 als
+implementation-ready gelezen worden.
+
+### 14.7 Fundament-volgorde
+
+**Consensus:** signal-expansion wacht op fundering. Actieve volgorde:
+
+1. `unit_at_time` (14.1)
+2. Price-memory query-laag (14.2)
+3. Execution-quality → Kelly-gate (14.3)
+4. Pas daarna Fase 2 signal-expansion (NFL/football news-tracks, extra
+   team-strength enrichments, etc.)
+
+Ratio: nieuwe signalen zonder deze onderlaag maken de scanner drukker maar
+niet betrouwbaarder. Elke nieuwe signal-sprint die deze volgorde omkeert
+moet eerst expliciet in dit document worden gemotiveerd.
