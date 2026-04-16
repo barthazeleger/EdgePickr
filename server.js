@@ -387,7 +387,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.9.0';
+const APP_VERSION    = '10.9.1';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -6089,20 +6089,23 @@ async function runPrematch(emit) {
               // Base BTTS probability from H2H + form
               const h2hKey2 = hmSt?.teamId && awSt?.teamId ? `${Math.min(hmSt.teamId,awSt.teamId)}-${Math.max(hmSt.teamId,awSt.teamId)}` : null;
               const h2hData = h2hKey2 ? afCache.h2h[h2hKey2] : null;
-              let h2hBTTS = h2hData ? h2hData.bttsRate * h2hData.n : 0;
-              let h2hN    = h2hData ? h2hData.n : 0;
-              let h2hSources = ['api-football'];
+              const afN = h2hData?.n || 0;
+              const afBTTS = h2hData ? h2hData.bttsRate * afN : 0;
+              let h2hN    = afN;
+              let h2hBTTS = afBTTS;
+              let h2hSources = afN > 0 ? ['api-football'] : [];
               // v10.9.0: enrich H2H met aggregator-data (sofascore + fotmob) als enabled.
-              // Merged sample vergroot n → Bayesian shrinkage knijpt minder → meer
-              // vertrouwen in h2hRate als de data het ondersteunt.
+              // Policy: REPLACE in plaats van ADD — voorkomt dubbel-tellen want api-football
+              // en scrapers tonen vaak dezelfde recente ontmoetingen. We nemen de bron met
+              // meeste samples (grotere n → minder shrinkage in calcBTTSProb).
               if (OPERATOR.scraping_enabled) {
                 try {
                   const agg = require('./lib/data-aggregator');
                   const merged = await agg.getMergedH2H('football', hm, aw);
-                  if (merged && merged.n > 0) {
-                    h2hBTTS += merged.btts;
-                    h2hN    += merged.n;
-                    h2hSources = h2hSources.concat(merged.sources || []);
+                  if (merged && merged.n > afN) {
+                    h2hN    = merged.n;
+                    h2hBTTS = merged.btts;
+                    h2hSources = merged.sources || [];
                   }
                 } catch { /* swallow: aggregator mag scan nooit breken */ }
               }
@@ -11080,7 +11083,27 @@ app.listen(PORT, () => {
   // Kill-switch initial load + 30-min refresh
   // Operator state laden VÓÓR kill-switch refresh zodat market_auto_kill_enabled correct staat
   loadOperatorState().then(() => refreshKillSwitch())
-    .then(() => console.log(`🛑 Kill-switch geladen (${KILL_SWITCH.set.size} actief, OPERATOR: scan=${OPERATOR.master_scan_enabled}, market-kill=${OPERATOR.market_auto_kill_enabled}, signal-kill=${OPERATOR.signal_auto_kill_enabled}, panic=${OPERATOR.panic_mode})`));
+    .then(() => console.log(`🛑 Kill-switch geladen (${KILL_SWITCH.set.size} actief, OPERATOR: scan=${OPERATOR.master_scan_enabled}, market-kill=${OPERATOR.market_auto_kill_enabled}, signal-kill=${OPERATOR.signal_auto_kill_enabled}, panic=${OPERATOR.panic_mode}, scraping=${OPERATOR.scraping_enabled})`));
+
+  // v10.9.0: circuit-breaker state-change → Supabase inbox notificatie zodat user
+  // retroactief kan zien welke bron down/up ging. Rate-limit via breaker zelf
+  // (alleen state-transitions tellen, niet elke fetch).
+  try {
+    const scraperBase = require('./lib/scraper-base');
+    scraperBase.onBreakerStateChange(ev => {
+      const body = ev.to === 'open'
+        ? `Bron "${ev.name}" auto-gedeactiveerd na ${ev.status.totalFails}/${ev.status.totalCalls} fails. Cooldown ~${Math.round(ev.status.cooldownMs / 60000)}min.`
+        : ev.to === 'closed'
+        ? `Bron "${ev.name}" is hersteld (state: ${ev.from} → closed).`
+        : `Bron "${ev.name}" probeert herstel (state: ${ev.from} → ${ev.to}).`;
+      supabase.from('notifications').insert({
+        type: 'scrape_source',
+        title: ev.to === 'open' ? `⚠️ Scraper "${ev.name}" offline` : `✅ Scraper "${ev.name}" weer online`,
+        body: body.slice(0, 500),
+        read: false, user_id: null,
+      }).then(() => {}, () => {});
+    });
+  } catch (e) { console.warn('scraper breaker hook setup failed:', e.message); }
 
   // Kelly-fraction laden uit calibration store (default 0.50)
   loadCalibAsync().then(c => {

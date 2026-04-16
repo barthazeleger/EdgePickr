@@ -2,6 +2,17 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.9.1] - 2026-04-16
+
+### Fixed
+- **BTTS H2H merge: replace-policy ipv additive**. v10.9.0 telde api-football H2H + aggregator H2H op, wat dubbel-telt als beide bronnen dezelfde recente ontmoetingen tonen. Nu: alleen vervangen als aggregator strikt meer samples heeft dan api-football (grotere n → minder Bayesian shrinkage). Voorkomt artificiële inflate van h2hN.
+
+### Added
+- **Circuit-breaker state-change → Supabase inbox notificatie**. Bij elke open/closed/half-open transitie schrijft scraper-hook een `scrape_source` notificatie zodat user retroactief kan zien welke bron offline ging (⚠️ "Scraper X offline") en wanneer hij herstelde (✅ "Scraper X weer online"). Event-callback registry in scraper-base.js via `onBreakerStateChange()`.
+
+### Tests
+- 304 totaal (+1 voor breaker state-change callback verificatie).
+
 ## [10.9.0] - 2026-04-16
 
 Minor-release: externe data-aggregatie framework toegevoegd. Kelly-math en

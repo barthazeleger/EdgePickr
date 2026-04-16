@@ -3264,6 +3264,22 @@ test('CircuitBreaker: status() bevat breaker metadata', () => {
   assert.strictEqual(typeof s.totalCalls, 'number');
 });
 
+test('CircuitBreaker: state-change callbacks firen bij open/closed transitions', () => {
+  const events = [];
+  scraperBase.onBreakerStateChange(e => events.push(e));
+  const cb = new CircuitBreaker({ name: 'hook-test', failureThreshold: 2, minCooldownMs: 0, successThreshold: 1 });
+  scraperBase.registerBreaker(cb);
+  cb.allow(); cb.onFailure('err1');
+  cb.allow(); cb.onFailure('err2'); // → open
+  cb.allow(); cb.onSuccess(); // half-open → closed (successThreshold=1)
+  const opens = events.filter(e => e.name === 'hook-test' && e.to === 'open');
+  const closes = events.filter(e => e.name === 'hook-test' && e.to === 'closed');
+  const halfOpens = events.filter(e => e.name === 'hook-test' && e.to === 'half-open');
+  assert.ok(opens.length >= 1, 'geen open-transitie gelogd');
+  assert.ok(halfOpens.length >= 1, 'geen half-open-transitie gelogd');
+  assert.ok(closes.length >= 1, 'geen close-transitie gelogd');
+});
+
 test('setSourceEnabled / isSourceEnabled roundtrip', () => {
   setSourceEnabled('x-test', true);
   assert.strictEqual(isSourceEnabled('x-test'), true);
