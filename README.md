@@ -1,4 +1,4 @@
-# EdgePickr v10.10.0
+# EdgePickr v10.10.1
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
@@ -138,6 +138,11 @@ Zie [CHANGELOG.md](./CHANGELOG.md) voor versiegeschiedenis.
 - CLV/excess-CLV learn-lussen aanscherpen
 - bankroll/compounding discipline explicieter maken
 - automation verhogen zonder extra cockpit-ruis
+
+### Product thesis
+- de markt wordt eerder verslagen op execution timing dan op extra UI
+- singles zijn de canonieke output; combi's zijn alleen goed als ze apart gedisciplineerd blijven
+- betere odds-history, official news en confirmed starters/lineups zijn waardevoller dan nog meer exotische markten
 
 ## Licentie
 

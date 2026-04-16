@@ -9,6 +9,7 @@ const bcrypt         = require('bcryptjs');
 const webpush        = require('web-push');
 const { APP_VERSION } = require('./lib/app-meta');
 const { buildPickFactory: createPickFactory } = require('./lib/picks');
+const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -7340,6 +7341,12 @@ app.get('/api/admin/v2/why-this-pick', requireAdmin, async (req, res) => {
     // Pak pick_candidate
     const { data: candidates } = await supabase.from('pick_candidates')
       .select('*').eq('fixture_id', fxId).order('created_at', { ascending: false });
+    const { data: fixture } = await supabase.from('fixtures')
+      .select('id, start_time').eq('id', fxId).maybeSingle();
+    const { data: snaps } = await supabase.from('odds_snapshots')
+      .select('fixture_id, captured_at, bookmaker, market_type, selection_key, line, odds')
+      .eq('fixture_id', fxId)
+      .limit(5000);
     // Top 5 signal contributions: parse signals string voor magnitudes
     let topContributions = [];
     let allSignals = [];
@@ -7361,6 +7368,25 @@ app.get('/api/admin/v2/why-this-pick', requireAdmin, async (req, res) => {
     } catch (e) {
       console.warn('why-this-pick: signal parsing failed:', e.message);
     }
+    const matchedCandidate = (candidates || []).find(c =>
+      normalizeBookmaker(c.bookmaker) === normalizeBookmaker(bet.tip) &&
+      Math.abs((parseFloat(c.bookmaker_odds) || 0) - (parseFloat(bet.odds) || 0)) < 0.01
+    ) || (candidates || []).find(c => normalizeBookmaker(c.bookmaker) === normalizeBookmaker(bet.tip)) || null;
+    const users = await loadUsers().catch(() => []);
+    const admin = users.find(u => u.role === 'admin');
+    const preferredBookiesLower = (admin?.settings?.preferredBookies || [])
+      .map(x => (x || '').toString().toLowerCase()).filter(Boolean);
+    const execution = matchedCandidate
+      ? summarizeExecutionQuality(snaps || [], {
+          marketType: matchedCandidate.market_type,
+          selectionKey: matchedCandidate.selection_key,
+          line: matchedCandidate.line,
+          bookmaker: bet.tip || matchedCandidate.bookmaker || '',
+          anchorIso,
+          preferredBookiesLower,
+          startTimeIso: fixture?.start_time || null,
+        })
+      : null;
 
     res.json({
       bet: { id: bet.bet_id, wedstrijd: bet.wedstrijd, markt: bet.markt, odds: bet.odds, uitkomst: bet.uitkomst, clv_pct: bet.clv_pct },
@@ -7376,9 +7402,50 @@ app.get('/api/admin/v2/why-this-pick', requireAdmin, async (req, res) => {
         selection: c.selection_key, bookie: c.bookmaker, odds: c.bookmaker_odds,
         fair_prob: c.fair_prob, edge_pct: c.edge_pct, passed: c.passed_filters, rejected: c.rejected_reason,
       })),
+      execution,
       model_version_id: matchingRun?.model_version_id,
       run_captured_at: matchingRun?.captured_at,
       point_in_time_anchor: anchorIso,
+    });
+  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
+});
+
+// GET /api/admin/v2/execution-quality — punt-in-tijd execution analyse voor
+// een specifieke fixture/markt/selectie. Helpt bepalen of een prijs speelbaar,
+// stale of juist markt-beatend was.
+app.get('/api/admin/v2/execution-quality', requireAdmin, async (req, res) => {
+  try {
+    const fixtureId = parseInt(req.query.fixture_id);
+    const marketType = String(req.query.market_type || '').trim();
+    const selectionKey = String(req.query.selection_key || '').trim();
+    if (!fixtureId || !marketType || !selectionKey) {
+      return res.status(400).json({ error: 'fixture_id, market_type en selection_key zijn verplicht' });
+    }
+    const line = req.query.line != null && req.query.line !== '' ? parseFloat(req.query.line) : null;
+    const bookmaker = String(req.query.bookmaker || '').trim();
+    const anchorIso = req.query.anchor_iso ? new Date(String(req.query.anchor_iso)).toISOString() : null;
+    const { data: fixture } = await supabase.from('fixtures').select('id, start_time').eq('id', fixtureId).maybeSingle();
+    const { data: snaps } = await supabase.from('odds_snapshots')
+      .select('fixture_id, captured_at, bookmaker, market_type, selection_key, line, odds')
+      .eq('fixture_id', fixtureId)
+      .limit(5000);
+    const users = await loadUsers().catch(() => []);
+    const admin = users.find(u => u.role === 'admin');
+    const preferredBookiesLower = (admin?.settings?.preferredBookies || [])
+      .map(x => (x || '').toString().toLowerCase()).filter(Boolean);
+    const execution = summarizeExecutionQuality(snaps || [], {
+      marketType,
+      selectionKey,
+      line,
+      bookmaker,
+      anchorIso,
+      preferredBookiesLower,
+      startTimeIso: fixture?.start_time || null,
+    });
+    res.json({
+      fixture_id: fixtureId,
+      start_time: fixture?.start_time || null,
+      execution,
     });
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });

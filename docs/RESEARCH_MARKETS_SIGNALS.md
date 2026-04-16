@@ -7,7 +7,7 @@ Dit document inventariseert (a) markten in api-sports die we nu niet gebruiken,
 prioritering op basis van impact vs effort. Niets hardcoded — elke nieuwe
 constante / gewicht krijgt een calibratiepad.
 
-## Actieve prioriteiten (v10.10.0)
+## Actieve prioriteiten (v10.10.1)
 
 Niet alles met theoretische edge hoort nu bovenaan. Voor de huidige productfase
 geldt deze volgorde:
@@ -31,6 +31,67 @@ geldt deze volgorde:
 - markten die veel UI-oppervlak vragen maar weinig execution edge opleveren
 
 Regel: execution edge en skip quality gaan voor marktbreedte.
+
+## Data roadmap naar hoogste edge
+
+De meest waardevolle uitbreiding is niet “meer wedstrijden”, maar betere
+point-in-time context per bestaande wedstrijd. Daarom is dit de actieve
+volgorde:
+
+### 1. Historical odds + line movement
+
+Doel:
+- closing line beter voorspellen
+- stale preferred prices detecteren
+- steam moves van random drift onderscheiden
+
+Nodige output:
+- open odds
+- first seen odds
+- scan-time odds
+- pre-kickoff odds
+- close odds
+- move velocity / move direction / disagreement per bookmaker cluster
+
+Waarom eerst:
+- dit raakt direct CLV
+- dit helpt zowel singles als combi's
+- dit verbetert vooral het "nu wel / nu niet" moment
+
+### 2. Official news and confirmation layer
+
+Doel:
+- last-minute context eerder en betrouwbaarder meenemen
+
+P0 per sport:
+- NBA: official injury report + availability changes
+- NFL: official injury reports + practice status + weather
+- MLB: probable pitcher + confirmed starter + lineup
+- NHL: confirmed goalie + injury status
+- Football: lineup certainty + fixture congestion + referee/weather continuity
+
+Waarom tweede:
+- nieuws zonder timing is vaak ruis
+- nieuws mét timing is vaak directe execution edge
+
+### 3. Team-strength enrichments
+
+Doel:
+- totals, team totals en side markets inhoudelijk beter maken
+
+P1:
+- MLB pitcher/bullpen/context
+- NHL team/goalie special teams context
+- NBA pace/efficiency/team-total context
+- Football xG-like team strength waar capture point-in-time klopt
+
+### 4. New markets only after data proof
+
+Pas als bovenstaande staat:
+- team totals breder uitrollen
+- MLB F5 structureel toevoegen
+- niche period markets alleen waar signalen stabiel blijken
+- player props alleen met betrouwbare player-status + minutes/usage context
 
 ---
 

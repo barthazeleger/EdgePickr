@@ -13,7 +13,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 const modelMath = require('./lib/model-math');
 const appMeta = require('./lib/app-meta');
 const pkg = require('./package.json');
-const { buildPickFactory } = require('./lib/picks');
+const { buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
+const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -1840,8 +1841,70 @@ test('buildPickFactory: adaptiveMinEdge kan pick uit singles en combiPool weren'
   assert.strictEqual(combiPool.length, 0);
 });
 
+test('calcBTTSProb: dunne H2H sample wordt Bayesian geshrinkt', () => {
+  const thin = calcBTTSProb({ h2hBTTS: 3, h2hN: 3, hmAvgGF: 1.8, awAvgGF: 1.8 });
+  const thick = calcBTTSProb({ h2hBTTS: 20, h2hN: 25, hmAvgGF: 1.8, awAvgGF: 1.8 });
+  assert.ok(thin < 80, `thin sample should be shrunk, got ${thin}`);
+  assert.ok(thick > thin, `thick sample should retain more H2H signal (${thick} vs ${thin})`);
+});
+
+test('bestOdds: preferred bookies filter kan hogere niet-preferred prijs negeren', () => {
+  const bookmakers = [
+    {
+      title: 'SharpBook',
+      markets: [{ key: 'h2h', outcomes: [{ name: 'Home', price: 2.3 }] }],
+    },
+    {
+      title: 'Bet365',
+      markets: [{ key: 'h2h', outcomes: [{ name: 'Home', price: 2.1 }] }],
+    },
+  ];
+  const anyBook = bestOdds(bookmakers, 'h2h', 'Home');
+  const preferredOnly = bestOdds(bookmakers, 'h2h', 'Home', { preferredBookiesLower: ['bet365'] });
+  assert.strictEqual(anyBook.price, 2.3);
+  assert.strictEqual(preferredOnly.price, 2.1);
+  assert.strictEqual(preferredOnly.bookie, 'Bet365');
+});
+
+test('summarizeExecutionQuality: classificeert stale price en market beat', () => {
+  const rows = [
+    { captured_at: '2026-04-16T08:00:00.000Z', bookmaker: 'Bet365', market_type: 'moneyline', selection_key: 'home', line: null, odds: 2.00 },
+    { captured_at: '2026-04-16T08:00:00.000Z', bookmaker: 'SharpBook', market_type: 'moneyline', selection_key: 'home', line: null, odds: 2.12 },
+    { captured_at: '2026-04-16T11:00:00.000Z', bookmaker: 'Bet365', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.88 },
+    { captured_at: '2026-04-16T11:00:00.000Z', bookmaker: 'SharpBook', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.90 },
+  ];
+  const summary = summarizeExecutionQuality(rows, {
+    marketType: 'moneyline',
+    selectionKey: 'home',
+    bookmaker: 'Bet365',
+    anchorIso: '2026-04-16T08:30:00.000Z',
+    preferredBookiesLower: ['bet365'],
+  });
+  assert.strictEqual(summary.status, 'stale_price');
+  assert.strictEqual(summary.open.best_overall.odds, 2.12);
+  assert.strictEqual(summary.anchor.target_book.odds, 2.0);
+  assert.strictEqual(summary.latest.best_overall.odds, 1.9);
+  assert.ok(summary.move_to_latest_pct > 5, `expected positive CLV-like move, got ${summary.move_to_latest_pct}`);
+});
+
+test('summarizeExecutionQuality: geeft no_target_bookie als gelogde bookie ontbreekt', () => {
+  const rows = [
+    { captured_at: '2026-04-16T08:00:00.000Z', bookmaker: 'SharpBook', market_type: 'moneyline', selection_key: 'home', line: null, odds: 2.12 },
+    { captured_at: '2026-04-16T08:00:00.000Z', bookmaker: 'Unibet', market_type: 'moneyline', selection_key: 'home', line: null, odds: 2.04 },
+  ];
+  const summary = summarizeExecutionQuality(rows, {
+    marketType: 'moneyline',
+    selectionKey: 'home',
+    bookmaker: 'Bet365',
+    anchorIso: '2026-04-16T08:30:00.000Z',
+    preferredBookiesLower: ['bet365', 'unibet'],
+  });
+  assert.strictEqual(summary.status, 'no_target_bookie');
+  assert.strictEqual(summary.anchor.best_preferred.odds, 2.04);
+});
+
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.0');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

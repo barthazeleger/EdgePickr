@@ -2,6 +2,16 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.1] - 2026-04-16
+
+### Added
+- **Execution-quality laag toegevoegd**. Nieuwe helper in `lib/execution-quality.js` analyseert odds-history per selectie en classificeert entry-kwaliteit (`beat_market`, `playable`, `stale_price`, `thin_market`, etc.). `GET /api/admin/v2/execution-quality` en `GET /api/admin/v2/why-this-pick` gebruiken dit nu om line-timing, stale-price risico en preferred-bookie context zichtbaar te maken.
+- **Regressietests voor execution quality**. Test-suite dekt nu odds-history classificatie, stale-price detectie en het ontbreken van de target bookie.
+
+### Changed
+- **Shared odds/signal helpers weer aligned met live scanner**. `lib/picks.js` gebruikt nu dezelfde Bayesian BTTS shrinkage als `server.js`, en `bestOdds()` ondersteunt preferred-bookie filtering zodat gedeelde callers niet stil op niet-preferred prijzen terugvallen.
+- **Release-discipline expliciet vastgelegd**. Productdoctrine vereist nu dat elke change meteen versie, changelog en info-page versie meeneemt.
+
 ## [10.10.0] - 2026-04-16
 
 ### Changed
@@ -14,6 +24,7 @@ Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](http
 - **`docs/PRIVATE_OPERATING_MODEL.md`**. Compacte productdoctrine voor scanner, learning, bankroll-discipline, point-in-time correctness en feature-gating.
 - **Versie-consistentietest**. De test-suite controleert nu dat `lib/app-meta.js`, `package.json` en de front-end fallbackversies hetzelfde release-nummer voeren, zodat dit niet ongemerkt weer uit elkaar loopt.
 - **Roadmap opnieuw geprioriteerd op edge**. Docs sturen nu expliciet op scanner-core, execution edge, learn-discipline, bankroll-compounding en automation; exotische marktverbreding en SaaS-achtige uitbreidingen zijn bewust gedeprioriteerd.
+- **Product-roadmap verdiept naar execution- en data-laag**. Private operating model en research-doc sturen nu expliciet op historical odds, official news, confirmed starters/goalies/lineups, market microstructure, no-bet gates, compounding-engine en gescheiden single/combi learning.
 
 ## [10.9.9] - 2026-04-16
 
