@@ -10,6 +10,7 @@ const webpush        = require('web-push');
 const { APP_VERSION } = require('./lib/app-meta');
 const { buildPickFactory: createPickFactory } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
+const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -218,7 +219,9 @@ const {
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck,
   normalizeTeamName, teamMatchScore, normalizeSport,
   detectMarket, calcKelly, kellyToUnits, kellyScore, epBucketKey,
-  pitcherAdjustment, shotsDifferentialAdjustment, recomputeWl, summarizeSignalMetrics,
+  pitcherAdjustment, pitcherReliabilityFactor, goalieAdjustment,
+  injurySeverityWeight, nbaAvailabilityAdjustment,
+  shotsDifferentialAdjustment, recomputeWl, summarizeSignalMetrics,
 } = modelMath;
 
 // ── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -2924,16 +2927,19 @@ async function runBasketball(emit) {
       }).catch(() => []);
       apiCallsUsed++;
       const nbaInjuryMap = {};
+      const nbaInjuryLoadMap = {};
       let nbaInjTotal = 0;
       for (const inj of (nbaInjResp || [])) {
         const tid = inj.team?.id;
         if (!tid) continue;
-        if (isInjured(inj.player?.status || inj.status)) {
+        const severity = injurySeverityWeight(inj.player?.status || inj.status, 'basketball');
+        if (severity > 0) {
           nbaInjuryMap[tid] = (nbaInjuryMap[tid] || 0) + 1;
+          nbaInjuryLoadMap[tid] = +(nbaInjuryLoadMap[tid] || 0) + severity;
           nbaInjTotal++;
         }
       }
-      emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams, api returned ${nbaInjResp?.length || 0} rows)` });
+      emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams, gewogen load ${Object.values(nbaInjuryLoadMap).reduce((s,v)=>s+v,0).toFixed(1)}, api returned ${nbaInjResp?.length || 0} rows)` });
 
       // Yesterday's fixtures for back-to-back detection
       await sleep(80);
@@ -3149,11 +3155,16 @@ async function runBasketball(emit) {
         const _sw = loadSignalWeights();
         const restWeight = _sw.nba_rest_days_diff !== undefined ? _sw.nba_rest_days_diff : 0;
         const restAdj = nbaRestDaysDiff * 0.008 * restWeight; // 0.8% per dag verschil, gewogen
-        const nbaInjuryHome = nbaInjuryMap[hmId] || 0;
-        const nbaInjuryAway = nbaInjuryMap[awId] || 0;
-        const nbaInjuryDiff = nbaInjuryAway - nbaInjuryHome; // + = away meer blessures = home voordeel
+        const nbaInjuryHome = +(nbaInjuryLoadMap[hmId] || 0);
+        const nbaInjuryAway = +(nbaInjuryLoadMap[awId] || 0);
+        const nbaInjuryDiff = +(nbaInjuryAway - nbaInjuryHome).toFixed(2); // + = away meer blessures = home voordeel
         const injWeight = _sw.nba_injury_diff !== undefined ? _sw.nba_injury_diff : 0;
         const nbaInjAdj = nbaInjuryDiff * 0.006 * injWeight; // 0.6% per blessure-verschil (NBA impactvoller dan NFL door kleiner roster)
+        const nbaAvailability = nbaAvailabilityAdjustment(
+          { restDays: restHome, injuryLoad: nbaInjuryHome },
+          { restDays: restAway, injuryLoad: nbaInjuryAway },
+        );
+        const availabilityAdj = nbaAvailability.adj + restAdj + nbaInjAdj;
 
         // Stakes signal (playoff-race / niets te spelen) — logged-only scaffolding
         const nbaTotalTeams = Object.keys(standingsMap).length;
@@ -3165,8 +3176,8 @@ async function runBasketball(emit) {
 
         // v10.8.16: ha uit adjHome — fpHome komt uit market consensus (inclusief HA).
         const ha = 0;
-        const adjHome = Math.min(0.88, fpHome + posAdj + formAdj + b2bAdj + totalAdv + restAdj + nbaInjAdj + stakesAdj);
-        const adjAway = Math.max(0.08, fpAway - posAdj * 0.5 - formAdj * 0.5 - b2bAdj * 0.5 - totalAdv * 0.5 - restAdj * 0.5 - nbaInjAdj * 0.5 - stakesAdj * 0.5);
+        const adjHome = Math.min(0.88, fpHome + posAdj + formAdj + b2bAdj + totalAdv + availabilityAdj + stakesAdj);
+        const adjAway = Math.max(0.08, fpAway - posAdj * 0.5 - formAdj * 0.5 - b2bAdj * 0.5 - totalAdv * 0.5 - availabilityAdj * 0.5 - stakesAdj * 0.5);
 
         const bH = bestFromArr(homeOdds);
         const bA = bestFromArr(awayOdds);
@@ -3185,14 +3196,16 @@ async function runBasketball(emit) {
         if (Math.abs(homeSplitAdj) >= 0.005) matchSignals.push(`home_away_split:${homeSplitAdj>0?'+':''}${(homeSplitAdj*100).toFixed(1)}%`);
         // Logged-only experimentele signalen
         if (nbaRestDaysDiff !== 0) matchSignals.push(`nba_rest_days_diff:${nbaRestDaysDiff>0?'+':''}${nbaRestDaysDiff}`);
-        if (nbaInjuryDiff !== 0) matchSignals.push(`nba_injury_diff:${nbaInjuryDiff>0?'+':''}${nbaInjuryDiff}`);
+        if (nbaInjuryDiff !== 0) matchSignals.push(`nba_injury_diff:${nbaInjuryDiff>0?'+':''}${nbaInjuryDiff.toFixed(1)}`);
+        if (Math.abs(nbaAvailability.adj) >= 0.005) matchSignals.push(`nba_availability:${nbaAvailability.adj>0?'+':''}${(nbaAvailability.adj*100).toFixed(1)}%`);
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
         // v10.7.24: generic rest-days (phase 1 logging, weight=0) — naast bestaande nbaRestDaysDiff
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
-        const sharedNotes = `${posStr}${formNote}${b2bNote}${ppgNote}${rebNote}${splitNote}${restInfo.note}`;
+        const availNote = nbaAvailability.note ? ` | ${nbaAvailability.note}` : '';
+        const sharedNotes = `${posStr}${formNote}${b2bNote}${ppgNote}${rebNote}${splitNote}${availNote}${restInfo.note}`;
 
         // v2: feature_snapshot + pick_candidates voor ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -3200,6 +3213,7 @@ async function runBasketball(emit) {
           posAdj, formAdj, b2bAdj, ppgAdj, rebAdj, homeSplitAdj,
           // logged-only signals (nog niet in scoring)
           rest_days_home: restHome, rest_days_away: restAway, rest_days_diff: nbaRestDaysDiff,
+          injury_load_home: nbaInjuryHome, injury_load_away: nbaInjuryAway, availabilityAdj,
         }, { standings_present: !!(hmSt && awSt) }).catch(() => {});
         if (_currentModelVersionId) {
           snap.recordMl2WayEvaluation({
@@ -3495,6 +3509,30 @@ async function runHockey(emit) {
           restInfo = buildRestDaysInfo('hockey', kickoffMs, hmLast, awLast);
         } catch (e) { console.warn('Rest-days (hockey) fetch failed:', e.message); }
 
+        let goaliePreview = null;
+        let goalieSig = { adj: 0, note: null, valid: false };
+        try {
+          goaliePreview = await fetchNhlGoaliePreview(gameId);
+          if (goaliePreview?.home && goaliePreview?.away) {
+            const rawGoalieSig = goalieAdjustment(goaliePreview.home, goaliePreview.away, {
+              confirmedHome: goaliePreview.home.confirmed,
+              confirmedAway: goaliePreview.away.confirmed,
+            });
+            const confFactor = Math.min(
+              goaliePreview.home.confidenceFactor || 0,
+              goaliePreview.away.confidenceFactor || 0,
+            );
+            if (rawGoalieSig.valid && confFactor >= 0.5) {
+              goalieSig = {
+                ...rawGoalieSig,
+                adj: rawGoalieSig.adj * confFactor,
+                note: `${rawGoalieSig.note} [preview ${goaliePreview.home.confidence}/${goaliePreview.away.confidence}]`,
+                valid: true,
+              };
+            }
+          }
+        } catch (e) { console.warn('NHL goalie preview failed:', e.message); }
+
         // Odds
         await sleep(120);
         const oddsResp = await afGet('v1.hockey.api-sports.io', '/odds', { game: gameId });
@@ -3604,7 +3642,7 @@ async function runHockey(emit) {
           shotsSig = shotsDifferentialAdjustment(hmNhl, awNhl);
         }
 
-        const totalAdv = goalDiffAdj + homeRecordAdj + shotsSig.adj;
+        const totalAdv = goalDiffAdj + homeRecordAdj + shotsSig.adj + goalieSig.adj;
 
         // ── nhl_injury_diff (logged-only, scaffolding) ──
         const nhlInjHome = nhlInjuryMap[hmId] || 0;
@@ -3645,6 +3683,7 @@ async function runHockey(emit) {
         if (Math.abs(goalDiffAdj) >= 0.005) matchSignals.push(`goal_diff:${goalDiffAdj>0?'+':''}${(goalDiffAdj*100).toFixed(1)}%`);
         if (Math.abs(homeRecordAdj) >= 0.005) matchSignals.push(`home_away_record:${homeRecordAdj>0?'+':''}${(homeRecordAdj*100).toFixed(1)}%`);
         if (shotsSig.valid && Math.abs(shotsSig.adj) >= 0.003) matchSignals.push(`nhl_shots_diff:${shotsSig.adj>0?'+':''}${(shotsSig.adj*100).toFixed(1)}%`);
+        if (goalieSig.valid && Math.abs(goalieSig.adj) >= 0.003) matchSignals.push(`nhl_goalie_edge:${goalieSig.adj>0?'+':''}${(goalieSig.adj*100).toFixed(1)}%`);
         if (nhlInjDiff !== 0) matchSignals.push(`nhl_injury_diff:${nhlInjDiff>0?'+':''}${nhlInjDiff}`);
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
         // v10.7.24: generic rest-days (weight=0 logging)
@@ -3653,7 +3692,8 @@ async function runHockey(emit) {
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
         const shotsNote = shotsSig.valid ? ` | ${shotsSig.note}` : '';
-        const sharedNotes = `${posStr}${formNote}${b2bNote}${goalDiffNote}${homeRecordNote}${shotsNote}${restInfo.note}`;
+        const goalieNote = goalieSig.valid ? ` | ${goalieSig.note}` : '';
+        const sharedNotes = `${posStr}${formNote}${b2bNote}${goalDiffNote}${homeRecordNote}${shotsNote}${goalieNote}${restInfo.note}`;
 
         // Per-game diagnostics (admin-only)
         const picksBefore = picks.length;
@@ -3699,12 +3739,14 @@ async function runHockey(emit) {
           fpHome, fpAway,
           adjHome, adjAway,
           ha, posAdj, formAdj, b2bAdj, goalDiffAdj, homeRecordAdj,
+          goalieAdj: goalieSig.adj,
           shotsDiffAdj: shotsSig.adj, shotsDiffValid: shotsSig.valid,
           marketHomeProb: marketFairReg?.home, marketDrawProb: marketFairReg?.draw, marketAwayProb: marketFairReg?.away,
         }, {
           standings_present: !!(hmSt && awSt),
           three_way_bookies: marketFairReg?.bookieCount || 0,
           shots_signal_valid: shotsSig.valid,
+          goalie_preview_available: !!(goaliePreview?.home && goaliePreview?.away),
         }).catch(() => {});
 
         // ── v2 MODEL RUN + PICK CANDIDATES voor hockey 2-way ML ──────────
@@ -4302,8 +4344,11 @@ async function runBaseball(emit) {
         // Pitcher signal (MLB-only): ERA-differential via StatsAPI
         const mlbMatch = pitcherByTeamPair(hm, aw);
         const pitcherSig = mlbMatch ? pitcherAdjustment(mlbMatch.homePitcher, mlbMatch.awayPitcher) : { adj: 0, note: null, valid: false };
+        const starterReliability = mlbMatch
+          ? pitcherReliabilityFactor(mlbMatch.homePitcher, mlbMatch.awayPitcher)
+          : { factor: 0.7, note: 'Starter sample dun', valid: false };
 
-        const totalAdv = runDiffAdj + homeAwayAdj + streakAdj + pitcherSig.adj;
+        const totalAdv = runDiffAdj + homeAwayAdj + streakAdj + (pitcherSig.adj * starterReliability.factor);
 
         // ── mlb_injury_diff (logged-only scaffolding) ──
         const mlbInjHome = mlbInjuryMap[hmId] || 0;
@@ -4357,7 +4402,7 @@ async function runBaseball(emit) {
         if (Math.abs(homeAwayAdj) >= 0.005) matchSignals.push(`home_away_split:${homeAwayAdj>0?'+':''}${(homeAwayAdj*100).toFixed(1)}%`);
         if (Math.abs(streakAdj) >= 0.005) matchSignals.push(`streak:${streakAdj>0?'+':''}${(streakAdj*100).toFixed(1)}%`);
         if (pitcherSig.valid && Math.abs(pitcherSig.adj) >= 0.005) {
-          matchSignals.push(`pitcher_era_diff:${pitcherSig.adj>0?'+':''}${(pitcherSig.adj*100).toFixed(1)}%`);
+          matchSignals.push(`pitcher_era_diff:${pitcherSig.adj>0?'+':''}${(pitcherSig.adj*100 * starterReliability.factor).toFixed(1)}%`);
         }
         if (mlbInjDiff !== 0) matchSignals.push(`mlb_injury_diff:${mlbInjDiff>0?'+':''}${mlbInjDiff}`);
         if (hmStakesM.adj !== 0 || awStakesM.adj !== 0) matchSignals.push(`stakes:${((hmStakesM.adj - awStakesM.adj)*100).toFixed(1)}%`);
@@ -4367,14 +4412,15 @@ async function runBaseball(emit) {
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
-        const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note}` : '';
+        const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note} · ${starterReliability.note}` : '';
         const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}${mlbWeatherNote}${restInfo.note}`;
 
         // v2: feature_snapshot + pick_candidates voor MLB ML
         snap.writeFeatureSnapshot(supabase, gameId, {
           sport: 'baseball', fpHome, fpAway, adjHome, adjAway, ha,
           posAdj, formAdj, runDiffAdj, homeAwayAdj, streakAdj,
-          pitcherAdj: pitcherSig.adj, pitcherValid: pitcherSig.valid,
+          pitcherAdj: pitcherSig.adj * starterReliability.factor, pitcherValid: pitcherSig.valid,
+          starterReliability: starterReliability.factor,
         }, {
           standings_present: !!(hmSt && awSt),
           pitcher_signal_valid: pitcherSig.valid,
@@ -4522,7 +4568,7 @@ async function runBaseball(emit) {
 
         if (pitcherSig.valid && f5ML.length) {
           // F5 probability: Gebruik fpHome/fpAway als baseline + pitcher × 3
-          const f5PitcherAdj = Math.max(-0.12, Math.min(0.12, pitcherSig.adj * 3));
+          const f5PitcherAdj = Math.max(-0.12, Math.min(0.12, pitcherSig.adj * 3 * starterReliability.factor));
           const f5Home = Math.min(0.85, Math.max(0.15, fpHome + f5PitcherAdj + ha * 0.7));
           const f5Away = Math.min(0.85, Math.max(0.15, fpAway - f5PitcherAdj * 0.7 - ha * 0.35));
 
@@ -4532,14 +4578,15 @@ async function runBaseball(emit) {
           const bF5A = bestFromArr(f5A);
           const eF5H = bF5H.price > 0 ? f5Home * bF5H.price - 1 : -1;
           const eF5A = bF5A.price > 0 ? f5Away * bF5A.price - 1 : -1;
+          const f5MinEdge = starterReliability.factor < 0.8 ? MIN_EDGE + 0.015 : MIN_EDGE;
 
-          if (eF5H >= MIN_EDGE && bF5H.price >= 1.60 && bF5H.price <= MAX_WINNER_ODDS)
+          if (eF5H >= f5MinEdge && bF5H.price >= 1.60 && bF5H.price <= MAX_WINNER_ODDS)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${hm}`, bF5H.price,
-              `F5 (1st 5 inn): ${(f5Home*100).toFixed(1)}% | ${bF5H.bookie}: ${bF5H.price} | ${pitcherSig.note} | ${ko}`,
+              `F5 (1st 5 inn): ${(f5Home*100).toFixed(1)}% | ${bF5H.bookie}: ${bF5H.price} | ${pitcherSig.note} · ${starterReliability.note} | ${ko}`,
               Math.round(f5Home*100), eF5H * 0.24, kickoffTime, bF5H.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
-          if (eF5A >= MIN_EDGE && bF5A.price >= 1.60 && bF5A.price <= MAX_WINNER_ODDS)
+          if (eF5A >= f5MinEdge && bF5A.price >= 1.60 && bF5A.price <= MAX_WINNER_ODDS)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${aw}`, bF5A.price,
-              `F5 (1st 5 inn): ${(f5Away*100).toFixed(1)}% | ${bF5A.bookie}: ${bF5A.price} | ${pitcherSig.note} | ${ko}`,
+              `F5 (1st 5 inn): ${(f5Away*100).toFixed(1)}% | ${bF5A.bookie}: ${bF5A.price} | ${pitcherSig.note} · ${starterReliability.note} | ${ko}`,
               Math.round(f5Away*100), eF5A * 0.24, kickoffTime, bF5A.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
         }
 

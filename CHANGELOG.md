@@ -2,6 +2,17 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.2] - 2026-04-16
+
+### Added
+- **NHL goalie-preview laag toegevoegd**. Nieuwe `lib/nhl-goalie-preview.js` leest de officiële NHL gamecenter-preview uit en projecteert per team de meest waarschijnlijke starter, inclusief confidence-factor. De hockeyscanner kan deze matchup nu voorzichtig meewegen in de live ranking in plaats van goalie-context volledig te missen.
+- **Nieuwe pure sport-context helpers + tests**. `lib/model-math.js` bevat nu `goalieAdjustment`, `injurySeverityWeight`, `nbaAvailabilityAdjustment` en `pitcherReliabilityFactor`, zodat goalie/injury/rest/starter-logica unit-testbaar en gedeeld blijft.
+
+### Changed
+- **NBA injury/rest van logged-only naar conservatief live-signaal**. Blessures worden nu gewogen op status (`out`, `doubtful`, `questionable`, etc.) en samen met rustverschil vertaald naar een voorzichtige availability-adjustment in de basketbalscanner.
+- **MLB starters/F5 gedempt op samplebetrouwbaarheid**. Starter-gedreven edges gebruiken nu een reliability-factor op basis van innings pitched, zodat vroege-seizoens of dunne probable-pitcher samples minder agressief doorwerken, vooral in F5-markten.
+- **Releaseflow bijgewerkt naar v10.10.2**. Versie, changelog, info-page en docs zijn opnieuw synchroon gebracht zoals afgesproken.
+
 ## [10.10.1] - 2026-04-16
 
 ### Added

@@ -15,12 +15,15 @@ const appMeta = require('./lib/app-meta');
 const pkg = require('./package.json');
 const { buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
+const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck,
   normalizeTeamName, teamMatchScore, normalizeSport, detectMarket,
-  pitcherAdjustment, shotsDifferentialAdjustment, recomputeWl,
+  pitcherAdjustment, pitcherReliabilityFactor, goalieAdjustment,
+  injurySeverityWeight, nbaAvailabilityAdjustment,
+  shotsDifferentialAdjustment, recomputeWl,
   NHL_OT_HOME_SHARE, MODEL_MARKET_DIVERGENCE_THRESHOLD,
   bayesSmooth, hierarchicalMultiplier, HIER_CALIB_PRIOR, HIER_CALIB_MIN_N, HIER_CALIB_K,
   residualModelDelta, residualModelActive, RESIDUAL_MIN_TRAINING_PICKS, summarizeSignalMetrics,
@@ -1375,6 +1378,85 @@ test('pitcherAdjustment: note bevat ERA-verschil', () => {
   assert.ok(r.note.includes('4.20'));
 });
 
+test('pitcherReliabilityFactor: dunne starters dampen F5-pitcher edge', () => {
+  const thin = pitcherReliabilityFactor(
+    { era: 3.2, ip: 12, name: 'A' },
+    { era: 4.1, ip: 18, name: 'B' }
+  );
+  const full = pitcherReliabilityFactor(
+    { era: 3.2, ip: 60, name: 'A' },
+    { era: 4.1, ip: 72, name: 'B' }
+  );
+  assert.ok(thin.factor < 1, 'lage IP moet pitcher-weight dempen');
+  assert.strictEqual(full.factor, 1, 'sterke sample mag volle weight houden');
+});
+
+test('goalieAdjustment: betere home goalie geeft positieve adj', () => {
+  const r = goalieAdjustment(
+    { name: 'Vejmelka', savePct: 0.917, gaa: 2.41, gamesPlayed: 42 },
+    { name: 'Backup', savePct: 0.901, gaa: 2.95, gamesPlayed: 31 }
+  );
+  assert.strictEqual(r.valid, true);
+  assert.ok(r.adj > 0);
+});
+
+test('goalieAdjustment: confirmation boost blijft klein maar werkt', () => {
+  const base = goalieAdjustment(
+    { name: 'Home', savePct: 0.909, gaa: 2.62, gamesPlayed: 25 },
+    { name: 'Away', savePct: 0.905, gaa: 2.74, gamesPlayed: 25 }
+  );
+  const boosted = goalieAdjustment(
+    { name: 'Home', savePct: 0.909, gaa: 2.62, gamesPlayed: 25 },
+    { name: 'Away', savePct: 0.905, gaa: 2.74, gamesPlayed: 25 },
+    { confirmedHome: true, confirmedAway: false }
+  );
+  assert.ok(boosted.adj > base.adj);
+  assert.ok(boosted.adj - base.adj <= 0.0061);
+});
+
+test('injurySeverityWeight: nba statuses worden gewogen i.p.v. blind geteld', () => {
+  assert.strictEqual(injurySeverityWeight('Out', 'basketball'), 1);
+  assert.strictEqual(injurySeverityWeight('Doubtful', 'basketball'), 0.75);
+  assert.strictEqual(injurySeverityWeight('Questionable', 'basketball'), 0.5);
+  assert.strictEqual(injurySeverityWeight('Probable', 'basketball'), 0);
+});
+
+test('nbaAvailabilityAdjustment: meer rust en gezondere away-team negatief voor home', () => {
+  const r = nbaAvailabilityAdjustment(
+    { restDays: 1, injuryLoad: 2.0 },
+    { restDays: 4, injuryLoad: 0.5 }
+  );
+  assert.ok(r.adj < 0, 'home minder rust + meer blessures moet home negatief raken');
+  assert.ok(r.note.includes('Rest'));
+  assert.ok(r.note.includes('Inj load'));
+});
+
+test('selectLikelyGoalie: kiest primaire starter op games-played en confidence', () => {
+  const r = selectLikelyGoalie([
+    { name: { default: 'Backup' }, gamesPlayed: 18, savePctg: 0.901, goalsAgainstAvg: 2.93 },
+    { name: { default: 'Starter' }, gamesPlayed: 42, savePctg: 0.916, goalsAgainstAvg: 2.45 },
+  ]);
+  assert.strictEqual(r.name, 'Starter');
+  assert.strictEqual(r.confidence, 'high');
+});
+
+test('extractNhlGoaliePreview: leest team-specifieke goalies uit gamecenter payload', () => {
+  const payload = {
+    homeTeam: { id: 1 },
+    awayTeam: { id: 2 },
+    goalieSeasonStats: {
+      goalies: [
+        { teamId: 1, name: { default: 'Home Starter' }, gamesPlayed: 40, savePctg: 0.915, goalsAgainstAvg: 2.4 },
+        { teamId: 1, name: { default: 'Home Backup' }, gamesPlayed: 15, savePctg: 0.901, goalsAgainstAvg: 2.9 },
+        { teamId: 2, name: { default: 'Away Starter' }, gamesPlayed: 38, savePctg: 0.908, goalsAgainstAvg: 2.61 },
+      ],
+    },
+  };
+  const r = extractNhlGoaliePreview(payload);
+  assert.strictEqual(r.home.name, 'Home Starter');
+  assert.strictEqual(r.away.name, 'Away Starter');
+});
+
 // ── NHL shots-differential signal ──────────────────────────────────────────
 
 test('shotsDifferentialAdjustment: dominant home → positieve adj', () => {
@@ -1904,7 +1986,7 @@ test('summarizeExecutionQuality: geeft no_target_bookie als gelogde bookie ontbr
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.1');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
