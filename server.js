@@ -384,7 +384,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.8.20';
+const APP_VERSION    = '10.8.21';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1437,11 +1437,28 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
     const uNum = parseFloat(u);
     const expectedEur = +(uNum * UNIT_EUR * (edge / 100) * dataConf).toFixed(2);
     // v10.8.17: per-pick audit. Baseline = markt-implied uit de odds (1/odd).
-    // signal_contrib = som van alle signal-adjustments zoals ze in de signals-
-    // array als "+X%" / "-X%" strings staan. Transparantie: user ziet hoeveel
-    // het model van de markt afwijkt en of signalen dat dragen.
+    // v10.8.21: signal_contrib filtert nu per-markt — anders teller je BTTS
+    // signalen mee bij een moneyline pick (of omgekeerd), wat inflate geeft.
+    // Bromley BTTS JA toonde voorheen +31.4pp uit ALLE signalen, terwijl alleen
+    // btts_* en aggregate_push_btts daadwerkelijk bttsYesP beïnvloeden.
+    const labelLc = (label || '').toLowerCase();
+    const isBttsPick = /btts/i.test(labelLc);
+    const isOverUnderPick = /over\s*\d|under\s*\d/i.test(labelLc);
+    const relevantSignals = (signals || []).filter(s => {
+      const sigLc = s.toLowerCase();
+      if (isBttsPick) {
+        // BTTS: alleen btts_* en aggregate_push_btts
+        return /btts|aggregate_push_btts/.test(sigLc);
+      }
+      if (isOverUnderPick) {
+        // Over/Under: goal-beïnvloedende signalen
+        return /(weather|poisson|team_stats|over|under|goals|o2\.5|u2\.5)/.test(sigLc);
+      }
+      // Moneyline (1X2, team wint): alles behalve BTTS/Over-specifieke
+      return !/btts|aggregate_push_btts|totalscore|o2\.5|u2\.5/.test(sigLc);
+    });
     const baselineProb = +(100 / odd).toFixed(1);
-    const signalContrib = +((signals || []).reduce((s, sig) => {
+    const signalContrib = +(relevantSignals.reduce((s, sig) => {
       const m = /([+-]?\d+\.?\d*)%/.exec(sig);
       return s + (m ? parseFloat(m[1]) : 0);
     }, 0)).toFixed(1);

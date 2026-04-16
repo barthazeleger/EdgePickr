@@ -2,6 +2,16 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.8.21] - 2026-04-16
+
+### Fixed
+- **Audit signal_contrib filtert nu per-markt**. Voorheen werden alle matchSignals gesommeerd ongeacht pick-type, wat inflate gaf: Bromley BTTS JA toonde "signalen +31.4pp" terwijl ML-signalen (form, position, run_diff, pitcher) bttsYesP niet beïnvloeden. Nu per-market filter:
+  - **BTTS picks** → alleen `btts_*` + `aggregate_push_btts`
+  - **Over/Under picks** → weather, poisson, team_stats, over/under keywords
+  - **Moneyline picks** → alles behalve BTTS/Over-specifieke signalen
+  
+  Effect: gaps die eerst door valse signaal-som "gedekt" leken worden nu eerlijk geflagd. Bromley zou met geschatte BTTS-signalen ~7pp tegen gap +22.5pp onder de 50%-dekking vallen en ⚠️ krijgen. Honest.
+
 ## [10.8.20] - 2026-04-16
 
 ### Fixed
