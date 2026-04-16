@@ -1491,24 +1491,20 @@ function renderPicks(el, picks) {
     const edgeHtml = edgeVal != null
       ? `<span style="color:var(--yellow);font-weight:600" title="${showPureEdge?`Gekalibreerde edge ${edgeVal}% — pure EV-edge (prob × odds − 1) is ${pureEdgeVal}%. Damping beschermt tegen onvolwassen markten.`:`Edge t.o.v. markt`}">Edge +${edgeVal}%${showPureEdge?` <span style="opacity:.55;font-weight:400">(pure ${pureEdgeVal}%)</span>`:''}</span>`
       : '';
-    // v10.8.17/22: audit-regel. Markt-implied uit odds, base-model uit
-    // calcBTTSProb/fpHome/etc, signalen uit array. User ziet welke bron
-    // het model-prob drijft: markt-divergentie → base model of signalen?
+    // v10.9.4: audit-regel. Geen rood ⚠️ meer los van stake — audit werkt
+    // nu DOOR in de stake (hk ×0.6 bij suspicious). Regel is puur informatief:
+    // user ziet waar de prob vandaan komt, stake is al dienovereenkomstig.
     let auditHtml = '';
     if (p.audit && p.audit.baseline_prob != null) {
       const a = p.audit;
       const gap = a.prob_gap;
-      const baseGap = a.base_gap != null ? a.base_gap : (a.base_prob != null ? +(a.base_prob - a.baseline_prob).toFixed(1) : null);
       const contrib = a.signal_contrib || 0;
-      // ⚠️ als gap > 15pp EN (base-afwijking groot EN signalen dekken het niet).
-      // Betekent: model's KERN zit ver van markt zonder dat signalen dat steunen.
-      const suspicious = gap > 15 && (baseGap != null && Math.abs(baseGap) > 15 && Math.abs(contrib) < Math.abs(baseGap) * 0.3);
-      const gapColor = suspicious ? '#f87171' : gap > 10 ? '#fbbf24' : '#9ca3af';
-      const flagIcon = suspicious ? ' ⚠️' : '';
-      const baseHtml = a.base_prob != null
-        ? `base: ${a.base_prob}% · `
+      const dampen = a.stake_dampen && a.stake_dampen < 1.0;
+      const baseHtml = a.base_prob != null ? `base: ${a.base_prob}% · ` : '';
+      const dampenHtml = dampen
+        ? ` <span style="color:#fbbf24;font-weight:600">· stake −${Math.round((1 - a.stake_dampen) * 100)}% (base-onzekerheid)</span>`
         : '';
-      auditHtml = `<div style="font-size:10.5px;color:${gapColor};margin-top:6px" title="Markt-implied uit odds · base = model vóór signal-adjustments (bv. calcBTTSProb output) · signalen = markt-relevante ±pp · gap = model-final vs markt.">Markt: ${a.baseline_prob}% · ${baseHtml}signalen: ${contrib >= 0 ? '+' : ''}${contrib}pp → model: ${p.prob}% (gap ${gap >= 0 ? '+' : ''}${gap}pp)${flagIcon}</div>`;
+      auditHtml = `<div style="font-size:10.5px;color:var(--muted);margin-top:6px" title="Markt-implied uit odds · base = model vóór signal-adjustments · signalen = markt-relevante ±pp met expliciete sign. Bij grote base-divergentie zonder signaal-ondersteuning wordt de Kelly-stake automatisch gehalveerd zodat cijfer + stake + audit consistent zijn.">Markt: ${a.baseline_prob}% · ${baseHtml}signalen: ${contrib >= 0 ? '+' : ''}${contrib}pp → model: ${p.prob}% (gap ${gap >= 0 ? '+' : ''}${gap}pp)${dampenHtml}</div>`;
     }
     const reasonHtml = p.reason
       ? `<div class="pick-reason" id="reason-${i}" style="display:none;font-size:11.5px;color:var(--text);margin-top:8px;line-height:1.6;border-top:1px solid var(--border);padding-top:8px">

@@ -387,7 +387,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.9.3';
+const APP_VERSION    = '10.9.4';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1444,53 +1444,46 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
       ? calibEpBuckets[bk].weight
       : DEFAULT_EPW[bk];
 
-    // Half-Kelly unit sizing met drawdown protection
-    const ddMult = getDrawdownMultiplier();
-    const hk = k * getKellyFraction() * ddMult;
-    const u  = kellyToUnits(hk);
-    const edge = Math.round((ep * odd - 1) * 100 * 10) / 10;
-
-    const uNum = parseFloat(u);
-    const expectedEur = +(uNum * UNIT_EUR * (edge / 100) * dataConf).toFixed(2);
-    // v10.8.17: per-pick audit. Baseline = markt-implied uit de odds (1/odd).
-    // v10.8.21: signal_contrib filtert nu per-markt — anders teller je BTTS
-    // signalen mee bij een moneyline pick (of omgekeerd), wat inflate geeft.
-    // Bromley BTTS JA toonde voorheen +31.4pp uit ALLE signalen, terwijl alleen
-    // btts_* en aggregate_push_btts daadwerkelijk bttsYesP beïnvloeden.
+    // v10.8.17/21/22: per-pick audit. Baseline = markt-implied uit de odds.
+    // signal_contrib = som van markt-relevante signalen met expliciete +/- sign.
+    // base_prob = final prob minus signalen (≈ calcBTTSProb/fpHome pre-adjust).
     const labelLc = (label || '').toLowerCase();
     const isBttsPick = /btts/i.test(labelLc);
     const isOverUnderPick = /over\s*\d|under\s*\d/i.test(labelLc);
     const relevantSignals = (signals || []).filter(s => {
       const sigLc = s.toLowerCase();
-      if (isBttsPick) {
-        // BTTS: alleen btts_* en aggregate_push_btts
-        return /btts|aggregate_push_btts/.test(sigLc);
-      }
-      if (isOverUnderPick) {
-        // Over/Under: goal-beïnvloedende signalen
-        return /(weather|poisson|team_stats|over|under|goals|o2\.5|u2\.5)/.test(sigLc);
-      }
-      // Moneyline (1X2, team wint): alles behalve BTTS/Over-specifieke
+      if (isBttsPick) return /btts|aggregate_push_btts/.test(sigLc);
+      if (isOverUnderPick) return /(weather|poisson|team_stats|over|under|goals|o2\.5|u2\.5)/.test(sigLc);
       return !/btts|aggregate_push_btts|totalscore|o2\.5|u2\.5/.test(sigLc);
     });
     const baselineProb = +(100 / odd).toFixed(1);
-    // v10.9.3: parser vereist expliciet +/- teken. Voorheen werden ongetekende
-    // percentages (bv. "poisson_o25:80.0%" = prob-waarde, niet adjustment)
-    // als +80pp meegeteld → AEK-Rayo audit toonde nonsense "signalen +86pp".
-    // Echte adjustment-signalen gebruiken altijd expliciete sign ('+' of '-').
     const signalContrib = +(relevantSignals.reduce((s, sig) => {
       const m = /([+-]\d+\.?\d*)%/.exec(sig);
       return s + (m ? parseFloat(m[1]) : 0);
     }, 0)).toFixed(1);
     const probGap = +(prob - baselineProb).toFixed(1);
-    // v10.8.22: base_prob = model output vóór signal-adjustments (final − signalen).
-    // Transparantie: user ziet of 76% claim uit calcBTTSProb/fpHome base komt of
-    // uit signaal-stapeling. Gebruikt markt-relevante signalen zodat base klopt
-    // met de actual pre-adjustment waarde (voor BTTS: calcBTTSProb output; voor
-    // ML: fpHome + ha=0; voor Over: base poisson prob).
     const basePct = +(prob - signalContrib).toFixed(1);
     const baseGap = +(basePct - baselineProb).toFixed(1);
-    const audit = { baseline_prob: baselineProb, base_prob: basePct, base_gap: baseGap, signal_contrib: signalContrib, prob_gap: probGap };
+    // v10.9.4: audit-suspicious werkt door in de stake. Als base-model claim
+    // groot is zonder signaal-ondersteuning → Kelly-hk ×0.6 → automatisch
+    // lagere stake + lagere score. Flag + high stake tegelijk = niet meer.
+    const auditSuspicious = probGap > 15 && Math.abs(baseGap) > 15
+      && Math.abs(signalContrib) < Math.abs(baseGap) * 0.3;
+    const auditDampen = auditSuspicious ? 0.6 : 1.0;
+    const audit = {
+      baseline_prob: baselineProb, base_prob: basePct, base_gap: baseGap,
+      signal_contrib: signalContrib, prob_gap: probGap,
+      suspicious: auditSuspicious, stake_dampen: auditDampen,
+    };
+
+    // Half-Kelly unit sizing met drawdown protection + audit-damping.
+    const ddMult = getDrawdownMultiplier();
+    const hk = k * getKellyFraction() * ddMult * auditDampen;
+    const u  = kellyToUnits(hk);
+    const edge = Math.round((ep * odd - 1) * 100 * 10) / 10;
+
+    const uNum = parseFloat(u);
+    const expectedEur = +(uNum * UNIT_EUR * (edge / 100) * dataConf).toFixed(2);
     const pick = { match, league, label, odd, units: u, reason, prob, ep: +ep.toFixed(3),
                    strength: k*(odd-1)*vP*epW*dataConf, kelly: hk, edge, expectedEur, kickoff, bookie,
                    signals: signals || [], referee: referee || null, dataConfidence: dataConf, sport,
@@ -7817,31 +7810,10 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
     // van markt afwijkt EN signalen dat niet wegduwen. Dat signaleert een
     // base-calc-driven claim die we extra willen controleren (bv. calcBTTSProb
     // met weinig H2H samples, of fpHome-derivering op dunne bookie-consensus).
-    try {
-      const flagged = topPicks
-        .filter(p => p.audit && p.audit.prob_gap > 15)
-        .filter(p => {
-          const gap = p.audit.prob_gap;
-          const baseGap = p.audit.base_gap != null ? Math.abs(p.audit.base_gap) : gap;
-          const contrib = Math.abs(p.audit.signal_contrib || 0);
-          return baseGap > 15 && contrib < baseGap * 0.3;
-        });
-      if (flagged.length > 0) {
-        const body = flagged.map(p => {
-          const a = p.audit;
-          const baseTxt = a.base_prob != null ? `base ${a.base_prob}% → ` : '';
-          return `• ${p.match} · ${p.label}: markt ${a.baseline_prob}% → ${baseTxt}model ${p.prob}% (gap +${a.prob_gap}pp, signalen ${a.signal_contrib >= 0 ? '+' : ''}${a.signal_contrib}pp)`;
-        }).join('\n');
-        await supabase.from('notifications').insert({
-          type: 'pick_audit',
-          title: `⚠️ ${flagged.length} pick(s) met base-model divergentie`,
-          body: `Deze picks hebben een base-prob (kern model vóór signalen) die ver van markt afwijkt zonder dat signalen het steunen. Check H2H / stats onderbouwing vóór inzet:\n\n${body}`.slice(0, 1500),
-          read: false, user_id: null,
-        });
-      }
-    } catch (e) {
-      console.warn('[pick_audit] insert failed:', e.message);
-    }
+    // v10.9.4: audit-inbox-notificatie verwijderd. De suspicious-flag werkt
+    // nu DOOR in de stake (hk × 0.6) — geen aparte notificatie meer nodig.
+    // Pick met damping = lagere stake + lagere score, user ziet het direct
+    // zonder dat inbox-flag tegenstrijdig voelt met de 1.5U badge.
 
     // Telegram + push notificatie
     if (topPicks.length > 0) {

@@ -2,6 +2,13 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.9.4] - 2026-04-16
+
+### Changed
+- **Audit-flag werkt nu DOOR in de stake i.p.v. cosmetisch ⚠️-teken**. User meldde: "flag + 1.5U samen is inconsistent, maakt me onzeker wat te zetten". Terecht. Wanneer `suspicious=true` (gap >15pp, base-gap >15pp, signalen dekken <30%) wordt de half-Kelly nu met factor 0.6 gedamped. Effect: suspicious pick → automatisch lagere stake-tier (bv. 1.5U → 1.0U) én lagere score (9/10 → 8/10). Cijfer, stake en audit lopen nu altijd in lockstep. Flag + 2U tegelijk is onmogelijk geworden.
+- **Audit-UI-regel toont nu expliciet de damping** ("· stake −40% (base-onzekerheid)") i.p.v. een rood ⚠️-icoon. Kleur van de regel is voortaan neutraal grijs; de damping staat in gele font voor zichtbaarheid zonder alarm.
+- **Inbox-notificatie voor pick_audit uitgezet**: dat was redundant want stake-damping laat al zien dat het systeem voorzichtig is.
+
 ## [10.9.3] - 2026-04-16
 
 ### Fixed
