@@ -132,6 +132,13 @@ Zie [docs/RESEARCH_MARKETS_SIGNALS.md](./docs/RESEARCH_MARKETS_SIGNALS.md) voor 
 Zie [docs/BUSINESS_PLAN.md](./docs/BUSINESS_PLAN.md) voor het historische SaaS-plan dat niet meer leidend is voor huidige keuzes.
 Zie [CHANGELOG.md](./CHANGELOG.md) voor versiegeschiedenis.
 
+### Huidige roadmap-focus
+- scanner-core modulariseren en drift wegnemen
+- execution-edge signalen verdiepen vóór marktverbreding
+- CLV/excess-CLV learn-lussen aanscherpen
+- bankroll/compounding discipline explicieter maken
+- automation verhogen zonder extra cockpit-ruis
+
 ## Licentie
 
 Private. Alle rechten voorbehouden.

@@ -13,6 +13,7 @@ Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](http
 ### Added
 - **`docs/PRIVATE_OPERATING_MODEL.md`**. Compacte productdoctrine voor scanner, learning, bankroll-discipline, point-in-time correctness en feature-gating.
 - **Versie-consistentietest**. De test-suite controleert nu dat `lib/app-meta.js`, `package.json` en de front-end fallbackversies hetzelfde release-nummer voeren, zodat dit niet ongemerkt weer uit elkaar loopt.
+- **Roadmap opnieuw geprioriteerd op edge**. Docs sturen nu expliciet op scanner-core, execution edge, learn-discipline, bankroll-compounding en automation; exotische marktverbreding en SaaS-achtige uitbreidingen zijn bewust gedeprioriteerd.
 
 ## [10.9.9] - 2026-04-16
 

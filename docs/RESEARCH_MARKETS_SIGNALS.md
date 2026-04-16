@@ -7,6 +7,31 @@ Dit document inventariseert (a) markten in api-sports die we nu niet gebruiken,
 prioritering op basis van impact vs effort. Niets hardcoded — elke nieuwe
 constante / gewicht krijgt een calibratiepad.
 
+## Actieve prioriteiten (v10.10.0)
+
+Niet alles met theoretische edge hoort nu bovenaan. Voor de huidige productfase
+geldt deze volgorde:
+
+### P0 — Eerst doen
+- line-move timing en closing-discipline signalen
+- injury recency / lineup certainty / starter-confirmation
+- sport-specifieke rest/travel asymmetry
+- market disagreement per bookie-cluster
+- modulair en testbaar maken van bestaande ranking/signaalflow
+
+### P1 — Daarna doen
+- team totals waar bestaand model ze al point-in-time kan dragen
+- MLB F5 alleen als pitcher-confirmation stevig genoeg is
+- hockey/NBA extra team-context als data stabiel en goedkoop is
+
+### P2 — Alleen doen bij bewijs
+- player props
+- correct scores
+- exotische period markets
+- markten die veel UI-oppervlak vragen maar weinig execution edge opleveren
+
+Regel: execution edge en skip quality gaan voor marktbreedte.
+
 ---
 
 ## 1. Current State Inventory
