@@ -384,7 +384,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.8.18';
+const APP_VERSION    = '10.8.19';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -7649,7 +7649,7 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
     const safePicks = topPicks.map(p => {
       const hk = p.kelly || 0;
       const score = Math.min(10, Math.max(5, Math.round((hk - 0.015) / 0.135 * 5) + 5));
-      const pick = { match: p.match, league: p.league, label: p.label, odd: p.odd, prob: p.prob, units: p.units, edge: p.edge, score, kickoff: p.kickoff, scanType: p.scanType, bookie: p.bookie, sport: p.sport || 'football' };
+      const pick = { match: p.match, league: p.league, label: p.label, odd: p.odd, prob: p.prob, units: p.units, edge: p.edge, score, kickoff: p.kickoff, scanType: p.scanType, bookie: p.bookie, sport: p.sport || 'football', audit: p.audit || null };
       if (isAdmin) { pick.reason = p.reason; pick.kelly = p.kelly; pick.ep = p.ep; pick.strength = p.strength; pick.expectedEur = p.expectedEur; pick.signals = p.signals || []; }
       return pick;
     });
@@ -8633,7 +8633,7 @@ app.get('/api/potd', requireAdmin, async (req, res) => {
 // Scan history · laatste N scans met picks
 // SECURITY: model-internals (reason, kelly, ep, strength, expectedEur, signals, scanType)
 // alleen voor admin; non-admin krijgen public-safe veldset zodat IP niet lekt.
-const PUBLIC_PICK_FIELDS = ['match', 'league', 'label', 'odd', 'units', 'prob', 'edge', 'score', 'kickoff', 'bookie', 'sport', 'selected'];
+const PUBLIC_PICK_FIELDS = ['match', 'league', 'label', 'odd', 'units', 'prob', 'edge', 'score', 'kickoff', 'bookie', 'sport', 'selected', 'audit'];
 function safePick(p, isAdmin) {
   if (isAdmin) return p;
   const out = {};

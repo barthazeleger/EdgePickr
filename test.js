@@ -156,14 +156,15 @@ test('kelly scales with half-kelly fraction', () => {
 // ── Unit Sizing ──────────────────────────────────────────────────────────────
 console.log('\n  Unit Sizing:');
 
-test('hk > 0.10 = 2.0U (raw Kelly > 20%)', () => {
-  assert.strictEqual(kellyToUnits(0.11), '2.0U');
+test('hk > 0.11 = 2.0U (score 9+, v10.8.19 drempel)', () => {
+  assert.strictEqual(kellyToUnits(0.12), '2.0U');
   assert.strictEqual(kellyToUnits(0.20), '2.0U');
 });
 
-test('hk 0.07-0.10 = 1.5U (raw Kelly 14-20%)', () => {
+test('hk 0.07-0.11 = 1.5U (score 8 bucket, incl. voorheen-2.0U zone 0.10-0.11)', () => {
   assert.strictEqual(kellyToUnits(0.08), '1.5U');
   assert.strictEqual(kellyToUnits(0.10), '1.5U');
+  assert.strictEqual(kellyToUnits(0.11), '1.5U');
 });
 
 test('hk 0.05-0.07 = 1.0U (raw Kelly 10-14%)', () => {

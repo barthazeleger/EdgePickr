@@ -2,6 +2,12 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.8.19] - 2026-04-16
+
+### Fixed
+- **Score 8/10 kon 2.0U stake krijgen** (mismatch stake-tier vs score-tier). `kellyToUnits` had 2.0U-drempel bij `hk > 0.10`, maar score 9 begint pas bij `hk ≥ 0.1095`. Dus hk=0.105 → score 8 + 2.0U. Counterintuïtief en niet aligned met de doc-belofte "score 9+ → 2.0U". Drempel verhoogd naar `hk > 0.11` zodat 2.0U altijd vraagt om score 9+. Tests aangepast: 0.10 en 0.11 → 1.5U (was 2.0U bij 0.11).
+- **Audit-regel ontbrak in live scan-stream**. `safePicks` in runFullScan stripte `p.audit` omdat hij specifieke velden kopieerde. Live emit leverde daardoor picks zonder audit-data — pas na refresh (history-pad) werd audit zichtbaar. Fix: `audit: p.audit || null` meegenomen in safePicks object. `PUBLIC_PICK_FIELDS` uitgebreid met `'audit'` zodat ook non-admin users audit zouden kunnen zien.
+
 ## [10.8.18] - 2026-04-16
 
 ### Fixed
