@@ -13,7 +13,7 @@ const {
   pitcherAdjustment, shotsDifferentialAdjustment, recomputeWl,
   NHL_OT_HOME_SHARE, MODEL_MARKET_DIVERGENCE_THRESHOLD,
   bayesSmooth, hierarchicalMultiplier, HIER_CALIB_PRIOR, HIER_CALIB_MIN_N, HIER_CALIB_K,
-  residualModelDelta, residualModelActive, RESIDUAL_MIN_TRAINING_PICKS,
+  residualModelDelta, residualModelActive, RESIDUAL_MIN_TRAINING_PICKS, summarizeSignalMetrics,
 } = modelMath;
 
 // Voor tests die nog factorial/poissonProb (oude naam) nodig hebben; wrappers via lib.
@@ -1779,6 +1779,30 @@ test('hierarchicalMultiplier: child met weinig data smoothed naar parent', () =>
   });
   // League smoothed naar market (1.20), zou rond 1.15-1.18 moeten zijn
   assert.ok(r > 1.10 && r < 1.22, `r=${r} should be smoothed toward market`);
+});
+
+test('summarizeSignalMetrics: corrigeert signaal voor negatieve markt-bias', () => {
+  const out = summarizeSignalMetrics([
+    { marketKey: 'football_home', clvPct: -2.0, signalNames: ['travel_fade'] },
+    { marketKey: 'football_home', clvPct: -1.0, signalNames: ['travel_fade'] },
+    { marketKey: 'football_home', clvPct: -3.0, signalNames: [] },
+    { marketKey: 'football_home', clvPct: -2.0, signalNames: [] },
+  ], { marketPriorK: 0, signalPriorK: 0 });
+  assert.ok(out.signals.travel_fade, 'signal summary should exist');
+  assert.strictEqual(+out.markets.football_home.baselineClv.toFixed(2), -2.00);
+  assert.strictEqual(+out.signals.travel_fade.avgClv.toFixed(2), -1.50);
+  assert.strictEqual(+out.signals.travel_fade.avgExcessClv.toFixed(2), 0.50);
+});
+
+test('summarizeSignalMetrics: kleine samples worden teruggeshrinkt', () => {
+  const out = summarizeSignalMetrics([
+    { marketKey: 'football_over', clvPct: 4.0, signalNames: ['weather_over'] },
+    { marketKey: 'football_over', clvPct: 0.0, signalNames: [] },
+  ], { marketPriorK: 0, signalPriorK: 9 });
+  const raw = out.signals.weather_over.avgExcessClv;
+  const shrunk = out.signals.weather_over.shrunkExcessClv;
+  assert.ok(raw > 0, 'raw excess should be positive');
+  assert.ok(shrunk > 0 && shrunk < raw, `shrunk=${shrunk}, raw=${raw}`);
 });
 
 test('residualModelDelta: zonder coefficients → 0 (skeleton)', () => {

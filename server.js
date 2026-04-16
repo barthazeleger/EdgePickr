@@ -215,7 +215,7 @@ const {
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck,
   normalizeTeamName, teamMatchScore, normalizeSport,
   detectMarket, calcKelly, kellyToUnits, kellyScore, epBucketKey,
-  pitcherAdjustment, shotsDifferentialAdjustment, recomputeWl,
+  pitcherAdjustment, shotsDifferentialAdjustment, recomputeWl, summarizeSignalMetrics,
 } = modelMath;
 
 // ── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -555,7 +555,7 @@ async function saveCalib(c) {
 
 // detectMarket() komt uit lib/model-math.js
 
-function updateCalibration(bet, userId = null) {
+async function updateCalibration(bet, userId = null) {
   if (!bet || !['W','L'].includes(bet.uitkomst)) return;
   // Model alleen trainen op admin data (voorkomt vervuiling door andere users)
   if (userId) {
@@ -668,7 +668,8 @@ function updateCalibration(bet, userId = null) {
   // ── Milestone checks ────────────────────────────────────────────────────
   const milestones = [10, 25, 50, 100, 200];
   if (milestones.includes(c.totalSettled)) {
-    const roi = c.totalProfit / Math.max(1, c.totalSettled * UNIT_EUR) * 100;
+    const money = await getUserMoneySettings(userId);
+    const roi = c.totalProfit / Math.max(1, c.totalSettled * money.unitEur) * 100;
     const wr = c.totalWins / c.totalSettled * 100;
     const entry = {
       date: new Date().toISOString(), type: 'milestone',
@@ -677,7 +678,7 @@ function updateCalibration(bet, userId = null) {
     c.modelLog = [entry, ...(c.modelLog || [])].slice(0, 50);
     let msg = `🏆 MILESTONE: ${c.totalSettled} BETS\n📊 Win rate: ${wr.toFixed(0)}%\n💰 ROI: ${roi.toFixed(1)}%\n💵 P/L: €${c.totalProfit.toFixed(2)}`;
     if (c.totalSettled === 50 && roi > 10) {
-      msg += `\n\n✅ ROI > 10% na 50 bets · overweeg unit verhoging naar €20`;
+      msg += `\n\n✅ ROI > 10% na 50 bets · overweeg unit verhoging naar €${Math.round(money.unitEur * 1.5)}`;
     } else if (c.totalSettled === 50 && roi < 0) {
       msg += `\n\n⚠️ Negatieve ROI · model review aanbevolen. Check signal attribution.`;
     }
@@ -753,7 +754,7 @@ async function evaluateKellyAutoStepup() {
   let recentBets;
   try {
     const r = await supabase.from('bets')
-      .select('clv,wl,inzet,uitkomst')
+      .select('clv_pct,wl,inzet,uitkomst')
       .in('uitkomst', ['W','L'])
       .order('datum', { ascending: false })
       .limit(KELLY_STEPUP_RECENT_WINDOW);
@@ -765,7 +766,7 @@ async function evaluateKellyAutoStepup() {
   if (recentBets.length < KELLY_STEPUP_RECENT_WINDOW) {
     return { stepped: false, reason: 'insufficient_recent_bets' };
   }
-  const clvVals = recentBets.map(b => parseFloat(b.clv)).filter(v => isFinite(v));
+  const clvVals = recentBets.map(b => parseFloat(b.clv_pct)).filter(v => isFinite(v));
   const avgClv = clvVals.length ? clvVals.reduce((a,b) => a+b, 0) / clvVals.length : null;
   const totalStake = recentBets.reduce((a,b) => a + (parseFloat(b.inzet) || 0), 0);
   const totalPnl   = recentBets.reduce((a,b) => a + (parseFloat(b.wl)    || 0), 0);
@@ -820,49 +821,44 @@ async function autoTuneSignalsByClv() {
     const all = (bets || []).filter(b => typeof b.clv_pct === 'number' && !isNaN(b.clv_pct) && b.signals);
     if (all.length < 30) return { tuned: 0, adjustments: [], note: 'te weinig CLV data (<30)' };
 
-    const signalStats = {}; // signalName → { n, sumClv, posClv }
-    for (const b of all) {
-      let sigs;
-      try { sigs = typeof b.signals === 'string' ? JSON.parse(b.signals) : b.signals; } catch { continue; }
-      if (!Array.isArray(sigs)) continue;
-      for (const sig of sigs) {
-        const name = String(sig).split(':')[0];
-        if (!name) continue;
-        if (!signalStats[name]) signalStats[name] = { n: 0, sumClv: 0, posClv: 0 };
-        signalStats[name].n++;
-        signalStats[name].sumClv += b.clv_pct;
-        if (b.clv_pct > 0) signalStats[name].posClv++;
-      }
-    }
+    const signalStats = summarizeSignalMetrics(all.map(b => ({
+      marketKey: `${normalizeSport(b.sport || 'football')}_${detectMarket(b.markt || 'other')}`,
+      clvPct: b.clv_pct,
+      signalNames: parseBetSignals(b.signals).map(s => String(s).split(':')[0]).filter(Boolean),
+    }))).signals;
 
     const weights = loadSignalWeights();
     const adjustments = [];
     let tuned = 0, muted = 0;
     for (const [name, s] of Object.entries(signalStats)) {
       if (s.n < 20) continue;
-      const avgClv = s.sumClv / s.n;
+      const avgClv = s.avgClv;
+      const edgeClv = s.shrunkExcessClv;
       const old = weights[name] !== undefined ? weights[name] : 1.0;
       let newW = old;
       let reason = null;
       // KILL-SWITCH: structureel negatieve CLV met genoeg samples → mute
       // (alleen als operator signal_auto_kill_enabled = true)
-      if (muteAllowed && s.n >= SIGNAL_KILL_MIN_N && avgClv <= SIGNAL_KILL_CLV_PCT) {
+      if (muteAllowed && s.n >= SIGNAL_KILL_MIN_N && edgeClv <= -1.5 && avgClv <= -0.5) {
         newW = 0;
-        reason = `auto_disabled (avg_clv ${avgClv.toFixed(2)}% over ${s.n} bets)`;
+        reason = `auto_disabled (edge_clv ${edgeClv.toFixed(2)}%, raw ${avgClv.toFixed(2)}% over ${s.n} bets)`;
         muted++;
-      } else if (old === 0 && s.n >= SIGNAL_KILL_MIN_N && avgClv > 0) {
+      } else if (old === 0 && s.n >= SIGNAL_KILL_MIN_N && edgeClv >= 0.75 && avgClv > 0) {
         // AUTO-PROMOTE: signal stond op 0 (logged-only of gemute) maar bewijst nu edge → activeren
         newW = 0.5;
-        reason = `auto_promoted (avg_clv +${avgClv.toFixed(2)}% over ${s.n} bets · weight 0 → 0.5)`;
-      } else if (avgClv < -2) newW = Math.max(0.3, old * 0.92);
-      else if (avgClv > 2) newW = Math.min(1.5, old * 1.05);
-      else if (avgClv < -0.5) newW = Math.max(0.3, old * 0.97);
-      else if (avgClv > 0.5) newW = Math.min(1.5, old * 1.02);
+        reason = `auto_promoted (edge_clv +${edgeClv.toFixed(2)}%, raw +${avgClv.toFixed(2)}% over ${s.n} bets · weight 0 → 0.5)`;
+      } else if (edgeClv < -1.0) newW = Math.max(0.3, old * 0.92);
+      else if (edgeClv > 1.0) newW = Math.min(1.5, old * 1.05);
+      else if (edgeClv < -0.25) newW = Math.max(0.3, old * 0.97);
+      else if (edgeClv > 0.25) newW = Math.min(1.5, old * 1.02);
       else newW = old * 0.99 + 0.01;
 
       if (Math.abs(newW - old) >= 0.02 || reason) {
         weights[name] = +newW.toFixed(3);
-        adjustments.push({ name, old: +old.toFixed(3), new: +newW.toFixed(3), avgClv: +avgClv.toFixed(2), n: s.n, reason });
+        adjustments.push({
+          name, old: +old.toFixed(3), new: +newW.toFixed(3),
+          avgClv: +avgClv.toFixed(2), edgeClv: +edgeClv.toFixed(2), n: s.n, reason
+        });
         tuned++;
       }
     }
@@ -6803,13 +6799,14 @@ async function updateBetOutcome(id, uitkomst, userId = null) {
   if (!row) return;
   const odds = row.odds || 0;
   const units = row.units || 0;
-  const inzet = row.inzet || +(units * UNIT_EUR).toFixed(2);
+  const userUnitEur = await getUserUnitEur(userId);
+  const inzet = row.inzet != null ? row.inzet : +(units * userUnitEur).toFixed(2);
   const wl = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : uitkomst === 'L' ? -inzet : 0;
   let updateQuery = supabase.from('bets').update({ uitkomst, wl }).eq('bet_id', id);
   if (userId) updateQuery = updateQuery.eq('user_id', userId);
   await updateQuery;
-  updateCalibration({ datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
-                      odds, units, uitkomst, wl });
+  await updateCalibration({ datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
+                            odds, units, uitkomst, wl }, userId);
 }
 
 async function deleteBet(id, userId = null) {
@@ -9627,38 +9624,32 @@ app.post('/api/admin/backfill-signals', requireAdmin, async (req, res) => {
 app.get('/api/admin/signal-performance', requireAdmin, async (req, res) => {
   try {
     const { data: bets, error } = await supabase.from('bets')
-      .select('signals, clv_pct').not('clv_pct', 'is', null)
+      .select('signals, clv_pct, sport, markt').not('clv_pct', 'is', null)
       .limit(10000);
     if (error) return res.status(500).json({ error: error.message });
 
     const weights = loadSignalWeights();
-    const signalStats = {};
-    for (const b of (bets || [])) {
-      if (typeof b.clv_pct !== 'number' || isNaN(b.clv_pct)) continue;
-      let sigs;
-      sigs = parseBetSignals(b.signals);
-      if (!sigs.length) continue;
-      for (const s of sigs) {
-        const name = String(s || '').split(':')[0];
-        if (!name) continue;
-        if (!signalStats[name]) signalStats[name] = { n: 0, sumClv: 0, posN: 0 };
-        signalStats[name].n++;
-        signalStats[name].sumClv += b.clv_pct;
-        if (b.clv_pct > 0) signalStats[name].posN++;
-      }
-    }
+    const signalStats = summarizeSignalMetrics((bets || []).map(b => ({
+      marketKey: `${normalizeSport(b.sport || 'football')}_${detectMarket(b.markt || 'other')}`,
+      clvPct: b.clv_pct,
+      signalNames: parseBetSignals(b.signals).map(s => String(s || '').split(':')[0]).filter(Boolean),
+    }))).signals;
 
     const rows = Object.entries(signalStats).map(([name, s]) => {
-      const avgClv = +(s.sumClv / s.n).toFixed(2);
-      const posPct = +(s.posN / s.n * 100).toFixed(1);
+      const avgClv = +(s.avgClv).toFixed(2);
+      const edgeClv = +(s.shrunkExcessClv).toFixed(2);
+      const posPct = +(s.posClvRate * 100).toFixed(1);
       const weight = weights[name] !== undefined ? weights[name] : 0;
       let status = 'logging';
-      if (weight === 0 && s.n >= 50 && avgClv > 0) status = 'auto_promotable';
-      else if (weight === 0 && s.n >= 20 && avgClv > 0) status = 'logging_positive';
+      if (weight === 0 && s.n >= 50 && edgeClv >= 0.75 && avgClv > 0) status = 'auto_promotable';
+      else if (weight === 0 && s.n >= 20 && edgeClv > 0) status = 'logging_positive';
       else if (weight === 0) status = 'logging';
       else if (weight > 0) status = 'active';
-      if (s.n >= 50 && avgClv <= -3) status = 'mute_candidate';
-      return { name, n: s.n, avgClv, posCLV_pct: posPct, weight: +(weight.toFixed ? weight.toFixed(3) : weight), status };
+      if (s.n >= 50 && edgeClv <= -1.5 && avgClv <= -0.5) status = 'mute_candidate';
+      return {
+        name, n: s.n, avgClv, edgeClv, posCLV_pct: posPct,
+        weight: +(weight.toFixed ? weight.toFixed(3) : weight), status
+      };
     }).sort((a, b) => b.n - a.n);
 
     res.json({
