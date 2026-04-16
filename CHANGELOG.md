@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.8] - 2026-04-16
+
+### Added
+- **[claude] `bets.unit_at_time` voor point-in-time correctness** (sectie 14.1 ronde 1 actie + sectie 6 Bouwvolgorde fundament 1). Bij elke bet wordt nu de unit-grootte (€) op moment van placement opgeslagen. Eerder dat ontbrak; CLV/ROI-berekeningen deelden alle historische `wl` door de huidige unit, wat na een unit-step-up alle historie retroactief vervormde. Migratie: `docs/migrations-archive/v10.10.7_unit_at_time.sql` (additive `ALTER TABLE bets ADD COLUMN IF NOT EXISTS unit_at_time NUMERIC`).
+- **[claude] Schema-tolerant insert met drie tiers** in `writeBet` (`lib/db.js` + `server.js`). Tier 1: full payload (v10.10.7+). Tier 2: zonder `fixture_id`. Tier 3: zonder `unit_at_time`. Render-deploys op pre-migratie schemas blijven werken zonder panic.
+- **[claude] +6 regressietests** voor `recomputeWl` met `unitAtTime`, `calcStats` per-bet unit-split (winU/lossU/legacy fallback), schema-fallback drie-tier patroon, en payload-shape consistentie.
+
+### Changed
+- **[claude] `lib/db.js` `calcStats` rekent winU/lossU/netUnits per bet** (`b.unitAtTime ?? unitEur`) i.p.v. wlEur door één unit te delen. Hetzelfde patroon toegepast op `server.js` `calcStats` (de duplicate). TODO-comment over unit_at_time-proxy is hiermee opgelost.
+- **[claude] `lib/model-math.js` `recomputeWl` honoreert `row.unitAtTime`** voor settled-bet hervorming na odds/units edits — historische units worden niet meer overschreven door huidige unit.
+- **[claude] `lib/db.js` + `server.js` `readBets` mapt `unit_at_time` naar `bet.unitAtTime`** zodat alle downstream-consumers point-in-time correct rekenen. Legacy NULL → fallback huidige user.unitEur.
+- **[codex] Odds-parser cluster uit `server.js` gehaald naar `lib/odds-parser.js`**. `parseGameOdds`, `fairProbs2Way`, `setPreferredBookies`, `bestFromArr`, `bestSpreadPick` en `buildSpreadFairProbFns` leven nu in één gedeelde module. Dat maakt de scanner-core testbaarder en haalt een groot odds/ranking-monoliet uit `server.js`.
+- **[codex] `server.js` en `lib/picks.js` gebruiken nu dezelfde canonieke odds-parser** in plaats van parallelle implementaties. Dat sluit drift-risico tussen live scanner en gedeelde libs.
+
+### Docs
+- **[claude] Doctrine "Laatste update" bijgewerkt naar v10.10.8**.
+
 ## [10.10.6] - 2026-04-16
 
 ### Changed

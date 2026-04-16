@@ -14,6 +14,14 @@ const modelMath = require('./lib/model-math');
 const appMeta = require('./lib/app-meta');
 const pkg = require('./package.json');
 const { createCalibrationStore } = require('./lib/calibration-store');
+const {
+  fairProbs2Way,
+  parseGameOdds,
+  setPreferredBookies,
+  bestFromArr,
+  bestSpreadPick,
+  buildSpreadFairProbFns,
+} = require('./lib/odds-parser');
 const { buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
@@ -1625,6 +1633,102 @@ test('recomputeWl: ontbrekende inzet valt terug op units * unitEur', () => {
   assert.strictEqual(wl, 25, '1U×€25×(2.0-1) = €25');
 });
 
+// v10.10.7: unit_at_time per bet
+test('recomputeWl: row.unitAtTime krijgt voorrang op meegegeven unitEur', () => {
+  // Bet geplaatst toen unit €10 was; huidige unit is €25.
+  const row = { uitkomst: 'W', odds: 2.0, units: 1.0, unitAtTime: 10 };
+  const wl = recomputeWl(row, 25);
+  assert.strictEqual(wl, 10, 'historische unit €10 wint van huidige €25 (1U×€10×1)');
+});
+
+test('recomputeWl: row zonder unitAtTime gebruikt fallback unitEur', () => {
+  const row = { uitkomst: 'L', odds: 2.0, units: 1.0 };
+  const wl = recomputeWl(row, 25);
+  assert.strictEqual(wl, -25, 'legacy row zonder unitAtTime → fallback €25');
+});
+
+test('calcStats per-bet unitAtTime: winU/lossU splitsen correct over verschillende units', () => {
+  // Reproductie van db.js calcStats per-bet logic.
+  const unitFor = (b, unitEur) => {
+    const ue = b && b.unitAtTime;
+    return Number.isFinite(ue) && ue > 0 ? ue : unitEur;
+  };
+  const bets = [
+    { uitkomst: 'W', wl: 10, unitAtTime: 10 },   // 1U winst @ €10
+    { uitkomst: 'W', wl: 50, unitAtTime: 25 },   // 2U winst @ €25
+    { uitkomst: 'L', wl: -10, unitAtTime: 10 },  // 1U verlies @ €10
+    { uitkomst: 'L', wl: -25, unitAtTime: 25 },  // 1U verlies @ €25
+  ];
+  const winU  = +bets.filter(b=>b.uitkomst==='W').reduce((s,b)=>{const ue=unitFor(b,25);return ue>0?s+(b.wl/ue):s;},0).toFixed(2);
+  const lossU = +bets.filter(b=>b.uitkomst==='L').reduce((s,b)=>{const ue=unitFor(b,25);return ue>0?s+(b.wl/ue):s;},0).toFixed(2);
+  assert.strictEqual(winU, 3, '1U + 2U = 3U winst (per-bet division, niet 60/25=2.4)');
+  assert.strictEqual(lossU, -2, '-1U + -1U = -2U verlies');
+});
+
+test('calcStats per-bet unitAtTime: legacy row valt terug op huidige unitEur', () => {
+  const unitFor = (b, unitEur) => {
+    const ue = b && b.unitAtTime;
+    return Number.isFinite(ue) && ue > 0 ? ue : unitEur;
+  };
+  // Mengvorm: 1 bet met unitAtTime, 1 zonder (legacy).
+  const bets = [
+    { uitkomst: 'W', wl: 10, unitAtTime: 10 },
+    { uitkomst: 'W', wl: 25 }, // legacy → fallback huidige €25
+  ];
+  const winU = +bets.filter(b=>b.uitkomst==='W').reduce((s,b)=>{const ue=unitFor(b,25);return ue>0?s+(b.wl/ue):s;},0).toFixed(2);
+  assert.strictEqual(winU, 2, '1U (€10 historisch) + 1U (€25 fallback) = 2U');
+});
+
+test('writeBet schema-fallback: drie tiers (full → no-fixture → no-unit_at_time)', async () => {
+  // Reproductie van het schema-tolerant insert patroon uit lib/db.js + server.js.
+  // Tier 1 faalt op fixture_id, Tier 2 faalt op unit_at_time, Tier 3 slaagt.
+  const inserts = [];
+  let tier = 0;
+  const fakeSupabase = {
+    from: () => ({
+      insert: (payload) => {
+        inserts.push(payload);
+        tier++;
+        if (tier === 1) return Promise.resolve({ error: { message: 'column "fixture_id" does not exist' } });
+        if (tier === 2) return Promise.resolve({ error: { message: 'column "unit_at_time" does not exist' } });
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  const isColumnError = (msg) => (msg || '').toLowerCase().includes('column');
+  const safeInsert = async (payload) => {
+    try { const { error } = await fakeSupabase.from('bets').insert(payload); return error || null; }
+    catch (e) { return { message: e.message }; }
+  };
+  const base = { bet_id: 1, odds: 2.0, units: 1.0, inzet: 25, unit_at_time: 25 };
+  let err = await safeInsert({ ...base, fixture_id: 999 });
+  if (err && isColumnError(err.message)) err = await safeInsert(base);
+  if (err && isColumnError(err.message)) {
+    const { unit_at_time, ...legacy } = base;
+    err = await safeInsert(legacy);
+  }
+  assert.strictEqual(err, null, 'derde tier slaagt');
+  assert.strictEqual(inserts.length, 3, 'drie pogingen');
+  assert.ok('fixture_id' in inserts[0], 'tier 1 had fixture_id');
+  assert.ok('unit_at_time' in inserts[1], 'tier 2 had unit_at_time, geen fixture_id');
+  assert.ok(!('fixture_id' in inserts[1]));
+  assert.ok(!('unit_at_time' in inserts[2]), 'tier 3 had geen unit_at_time meer');
+});
+
+test('writeBet payload-shape: unit_at_time wordt meegegeven gelijk aan inzet-unit', () => {
+  // Reproductie van db.js writeBet base-construction.
+  const bet = { id: 1, odds: 2.0, units: 1.0, uitkomst: 'Open' };
+  const ue = 25;
+  const inzet = +(bet.units * ue).toFixed(2);
+  const base = {
+    bet_id: bet.id, odds: bet.odds, units: bet.units, inzet,
+    uitkomst: bet.uitkomst,
+    unit_at_time: ue,
+  };
+  assert.strictEqual(base.unit_at_time, ue);
+  assert.strictEqual(base.inzet, base.units * base.unit_at_time);
+});
+
 // 2FA status check mirror
 function authGateAfterCode(user) {
   if (!user) return { ok: false, code: 401, error: 'Verificatie mislukt' };
@@ -2096,7 +2200,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.6');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.8');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3337,6 +3441,108 @@ test('parseGameOdds ML: dedupe pakt HOOGSTE prijs per bookie (geen alt-lijn risi
   const best = deduped.reduce((b, o) => o.price > b.price ? o : b, { price: 0 });
   assert.strictEqual(best.bookie, 'Bet365');
   assert.strictEqual(best.price, 1.90);
+});
+
+test('odds-parser: parseGameOdds dedupet moneyline hoog en spread laag per bookie', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [
+      {
+        name: 'Bet365',
+        bets: [
+          {
+            id: 1,
+            name: 'Match Winner',
+            values: [
+              { value: 'Home', odd: '1.88' },
+              { value: 'Away', odd: '2.02' },
+            ],
+          },
+          {
+            id: 99,
+            name: 'Moneyline',
+            values: [
+              { value: 'Home', odd: '1.90' },
+              { value: 'Away', odd: '2.00' },
+            ],
+          },
+          {
+            id: 2,
+            name: 'Spread',
+            values: [
+              { value: 'Home -1.5', odd: '2.55' },
+              { value: 'Home -1.5', odd: '2.10' },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'Unibet',
+        bets: [
+          {
+            id: 1,
+            name: 'Match Winner',
+            values: [
+              { value: 'Home', odd: '1.89' },
+              { value: 'Away', odd: '2.03' },
+            ],
+          },
+          {
+            id: 2,
+            name: 'Spread',
+            values: [
+              { value: 'Home -1.5', odd: '2.17' },
+            ],
+          },
+        ],
+      },
+    ],
+  }], 'Ajax', 'PSV');
+  const bet365Ml = parsed.moneyline.find(o => o.bookie === 'Bet365' && o.side === 'home');
+  const bet365Spread = parsed.spreads.find(o => o.bookie === 'Bet365' && o.side === 'home');
+  assert.strictEqual(bet365Ml.price, 1.90);
+  assert.strictEqual(bet365Spread.price, 2.10);
+});
+
+test('odds-parser: bestFromArr respecteert preferredBookies state', () => {
+  setPreferredBookies(['unibet']);
+  const best = bestFromArr([
+    { price: 2.2, bookie: 'Bet365' },
+    { price: 2.05, bookie: 'Unibet' },
+  ]);
+  assert.strictEqual(best.bookie, 'Unibet');
+  assert.strictEqual(best.price, 2.05);
+  setPreferredBookies(null);
+});
+
+test('odds-parser: bestSpreadPick gebruikt preferred state zonder picks te killen', () => {
+  setPreferredBookies(['bet365', 'unibet']);
+  const result = bestSpreadPick([
+    { side: 'home', point: -1.5, price: 2.10, bookie: 'Bet365' },
+    { side: 'home', point: -1.5, price: 2.55, bookie: 'Bet365' },
+    { side: 'home', point: -1.5, price: 2.17, bookie: 'Unibet' },
+  ], 0.47, 0.01);
+  assert.ok(result);
+  assert.strictEqual(result.bookie, 'Unibet');
+  assert.strictEqual(result.price, 2.17);
+  setPreferredBookies(null);
+});
+
+test('odds-parser: buildSpreadFairProbFns ondersteunt opposite-point pairing', () => {
+  const homeSpr = [{ side: 'home', point: -7.5, price: 1.95, bookie: 'Bet365' }];
+  const awaySpr = [{ side: 'away', point: 7.5, price: 1.95, bookie: 'Unibet' }];
+  const { homeFn, awayFn } = buildSpreadFairProbFns(homeSpr, awaySpr, 0.5, 0.5);
+  assert.ok(homeFn(-7.5) > 0.45 && homeFn(-7.5) < 0.55);
+  assert.ok(awayFn(7.5) > 0.45 && awayFn(7.5) < 0.55);
+});
+
+test('odds-parser: fairProbs2Way devigt home/away odds', () => {
+  const fair = fairProbs2Way([
+    { side: 'home', price: 1.8 },
+    { side: 'away', price: 2.0 },
+  ]);
+  assert.ok(fair);
+  assert.ok(Math.abs(fair.home + fair.away - 1) < 0.0001);
+  assert.ok(fair.home > fair.away);
 });
 
 test('modal recUnits: bij odds-daling daalt aanbevolen units', () => {

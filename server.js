@@ -9,6 +9,15 @@ const bcrypt         = require('bcryptjs');
 const webpush        = require('web-push');
 const { APP_VERSION } = require('./lib/app-meta');
 const { createCalibrationStore } = require('./lib/calibration-store');
+const {
+  fairProbs2Way,
+  parseGameOdds,
+  setPreferredBookies,
+  getPreferredBookies,
+  bestFromArr,
+  bestSpreadPick,
+  buildSpreadFairProbFns,
+} = require('./lib/odds-parser');
 const { buildPickFactory: createPickFactory } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
@@ -1451,7 +1460,7 @@ function fairProbs(bookmakers, homeTeam, awayTeam) {
 // Beste odds voor een uitkomst over alle bookmakers
 function bestOdds(bookmakers, marketKey, outcomeName) {
   let best = { price: 0, bookie: '' };
-  const preferred = _preferredBookiesLower;
+  const preferred = getPreferredBookies();
   for (const bk of bookmakers) {
     // Respect preferredBookies filter (consensus blijft uit ALLE bookies, pick-odds alleen uit preferred)
     if (preferred) {
@@ -2226,256 +2235,6 @@ function calcGoalProbs(homeAttack, homeDefense, awayAttack, awayDefense, leagueA
 // BASKETBALL SCANNER · api-sports.io basketball
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// No-vig fair probabilities for 2-way markets (basketball/hockey · no draw)
-function fairProbs2Way(oddsArr) {
-  // oddsArr = [{ name, price }, ...] for home + away
-  if (!oddsArr || oddsArr.length < 2) return null;
-  const home = oddsArr.find(o => o.side === 'home');
-  const away = oddsArr.find(o => o.side === 'away');
-  if (!home || !away || home.price < 1.01 || away.price < 1.01) return null;
-  const totalIP = 1/home.price + 1/away.price;
-  return { home: (1/home.price)/totalIP, away: (1/away.price)/totalIP };
-}
-
-// Parse basketball/hockey odds from api-sports response
-// Extended: also extracts 1st-half, 1st-period, NRFI, odd/even markets
-// Nieuw: threeWay (Home/Draw/Away 60-min regulation) voor hockey 3-weg ML
-function parseGameOdds(oddsResp, homeTeam, awayTeam) {
-  const bookmakers = oddsResp?.[0]?.bookmakers || oddsResp?.bookmakers || [];
-  if (!bookmakers.length) return { moneyline: [], totals: [], spreads: [], halfML: [], halfTotals: [], halfSpreads: [], nrfi: [], oddEven: [], threeWay: [], teamTotals: [], doubleChance: [], dnb: [] };
-
-  const ml = [], tots = [], spr = [];
-  const halfML = [], halfTotals = [], halfSpreads = [];
-  const nrfi = [], oddEven = [];
-  const threeWay = [];
-  const teamTotals = []; // { team: 'home'|'away', side: 'over'|'under', point, price, bookie }
-  const doubleChance = []; // { side: 'HX'|'X2'|'12', price, bookie }
-  const dnb = []; // { side: 'home'|'away', price, bookie }
-  for (const bk of bookmakers) {
-    const bkName = bk.name || bk.bookmaker?.name || 'Unknown';
-    for (const bet of (bk.bets || [])) {
-      const betId = bet.id;
-      const betName = (bet.name || '').toLowerCase();
-      // Moneyline — 2-way entries (exact 2 values Home/Away, geen handicap).
-      // v10.7.23: niet alleen bet.id===1 gebruiken, ook name-based als backup,
-      // omdat sommige bookies bij api-sports een andere bet.id krijgen maar
-      // wel een Match Winner markt hebben (bv. Padres: Unibet had id=1, Bet365
-      // onder een andere id → werd gemist waardoor user een suboptimale prijs zag).
-      const mlNames = ['match winner','home/away','winner','match odds','3way result','moneyline','money line'];
-      const isMlByName = mlNames.includes(betName);
-      if (betId === 1 || isMlByName) {
-        const vals = bet.values || [];
-        const names = vals.map(v => String(v.value || '').trim()).sort().join('|');
-        if (vals.length === 2 && names === 'Away|Home') {
-          for (const v of vals) {
-            const side = v.value === 'Home' ? 'home' : 'away';
-            ml.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
-          }
-        }
-      }
-      // 3-way markt (Home/Draw/Away) — vaak label "Home/Away (Regular Time)", "3Way Result",
-      // "Full Time Result" of "1X2". Detecteer op 3 values ongeacht bet id.
-      const vals3 = (bet.values || []).filter(v => ['Home','Draw','Away','1','X','2'].includes(String(v.value ?? '').trim()));
-      if (vals3.length === 3 && betId !== 1) {
-        for (const v of vals3) {
-          const s = String(v.value ?? '').trim();
-          const side = (s === 'Home' || s === '1') ? 'home'
-                     : (s === 'Draw' || s === 'X') ? 'draw'
-                     : (s === 'Away' || s === '2') ? 'away' : null;
-          if (side) threeWay.push({ side, price: parseFloat(v.odd) || 0, bookie: bkName });
-        }
-      }
-      // Over/Under (bet id 3 for basketball total points, id 2 for hockey)
-      if (betId === 2 || betId === 3) {
-        for (const v of (bet.values || [])) {
-          const m = (v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
-          if (m) tots.push({ side: m[1].toLowerCase(), point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
-        }
-      }
-      // Spread/Puckline (bet id 2 for basketball spread, id 3 for hockey puckline)
-      if (betId === 2 || betId === 3) {
-        for (const v of (bet.values || [])) {
-          const m = (v.value || '').match(/(Home|Away)\s*([+-][\d.]+)/i);
-          if (m) spr.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
-        }
-      }
-
-      // ── 1st Half / 1st Period markets (name-based detection) ──
-      const is1H = betName.includes('1st half') || betName.includes('first half') || betName.includes('1st period') || betName.includes('first period') || betName.includes('1st inning');
-
-      if (is1H) {
-        // 1st Half Moneyline
-        if (betName.includes('winner') || betName.includes('moneyline') || betName.includes('result')) {
-          for (const v of (bet.values || [])) {
-            const side = v.value === 'Home' ? 'home' : v.value === 'Away' ? 'away' : null;
-            if (side) halfML.push({ side, name: side === 'home' ? homeTeam : awayTeam, price: parseFloat(v.odd) || 0, bookie: bkName });
-          }
-        }
-        // 1st Half Over/Under
-        for (const v of (bet.values || [])) {
-          const m = (v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
-          if (m) halfTotals.push({ side: m[1].toLowerCase(), point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
-        }
-        // 1st Half Spread
-        for (const v of (bet.values || [])) {
-          const m = (v.value || '').match(/(Home|Away)\s*([+-][\d.]+)/i);
-          if (m) halfSpreads.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName });
-        }
-      }
-
-      // ── F5 / 1st 5 Innings (baseball) ──
-      // Pitcher-driven markt: eerste 5 innings settlement, zwaar afhankelijk van starting pitcher.
-      // api-sports bet names: "1st 5 Innings Winner" (ML), "1st 5 Innings Total" (O/U),
-      // "1st 5 Innings Run Line" (spread).
-      const isF5 = betName.includes('1st 5 inning') || betName.includes('first 5 inning') ||
-                   betName.includes('1st 5 innings') || betName.includes('f5 ');
-      if (isF5) {
-        // F5 ML: 2 of 3 values (met of zonder tie)
-        if (betName.includes('winner') || betName.includes('moneyline') || betName.includes('result')) {
-          const vals = bet.values || [];
-          const hasDraw = vals.some(v => String(v.value || '').trim() === 'Draw');
-          for (const v of vals) {
-            const val = String(v.value || '').trim();
-            const price = parseFloat(v.odd) || 0;
-            if (price <= 1.0) continue;
-            // Store apart als halfML entry met tag 'f5' in side voor downstream herkenning
-            if (val === 'Home') halfML.push({ side: 'home', name: homeTeam, price, bookie: bkName, market: 'f5', hasDraw });
-            else if (val === 'Away') halfML.push({ side: 'away', name: awayTeam, price, bookie: bkName, market: 'f5', hasDraw });
-            else if (val === 'Draw' && hasDraw) halfML.push({ side: 'draw', price, bookie: bkName, market: 'f5', hasDraw });
-          }
-        }
-        // F5 Total
-        for (const v of (bet.values || [])) {
-          const m = String(v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
-          if (m) halfTotals.push({ side: m[1].toLowerCase(), point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName, market: 'f5' });
-        }
-        // F5 Spread
-        for (const v of (bet.values || [])) {
-          const m = String(v.value || '').match(/(Home|Away)\s*([+-][\d.]+)/i);
-          if (m) halfSpreads.push({ side: m[1].toLowerCase() === 'home' ? 'home' : 'away', name: m[1].toLowerCase() === 'home' ? homeTeam : awayTeam, point: parseFloat(m[2]), price: parseFloat(v.odd) || 0, bookie: bkName, market: 'f5' });
-        }
-      }
-
-      // ── NRFI / 1st Inning scoring (baseball) ──
-      if (betName.includes('1st inning') || betName.includes('nrfi') || betName.includes('first inning')) {
-        for (const v of (bet.values || [])) {
-          const val = (v.value || '').toLowerCase();
-          // "Yes" = runs scored, "No" = no runs (NRFI)
-          if (val === 'yes' || val === 'no' || val === 'over' || val === 'under') {
-            const isNRFI = val === 'no' || val === 'under'; // NRFI = no runs
-            nrfi.push({ side: isNRFI ? 'nrfi' : 'yrfi', price: parseFloat(v.odd) || 0, bookie: bkName });
-          }
-        }
-      }
-
-      // ── Team Totals (Home/Away Team Total Goals/Points, incl. OT full-game lijn) ──
-      // Voorbeeld bet names: "Home Team Total Goals (Including OT)" of "Home Team Total Points"
-      const isTeamTotalBet = (betName.includes('home team total') || betName.includes('away team total')) &&
-        !betName.includes('1st') && !betName.includes('2nd') && !betName.includes('3rd') &&
-        !betName.includes('period') && !betName.includes('half') && !betName.includes('quarter');
-      if (isTeamTotalBet) {
-        const team = betName.includes('home') ? 'home' : 'away';
-        for (const v of (bet.values || [])) {
-          const m = String(v.value || '').match(/(Over|Under)\s+([\d.]+)/i);
-          if (m) {
-            const point = parseFloat(m[2]);
-            const price = parseFloat(v.odd) || 0;
-            if (price > 1.0 && isFinite(point)) {
-              teamTotals.push({ team, side: m[1].toLowerCase(), point, price, bookie: bkName });
-            }
-          }
-        }
-      }
-
-      // ── Double Chance (3 values: Home/Draw, Home/Away, Draw/Away) ──
-      if (betName.includes('double chance') && !betName.includes('half') && !betName.includes('period') && !betName.includes('quarter')) {
-        for (const v of (bet.values || [])) {
-          const val = String(v.value || '').trim();
-          const price = parseFloat(v.odd) || 0;
-          if (price <= 1.0) continue;
-          let side = null;
-          if (val === 'Home/Draw' || val === '1X') side = 'HX';
-          else if (val === 'Home/Away' || val === '12') side = '12';
-          else if (val === 'Draw/Away' || val === 'X2') side = 'X2';
-          if (side) doubleChance.push({ side, price, bookie: bkName });
-        }
-      }
-
-      // ── Draw No Bet (2 values: Home/Away, push op draw) ──
-      if ((betName.includes('draw no bet') || betName === 'dnb') && !betName.includes('half') && !betName.includes('period')) {
-        for (const v of (bet.values || [])) {
-          const val = String(v.value || '').trim();
-          const price = parseFloat(v.odd) || 0;
-          if (price <= 1.0) continue;
-          const side = val === 'Home' ? 'home' : val === 'Away' ? 'away' : null;
-          if (side) dnb.push({ side, price, bookie: bkName });
-        }
-      }
-
-      // ── Odd/Even total ──
-      if (betName.includes('odd/even') || betName.includes('odd or even') || betName.includes('total odd') || betName.includes('total even')) {
-        for (const v of (bet.values || [])) {
-          const val = (v.value || '').toLowerCase();
-          if (val === 'odd' || val === 'even') {
-            oddEven.push({ side: val, price: parseFloat(v.odd) || 0, bookie: bkName });
-          }
-        }
-      }
-    }
-  }
-  // KRITIEKE FIX (v10.7.11): dedupe entries per bookie+side+point met LOWEST price.
-  // api-sports levert soms meerdere entries per bookie op dezelfde (side, point)
-  // key omdat alternate lines (main + alt) onder dezelfde bet.id kunnen vallen.
-  // Zonder dedupe pakt bestFromArr de alt-line (hogere odds = strengere conditie),
-  // edge wordt vals-hoog, ep valt onder MIN_EP, pick rejected.
-  // Main line = lowest price per bookie. Toegepast op alle spread/total-achtige
-  // markten waar point bestaat.
-  // Main-line markten (spread/total): lowest price = main. Alt lines hebben
-  // hogere prijzen en moeten genegeerd. Voor ML/DC/DNB/threeWay/NRFI/oddEven
-  // geldt dat niet — daar zijn geen alt-lijnen, dus pakken we de HOOGSTE prijs
-  // om te voorkomen dat een stale/oude entry de latere betere prijs overschrijft.
-  const dedupeMainLine = (arr, keyFn) => {
-    if (!arr.length) return arr;
-    const seen = new Map();
-    for (const o of arr) {
-      const k = keyFn(o);
-      const prev = seen.get(k);
-      if (!prev || o.price < prev.price) seen.set(k, o);
-    }
-    return [...seen.values()];
-  };
-  const dedupeBestPrice = (arr, keyFn) => {
-    if (!arr.length) return arr;
-    const seen = new Map();
-    for (const o of arr) {
-      const k = keyFn(o);
-      const prev = seen.get(k);
-      if (!prev || o.price > prev.price) seen.set(k, o);
-    }
-    return [...seen.values()];
-  };
-  const kSide  = o => `${(o.bookie||'').toLowerCase()}|${o.side}`;
-  const kPoint = o => `${(o.bookie||'').toLowerCase()}|${o.side}|${o.point}`;
-  const kTeam  = o => `${(o.bookie||'').toLowerCase()}|${o.team}|${o.side}|${o.point}`;
-
-  return {
-    // Geen alt-lijnen → hoogste prijs per (bookie, side)
-    moneyline:   dedupeBestPrice(ml,           kSide),
-    halfML:      dedupeBestPrice(halfML,       kSide),
-    threeWay:    dedupeBestPrice(threeWay,     kSide),
-    doubleChance: dedupeBestPrice(doubleChance, kSide),
-    dnb:         dedupeBestPrice(dnb,          kSide),
-    nrfi:        dedupeBestPrice(nrfi,         kSide),
-    oddEven:     dedupeBestPrice(oddEven,      kSide),
-    // Alt-lijn risico → lowest per (bookie, side, point)
-    totals:      dedupeMainLine(tots,         kPoint),
-    spreads:     dedupeMainLine(spr,          kPoint),
-    halfTotals:  dedupeMainLine(halfTotals,   kPoint),
-    halfSpreads: dedupeMainLine(halfSpreads,  kPoint),
-    teamTotals:  dedupeMainLine(teamTotals,   kTeam),
-  };
-}
-
 // poisson / poissonOver / poisson3Way / devigProportional / consensus3Way /
 // deriveIncOTProbFrom3Way / modelMarketSanityCheck / NHL_OT_HOME_SHARE /
 // MODEL_MARKET_DIVERGENCE_THRESHOLD komen uit lib/model-math.js
@@ -2692,116 +2451,6 @@ async function fetchNhlTeamStats(abbrev) {
     _nhlStatsCache[abbrev] = { data: null, at: Date.now() };
     return null;
   }
-}
-
-// Scan-wide filter: alleen odds van deze bookies tellen mee voor pick generation.
-// Consensus/fair-probability blijft uit ALLE bookies berekend (markt-truth).
-let _preferredBookiesLower = null;
-function setPreferredBookies(list) {
-  if (Array.isArray(list) && list.length) {
-    _preferredBookiesLower = list.map(x => (x || '').toString().toLowerCase()).filter(Boolean);
-  } else {
-    _preferredBookiesLower = null;
-  }
-}
-
-// Groepeer spreads per point-line en return beste edge-qualifying pick.
-// Voorkomt mixing-points bug waarbij bestFromArr over ALLE points zoekt en
-// pick wordt geskipt door de maxOdds-3.8 ceiling bij extreme point-lines.
-//
-// KRITIEKE FIX (v10.7.6): pre-filter per entry op [minOdds, maxOdds] vóór
-// groeperen. Anders kan één bookie-anomalie (bv Bet365 -1.5 @ 4.50 als
-// alternate line) de hele point-group killen, waardoor Unibet's legit 2.17
-// verloren gaat. Preferred pool met meer bookies mag NOOIT picks wegwerpen
-// die bij kleiner pool wél zouden doorgaan.
-function bestSpreadPick(spreads, fairProb, minEdge, minOdds = 1.60, maxOdds = 3.8) {
-  if (!spreads || !spreads.length) return null;
-  const byPoint = {};
-  for (const s of spreads) {
-    if (!s || typeof s.price !== 'number') continue;
-    if (s.price < minOdds || s.price > maxOdds) continue;
-    const k = String(s.point);
-    (byPoint[k] = byPoint[k] || []).push(s);
-  }
-  // Dedupe per (bookie, point) met LOWEST price = main-line (alt-lines altijd hoger).
-  for (const pt of Object.keys(byPoint)) {
-    const bookieMap = {};
-    for (const s of byPoint[pt]) {
-      const bk = (s.bookie || '').toLowerCase();
-      if (!bookieMap[bk] || s.price < bookieMap[bk].price) bookieMap[bk] = s;
-    }
-    byPoint[pt] = Object.values(bookieMap);
-  }
-  let best = null;
-  for (const [pt, pool] of Object.entries(byPoint)) {
-    const top = bestFromArr(pool);
-    if (top.price <= 0) continue;
-    // fairProb kan function zijn (per-point devig) of constant (legacy)
-    const fp = typeof fairProb === 'function' ? fairProb(parseFloat(pt)) : fairProb;
-    if (!fp || fp <= 0) continue;
-    const edge = fp * top.price - 1;
-    if (edge < minEdge) continue;
-    if (!best || edge > best.edge) best = { ...top, point: parseFloat(pt), edge };
-  }
-  return best;
-}
-
-// Bouw per-point devigged cover-probability map uit paired spread-pool.
-// BELANGRIJK: api-sports gebruikt verschillende pairing-conventies per sport:
-//   - MLB/NHL: Home -1.5 pairt met Away -1.5 (zelfde point, opposite side)
-//   - NBA/NFL: Home -7.5 pairt met Away +7.5 (opposite point, opposite side)
-// Oplossing: probeer BEIDE pairings, kies die met plausibele vig (1.00-1.15).
-function buildSpreadFairProbFns(homeSpr, awaySpr, fallbackHome, fallbackAway) {
-  const groupBy = (arr, fn) => {
-    const out = {};
-    for (const s of arr || []) {
-      const k = fn(s);
-      (out[k] = out[k] || []).push(s);
-    }
-    return out;
-  };
-  const homeByPt = groupBy(homeSpr, s => s.point);
-  const awayByPt = groupBy(awaySpr, s => s.point);
-  const avgIP = arr => arr.reduce((s,o)=>s+1/o.price, 0) / arr.length;
-
-  const tryDevig = (hArr, aArr) => {
-    if (!hArr?.length || !aArr?.length) return null;
-    const avgH = avgIP(hArr);
-    const avgA = avgIP(aArr);
-    const tot = avgH + avgA;
-    if (tot > 1.00 && tot < 1.15) return { home: avgH / tot, away: avgA / tot, vig: tot - 1 };
-    return null;
-  };
-
-  const probMap = {}; // key = home-point, value = {home, away, convention}
-  for (const ptStr of Object.keys(homeByPt)) {
-    const pt = parseFloat(ptStr);
-    // MLB/NHL convention: same-point pairing
-    const samePoint = tryDevig(homeByPt[pt], awayByPt[pt]);
-    // NBA/NFL convention: opposite-point pairing
-    const oppPoint  = tryDevig(homeByPt[pt], awayByPt[-pt]);
-    // Pick whichever heeft lagere vig (= betere data)
-    let chosen;
-    if (samePoint && oppPoint) chosen = samePoint.vig <= oppPoint.vig ? samePoint : oppPoint;
-    else chosen = samePoint || oppPoint;
-    if (chosen) probMap[pt] = chosen;
-  }
-
-  return {
-    homeFn: (pt) => probMap[pt]?.home ?? fallbackHome,
-    // Away lookup probeert zelfde point (MLB) én opposite point (NBA)
-    awayFn: (pt) => probMap[pt]?.away ?? probMap[-pt]?.away ?? fallbackAway,
-  };
-}
-
-// Best odds uit parsed array; als preferredBookies is ingesteld, alleen die tellen.
-function bestFromArr(arr) {
-  let pool = arr || [];
-  if (_preferredBookiesLower && pool.length) {
-    pool = pool.filter(o => _preferredBookiesLower.some(p => (o.bookie || '').toLowerCase().includes(p)));
-  }
-  if (!pool.length) return { price: 0, bookie: '' };
-  return pool.reduce((best, o) => o.price > best.price ? { price: +o.price.toFixed(3), bookie: o.bookie } : best, { price: 0, bookie: '' });
 }
 
 async function runBasketball(emit) {
@@ -5616,11 +5265,12 @@ async function runPrematch(emit) {
 
         // Bookie filter: dynamisch via user's preferredBookies (fallback trusted set).
         // Consensus/fairProbs gebruikt BREDE pool voor markt-truth; pick-odds filtering
-        // gebeurt pas in bestFromArr via _preferredBookiesLower.
+        // gebeurt pas in bestFromArr via preferredBookies in lib/odds-parser.
         // Trusted bookies: user prefs + scherpe refs die altijd consensus versterken.
         const TRUSTED_FALLBACK = ['bet365', 'unibet', 'pinnacle', 'william hill', 'betfair', '888sport', 'marathonbet'];
-        const bkmsForConsensus = (_preferredBookiesLower?.length
-          ? Array.from(new Set([..._preferredBookiesLower, 'pinnacle', 'william hill']))
+        const preferredBookies = getPreferredBookies();
+        const bkmsForConsensus = (preferredBookies?.length
+          ? Array.from(new Set([...preferredBookies, 'pinnacle', 'william hill']))
           : TRUSTED_FALLBACK);
         const filteredBks = rawBks.filter(b =>
           bkmsForConsensus.some(name => b.name?.toLowerCase().includes(name))
@@ -6605,8 +6255,13 @@ function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
   const avgOdds   = total > 0 ? +(bets.reduce((s,b)=>s+b.odds,0)/total).toFixed(3) : 0;
   const avgUnits  = total > 0 ? +(bets.reduce((s,b)=>s+b.units,0)/total).toFixed(2) : 0;
   const strikeRate = (W+L) > 0 ? Math.round(W/(W+L)*100) : 0;
-  const winU  = +bets.filter(b=>b.uitkomst==='W').reduce((s,b)=>s+(b.wl/unitEur),0).toFixed(2);
-  const lossU = +bets.filter(b=>b.uitkomst==='L').reduce((s,b)=>s+(b.wl/unitEur),0).toFixed(2);
+  // Per-bet unit_at_time (v10.10.7) — fallback huidige unitEur voor legacy rows.
+  const unitFor = (b) => {
+    const ue = b && b.unitAtTime;
+    return Number.isFinite(ue) && ue > 0 ? ue : unitEur;
+  };
+  const winU  = +bets.filter(b=>b.uitkomst==='W').reduce((s,b)=>{ const ue = unitFor(b); return ue > 0 ? s + (b.wl/ue) : s; },0).toFixed(2);
+  const lossU = +bets.filter(b=>b.uitkomst==='L').reduce((s,b)=>{ const ue = unitFor(b); return ue > 0 ? s + (b.wl/ue) : s; },0).toFixed(2);
   // CLV stats
   const clvBets = bets.filter(b => b.clvPct !== null && b.clvPct !== undefined && !isNaN(b.clvPct));
   const avgCLV = clvBets.length > 0 ? +(clvBets.reduce((s, b) => s + b.clvPct, 0) / clvBets.length).toFixed(2) : 0;
@@ -6643,10 +6298,13 @@ function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
   const potentialLoss = +todayBets.reduce((s, b) => s + b.inzet, 0).toFixed(2);
   const todayBetsCount = todayBets.length;
 
-  // Net units: wl in euro gedeeld door unit size (huidige unitEur als proxy).
-  // Voor een precieze berekening zou unit_at_time per bet opgeslagen moeten worden;
-  // voor nu gebruiken we de huidige unit size.
-  const netUnits  = unitEur > 0 ? +(wlEur / unitEur).toFixed(2) : 0;
+  // Net units: per-bet division door unit_at_time (v10.10.7); legacy fallback
+  // huidige unitEur. Vervangt eerdere proxy die alle wl door één unit deelde.
+  const netUnits  = +bets.reduce((s, b) => {
+    if (b.uitkomst === 'Open') return s;
+    const ue = unitFor(b);
+    return ue > 0 ? s + (b.wl / ue) : s;
+  }, 0).toFixed(2);
   const netProfit = +wlEur.toFixed(2);
 
   return { total, W, L, open, wlEur: +wlEur.toFixed(2), roi: +roi.toFixed(4),
@@ -6663,15 +6321,22 @@ async function readBets(userId = null, money = null) {
   if (userId) query = query.eq('user_id', userId);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const bets = (data || []).map(r => ({
-    id: r.bet_id, datum: r.datum || '', sport: r.sport || '', wedstrijd: r.wedstrijd || '',
-    markt: r.markt || '', odds: r.odds || 0, units: r.units || 0,
-    inzet: r.inzet != null ? r.inzet : +(r.units * effectiveMoney.unitEur).toFixed(2),
-    tip: r.tip || 'Bet365', uitkomst: r.uitkomst || 'Open', wl: r.wl || 0,
-    tijd: r.tijd || '', score: r.score || null,
-    signals: r.signals || '', clvOdds: r.clv_odds || null, clvPct: r.clv_pct || null,
-    fixtureId: r.fixture_id || null,
-  }));
+  const bets = (data || []).map(r => {
+    const unitAtTime = Number.isFinite(parseFloat(r.unit_at_time)) && parseFloat(r.unit_at_time) > 0
+      ? parseFloat(r.unit_at_time)
+      : null;
+    const ueForInzet = unitAtTime || effectiveMoney.unitEur;
+    return {
+      id: r.bet_id, datum: r.datum || '', sport: r.sport || '', wedstrijd: r.wedstrijd || '',
+      markt: r.markt || '', odds: r.odds || 0, units: r.units || 0,
+      inzet: r.inzet != null ? r.inzet : +(r.units * ueForInzet).toFixed(2),
+      tip: r.tip || 'Bet365', uitkomst: r.uitkomst || 'Open', wl: r.wl || 0,
+      tijd: r.tijd || '', score: r.score || null,
+      signals: r.signals || '', clvOdds: r.clv_odds || null, clvPct: r.clv_pct || null,
+      fixtureId: r.fixture_id || null,
+      unitAtTime,
+    };
+  });
   return { bets, stats: calcStats(bets, effectiveMoney.startBankroll, effectiveMoney.unitEur), _raw: data };
 }
 
@@ -6710,26 +6375,26 @@ async function writeBet(bet, userId = null, unitEur = null) {
     uitkomst: bet.uitkomst || 'Open', wl, tijd: bet.tijd || '', score: bet.score || null,
     signals: bet.signals || '',
     user_id: userId || null,
+    unit_at_time: ue,
   };
-  // Probeer insert mét fixture_id; val terug zonder fixture_id voor oude DB-schemas
-  try {
-    const { error } = await supabase.from('bets').insert({ ...base, fixture_id: bet.fixtureId || null });
-    if (error) {
-      if ((error.message || '').toLowerCase().includes('column')) {
-        const { error: err2 } = await supabase.from('bets').insert(base);
-        if (err2) throw new Error(err2.message);
-      } else {
-        throw new Error(error.message);
-      }
+  // Schema-tolerant: tier 1 = full payload (v10.10.7+); tier 2 = zonder
+  // fixture_id; tier 3 = ook zonder unit_at_time (pre-v10.10.7 schema).
+  const isColumnError = (msg) => (msg || '').toLowerCase().includes('column');
+  const safeInsert = async (payload) => {
+    try {
+      const { error } = await supabase.from('bets').insert(payload);
+      return error || null;
+    } catch (e) {
+      return { message: e.message };
     }
-  } catch (e) {
-    if ((e.message || '').toLowerCase().includes('column')) {
-      const { error: err2 } = await supabase.from('bets').insert(base);
-      if (err2) throw new Error(err2.message);
-    } else {
-      throw e;
-    }
+  };
+  let err = await safeInsert({ ...base, fixture_id: bet.fixtureId || null });
+  if (err && isColumnError(err.message)) err = await safeInsert(base);
+  if (err && isColumnError(err.message)) {
+    const { unit_at_time, ...legacy } = base;
+    err = await safeInsert(legacy);
   }
+  if (err) throw new Error(err.message);
 }
 
 async function updateBetOutcome(id, uitkomst, userId = null) {
