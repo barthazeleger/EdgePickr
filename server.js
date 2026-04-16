@@ -35,6 +35,7 @@ const {
 } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
+const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -2363,25 +2364,30 @@ async function runBasketball(emit) {
       const bbStatsCache = {};
 
       // ── nba_injury_diff (logged-only, conservatief: twijfel = blessure) ──
-      await sleep(120);
-      const nbaInjResp = await afGet('v1.basketball.api-sports.io', '/injuries', {
-        league: league.id, season: league.season
-      }).catch(() => []);
-      apiCallsUsed++;
       const nbaInjuryMap = {};
       const nbaInjuryLoadMap = {};
       let nbaInjTotal = 0;
-      for (const inj of (nbaInjResp || [])) {
-        const tid = inj.team?.id;
-        if (!tid) continue;
-        const severity = injurySeverityWeight(inj.player?.status || inj.status, 'basketball');
-        if (severity > 0) {
-          nbaInjuryMap[tid] = (nbaInjuryMap[tid] || 0) + 1;
-          nbaInjuryLoadMap[tid] = +(nbaInjuryLoadMap[tid] || 0) + severity;
-          nbaInjTotal++;
+      let nbaInjResp = [];
+      if (supportsApiSportsInjuries('v1.basketball.api-sports.io')) {
+        await sleep(120);
+        nbaInjResp = await afGet('v1.basketball.api-sports.io', '/injuries', {
+          league: league.id, season: league.season
+        }).catch(() => []);
+        apiCallsUsed++;
+        for (const inj of (nbaInjResp || [])) {
+          const tid = inj.team?.id;
+          if (!tid) continue;
+          const severity = injurySeverityWeight(inj.player?.status || inj.status, 'basketball');
+          if (severity > 0) {
+            nbaInjuryMap[tid] = (nbaInjuryMap[tid] || 0) + 1;
+            nbaInjuryLoadMap[tid] = +(nbaInjuryLoadMap[tid] || 0) + severity;
+            nbaInjTotal++;
+          }
         }
+        emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams, gewogen load ${Object.values(nbaInjuryLoadMap).reduce((s,v)=>s+v,0).toFixed(1)}, api returned ${nbaInjResp?.length || 0} rows)` });
+      } else {
+        emit({ log: `🏀 ${league.name}: blessurefeed niet ondersteund door API-Sports (skip)` });
       }
-      emit({ log: `🏀 ${league.name}: ${nbaInjTotal} blessures geladen (${Object.keys(nbaInjuryMap).length} teams, gewogen load ${Object.values(nbaInjuryLoadMap).reduce((s,v)=>s+v,0).toFixed(1)}, api returned ${nbaInjResp?.length || 0} rows)` });
 
       // Yesterday's fixtures for back-to-back detection
       await sleep(80);
@@ -2907,22 +2913,27 @@ async function runHockey(emit) {
       }
 
       // ── nhl_injury_diff scaffolding (logged-only, conservatief: twijfel = blessure) ──
-      await sleep(120);
-      const nhlInjResp = await afGet('v1.hockey.api-sports.io', '/injuries', {
-        league: league.id, season: league.season
-      }).catch(() => []);
-      apiCallsUsed++;
       const nhlInjuryMap = {};
       let nhlInjTotal = 0;
-      for (const inj of (nhlInjResp || [])) {
-        const tid = inj.team?.id;
-        if (!tid) continue;
-        if (isInjured(inj.player?.status || inj.status)) {
-          nhlInjuryMap[tid] = (nhlInjuryMap[tid] || 0) + 1;
-          nhlInjTotal++;
+      let nhlInjResp = [];
+      if (supportsApiSportsInjuries('v1.hockey.api-sports.io')) {
+        await sleep(120);
+        nhlInjResp = await afGet('v1.hockey.api-sports.io', '/injuries', {
+          league: league.id, season: league.season
+        }).catch(() => []);
+        apiCallsUsed++;
+        for (const inj of (nhlInjResp || [])) {
+          const tid = inj.team?.id;
+          if (!tid) continue;
+          if (isInjured(inj.player?.status || inj.status)) {
+            nhlInjuryMap[tid] = (nhlInjuryMap[tid] || 0) + 1;
+            nhlInjTotal++;
+          }
         }
+        emit({ log: `🏒 ${league.name}: ${nhlInjTotal} blessures geladen (${Object.keys(nhlInjuryMap).length} teams, api returned ${nhlInjResp?.length || 0} rows)` });
+      } else {
+        emit({ log: `🏒 ${league.name}: blessurefeed niet ondersteund door API-Sports (skip)` });
       }
-      emit({ log: `🏒 ${league.name}: ${nhlInjTotal} blessures geladen (${Object.keys(nhlInjuryMap).length} teams, api returned ${nhlInjResp?.length || 0} rows)` });
 
       // Yesterday's fixtures for back-to-back detection
       await sleep(80);
@@ -3621,22 +3632,27 @@ async function runBaseball(emit) {
       apiCallsUsed++;
 
       // ── mlb_injury_diff (logged-only, conservatief) ──
-      await sleep(80);
-      const mlbInjResp = await afGet('v1.baseball.api-sports.io', '/injuries', {
-        league: league.id, season: league.season
-      }).catch(() => []);
-      apiCallsUsed++;
       const mlbInjuryMap = {};
       let mlbInjTotal = 0;
-      for (const inj of (mlbInjResp || [])) {
-        const tid = inj.team?.id;
-        if (!tid) continue;
-        if (isInjured(inj.player?.status || inj.status)) {
-          mlbInjuryMap[tid] = (mlbInjuryMap[tid] || 0) + 1;
-          mlbInjTotal++;
+      let mlbInjResp = [];
+      if (supportsApiSportsInjuries('v1.baseball.api-sports.io')) {
+        await sleep(80);
+        mlbInjResp = await afGet('v1.baseball.api-sports.io', '/injuries', {
+          league: league.id, season: league.season
+        }).catch(() => []);
+        apiCallsUsed++;
+        for (const inj of (mlbInjResp || [])) {
+          const tid = inj.team?.id;
+          if (!tid) continue;
+          if (isInjured(inj.player?.status || inj.status)) {
+            mlbInjuryMap[tid] = (mlbInjuryMap[tid] || 0) + 1;
+            mlbInjTotal++;
+          }
         }
+        emit({ log: `⚾ ${league.name}: ${mlbInjTotal} blessures geladen (${Object.keys(mlbInjuryMap).length} teams, api returned ${mlbInjResp?.length || 0} rows)` });
+      } else {
+        emit({ log: `⚾ ${league.name}: blessurefeed niet ondersteund door API-Sports (skip)` });
       }
-      emit({ log: `⚾ ${league.name}: ${mlbInjTotal} blessures geladen (${Object.keys(mlbInjuryMap).length} teams, api returned ${mlbInjResp?.length || 0} rows)` });
 
       // Build standings lookup
       const standingsMap = {};

@@ -31,6 +31,7 @@ const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 const lineTimeline = require('./lib/line-timeline');
 const execGate = require('./lib/execution-gate');
+const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2225,11 +2226,19 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.10');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.11');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
   assert.strictEqual(lock.name, pkg.name);
+});
+
+test('supportsApiSportsInjuries: voetbal en nfl true, nba/nhl/mlb false', () => {
+  assert.strictEqual(supportsApiSportsInjuries('v3.football.api-sports.io'), true);
+  assert.strictEqual(supportsApiSportsInjuries('v1.american-football.api-sports.io'), true);
+  assert.strictEqual(supportsApiSportsInjuries('v1.basketball.api-sports.io'), false);
+  assert.strictEqual(supportsApiSportsInjuries('v1.hockey.api-sports.io'), false);
+  assert.strictEqual(supportsApiSportsInjuries('v1.baseball.api-sports.io'), false);
 });
 
 test('release metadata: index fallbackversies matchen app-meta', () => {
@@ -4604,7 +4613,7 @@ test('lineTimeline.getLineTimeline: integration met mock supabase happy path', a
   assert.ok(home.timeline.firstSeenOnPreferred);
 });
 
-// ── EXECUTION GATE: applyExecutionGate (v10.10.10, fundament 3 Bouwvolgorde) ─
+// ── EXECUTION GATE: applyExecutionGate (v10.10.10+, fundament 3 Bouwvolgorde) ─
 console.log('\n  Execution gate (Kelly-damping op metrics):');
 
 test('applyExecutionGate: hk=0 of negatief → reasons=hk_invalid_or_zero', () => {

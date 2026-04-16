@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.11] - 2026-04-16
+
+### Added
+- **[codex] Nieuwe `lib/api-sports-capabilities.js` helper** die API-Sports sportfamilies classificeert en expliciet aangeeft voor welke sporten injury coverage ondersteund wordt. Op dit moment: voetbal en American Football wel, basketball/hockey/baseball niet.
+
+### Changed
+- **[codex] Multi-sport scan doet geen misleidende injury-calls meer op unsupported API-Sports feeds**. NBA/NHL/MLB vragen niet langer blind `/injuries` op en loggen voortaan expliciet dat de blessurefeed door API-Sports niet ondersteund wordt, in plaats van `0 rows` alsof dat een bruikbare injury-bron was.
+- **[codex] Multisport injury-issue opgesplitst van odds-filtering-issue**. Hierdoor blijft het duidelijk dat `-100% edge` en lege injuryfeeds twee losse oorzaken hadden: preferred-bookie filtering enerzijds, ontbrekende API-Sports injury coverage anderzijds.
+
+### Tests
+- `npm test` groen: `382 passed, 0 failed`.
+
 ## [10.10.10] - 2026-04-16
 
 Bouwvolgorde fundament 3 geland + verdere scanner-core driftreductie.
