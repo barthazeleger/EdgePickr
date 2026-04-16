@@ -2,6 +2,19 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.13] - 2026-04-16
+
+Issue #3: pre-kickoff drift-checker matchte verkeerde markt op MLB.
+
+### Fixed
+- **[claude] Pre-kickoff drift-check pakte handicap-prijs i.p.v. moneyline** voor MLB-bets met "Detroit Tigers wint" als markt-string. Root cause: `lib/clv-match.js` `resolveOddFromBookie()` path 11 (wint/winner/moneyline) gebruikte `findByNames(['Match Winner', 'Home/Away', ...])` met losse name-match — als de api-sports payload een Handicap-bet had die ook 'Home/Away' heette met `values: [{value:'Home +1', odd:1.74}, {value:'Away -1', odd:2.12}]`, werd die ML aangezien. Concreet symptoom: Unibet Tigers ML 2.02 → 2.00 (vrijwel stilstand) → notificatie zei "ODDS GEDRIFT 2.02 → 1.74 (-13.9%) · markt bevestigt jouw kant". Fix: ML-kandidaat moet ook door `NON_MAIN` regex, mag geen handicap-syntax in values hebben (`/[+-]\s*\d/`), en max 3 outcomes (=Home/Draw/Away) — zodat 1-run-handicap niet meer als ML wordt herkend.
+
+### Added
+- **[claude] +2 regressietests** in `lib/clv-match.js` — Detroit Tigers exact reproductie + positive test dat echte 'Home/Away' ML zonder handicap nog steeds werkt.
+
+### Tests
+- `npm test` groen: `391 passed, 0 failed`.
+
 ## [10.10.12] - 2026-04-16
 
 Multi-sport issue #1 fix: `-100% edge` was preferred-bookie filtering, geen echte no-edge.

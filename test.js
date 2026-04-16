@@ -2226,7 +2226,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.12');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.13');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -2894,6 +2894,30 @@ test('CLV: Match Winner strict match — geen Alt Winner fallback', () => {
   ]};
   const odd = resolveOddFromBookie(bk, '🏠 Wigan wint');
   assert.strictEqual(odd, 1.58, 'moet Match Winner Home 1.58 pakken, niet Alt 3.10');
+});
+
+// v10.10.13: MLB Detroit Tigers regression. "Detroit Tigers wint" mocht
+// nooit de Handicap +1 prijs (1.74) pakken. Reproduceert het screenshot:
+// Unibet ML 2.00 / Handicap +1 1.74. Pre-kickoff drift-check matchte
+// foutief op 1.74 → "ODDS GEDRIFT 2.02 → 1.74 (-13.9%)" terwijl de echte
+// ML praktisch stilstond.
+test('CLV: ML wint skipt Handicap-bet met "Home/Away" naam (Detroit Tigers regression)', () => {
+  const bk = { name: 'Unibet', bets: [
+    // Handicap +1/-1 bet die in MLB-payload soms ook 'Home/Away' heet
+    { id: 50, name: 'Home/Away', values: [{ value: 'Home +1', odd: '1.74' }, { value: 'Away -1', odd: '2.12' }] },
+    // Echte moneyline
+    { id: 1,  name: 'Money Line', values: [{ value: 'Home', odd: '2.00' }, { value: 'Away', odd: '1.85' }] },
+  ]};
+  const odd = resolveOddFromBookie(bk, '🐅 Detroit Tigers wint');
+  assert.strictEqual(odd, 2.00, 'moet Money Line Home 2.00 pakken, niet Handicap 1.74');
+});
+
+test('CLV: ML wint accepteert "Home/Away" naam alleen zonder handicap-values', () => {
+  const bk = { name: 'Bet365', bets: [
+    { id: 1, name: 'Home/Away', values: [{ value: 'Home', odd: '2.10' }, { value: 'Away', odd: '1.80' }] },
+  ]};
+  const odd = resolveOddFromBookie(bk, 'Detroit Tigers wint');
+  assert.strictEqual(odd, 2.10, 'echte Home/Away ML mag wel matchen');
 });
 
 test('CLV: O/U 2.5 main goals — geen Corners O/U 2.5 fallback', () => {
