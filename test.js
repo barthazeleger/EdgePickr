@@ -26,10 +26,11 @@ const {
   buildSpreadFairProbFns,
   convertAfOdds,
 } = require('./lib/odds-parser');
-const { buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
+const { createPickContext, buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 const lineTimeline = require('./lib/line-timeline');
+const execGate = require('./lib/execution-gate');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2065,6 +2066,25 @@ test('buildPickFactory: runtime hooks sturen kelly, expectedEur en audit-damping
   assert.strictEqual(pick.expectedEur, 2);
 });
 
+test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
+  const ctx = createPickContext({
+    sport: 'basketball',
+    activeUnitEur: 25,
+    drawdownMultiplier: () => 0.7,
+    adaptiveMinEdge: () => 0.06,
+  });
+  assert.strictEqual(ctx.sport, 'basketball');
+  assert.strictEqual(ctx.activeUnitEur, 25);
+  assert.strictEqual(ctx.drawdownMultiplier(), 0.7);
+  assert.strictEqual(ctx.adaptiveMinEdge('basketball', 'Home', 0.055), 0.06);
+
+  const fallback = createPickContext({});
+  assert.strictEqual(fallback.sport, 'football');
+  assert.ok(fallback.activeUnitEur > 0);
+  assert.strictEqual(fallback.drawdownMultiplier(), 1.0);
+  assert.strictEqual(fallback.adaptiveMinEdge, null);
+});
+
 test('buildPickFactory: adaptiveMinEdge kan pick uit singles en combiPool weren', () => {
   const { picks, combiPool, mkP } = buildPickFactory(1.6, {}, {
     sport: 'football',
@@ -2205,7 +2225,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.9');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.10');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4582,6 +4602,143 @@ test('lineTimeline.getLineTimeline: integration met mock supabase happy path', a
   assert.ok(home);
   assert.ok(home.timeline.drift > 0.09, 'home prob steeg ~10pp');
   assert.ok(home.timeline.firstSeenOnPreferred);
+});
+
+// ── EXECUTION GATE: applyExecutionGate (v10.10.10, fundament 3 Bouwvolgorde) ─
+console.log('\n  Execution gate (Kelly-damping op metrics):');
+
+test('applyExecutionGate: hk=0 of negatief → reasons=hk_invalid_or_zero', () => {
+  const r1 = execGate.applyExecutionGate(0, {});
+  const r2 = execGate.applyExecutionGate(-0.5, {});
+  assert.strictEqual(r1.hk, 0);
+  assert.deepStrictEqual(r1.reasons, ['hk_invalid_or_zero']);
+  assert.strictEqual(r2.hk, 0);
+});
+
+test('applyExecutionGate: targetPresent=false → hard skip wint van alles', () => {
+  const r = execGate.applyExecutionGate(0.05, {
+    targetPresent: false,
+    preferredGap: 0.01,
+  });
+  assert.strictEqual(r.skip, true);
+  assert.strictEqual(r.hk, 0);
+  assert.deepStrictEqual(r.reasons, ['no_target_bookie']);
+});
+
+test('applyExecutionGate: targetPresent=null → geen hard skip (onbekend ≠ false)', () => {
+  const r = execGate.applyExecutionGate(0.05, { targetPresent: null });
+  assert.strictEqual(r.skip, false);
+  assert.strictEqual(r.hk, 0.05);
+});
+
+test('applyExecutionGate: preferredGap >= 0.10 → hk × 0.5 (stale_abs_high)', () => {
+  const r = execGate.applyExecutionGate(0.10, { preferredGap: 0.12 });
+  assert.strictEqual(r.hk, 0.05);
+  assert.strictEqual(r.multipliers.staleAbs, 0.5);
+  assert.ok(r.reasons[0].startsWith('stale_abs_high'));
+});
+
+test('applyExecutionGate: preferredGap 0.05–0.10 → hk × 0.7 (stale_abs_mid)', () => {
+  const r = execGate.applyExecutionGate(0.10, { preferredGap: 0.06 });
+  assert.strictEqual(r.hk, 0.07);
+  assert.strictEqual(r.multipliers.staleAbs, 0.7);
+  assert.ok(r.reasons[0].startsWith('stale_abs_mid'));
+});
+
+test('applyExecutionGate: preferredGap < 0.05 → geen multiplier', () => {
+  const r = execGate.applyExecutionGate(0.10, { preferredGap: 0.03 });
+  assert.strictEqual(r.hk, 0.10);
+  assert.deepStrictEqual(r.multipliers, {});
+});
+
+test('applyExecutionGate: preferredGapPct ≥ 3.5% → hk × 0.6', () => {
+  const r = execGate.applyExecutionGate(0.10, { preferredGapPct: 0.04 });
+  assert.strictEqual(r.hk, 0.06);
+  assert.strictEqual(r.multipliers.gapPct, 0.6);
+});
+
+test('applyExecutionGate: preferredGapPct 2.0–3.5% → hk × 0.8', () => {
+  const r = execGate.applyExecutionGate(0.10, { preferredGapPct: 0.025 });
+  assert.strictEqual(r.hk, 0.08);
+  assert.strictEqual(r.multipliers.gapPct, 0.8);
+});
+
+test('applyExecutionGate: 2-way overround > 8% → hk × 0.85', () => {
+  const r = execGate.applyExecutionGate(1.0, { overroundPct: 0.10, marketShape: 'two-way' });
+  assert.strictEqual(r.hk, 0.85);
+  assert.strictEqual(r.multipliers.overround, 0.85);
+});
+
+test('applyExecutionGate: 3-way overround > 12% triggert, 8% niet', () => {
+  const r1 = execGate.applyExecutionGate(1.0, { overroundPct: 0.13, marketShape: 'three-way' });
+  const r2 = execGate.applyExecutionGate(1.0, { overroundPct: 0.10, marketShape: 'three-way' });
+  assert.strictEqual(r1.hk, 0.85);
+  assert.strictEqual(r2.hk, 1.0, '3-way: 10% overround zit nog onder 12% drempel');
+});
+
+test('applyExecutionGate: bookmakerCountMax < 3 → hk × 0.8 (thin_market)', () => {
+  const r = execGate.applyExecutionGate(1.0, { bookmakerCountMax: 2 });
+  assert.strictEqual(r.hk, 0.8);
+  assert.strictEqual(r.multipliers.thinMarket, 0.8);
+});
+
+test('applyExecutionGate: meerdere multipliers stapelen multiplicatief', () => {
+  const r = execGate.applyExecutionGate(1.0, {
+    preferredGap: 0.06,        // × 0.7
+    preferredGapPct: 0.04,     // × 0.6
+    overroundPct: 0.10,        // × 0.85
+    bookmakerCountMax: 2,      // × 0.8
+    marketShape: 'two-way',
+  });
+  // 0.7 × 0.6 × 0.85 × 0.8 = 0.2856
+  assert.ok(Math.abs(r.combinedMultiplier - 0.2856) < 0.0001, `combined ~0.2856, kreeg ${r.combinedMultiplier}`);
+  assert.strictEqual(Object.keys(r.multipliers).length, 4);
+  assert.strictEqual(r.reasons.length, 4);
+});
+
+test('applyExecutionGate: thresholds override schuift drempels', () => {
+  const r = execGate.applyExecutionGate(1.0, { preferredGap: 0.05 }, { staleAbsHigh: 0.04 });
+  assert.strictEqual(r.multipliers.staleAbs, 0.5, 'override schuift drempel naar beneden');
+});
+
+test('buildExecutionMetrics: consolideert lineTimeline + executionQuality output', () => {
+  const lt = {
+    close: { bestPreferredPrice: 2.00, bestPrice: 2.10 },
+    preferredGap: 0.10,
+    bookmakerCountMax: 5,
+    drift: 0.02,
+    timeToMoveMs: 1800000,
+  };
+  const eq = { overround: 0.07, status: 'playable' };
+  const m = execGate.buildExecutionMetrics({ executionQuality: eq, lineTimeline: lt });
+  assert.strictEqual(m.targetPresent, true);
+  assert.strictEqual(m.preferredGap, 0.10);
+  assert.strictEqual(m.preferredGapPct, 0.05, '0.10 / 2.00 = 0.05');
+  assert.strictEqual(m.bookmakerCountMax, 5);
+  assert.strictEqual(m.overroundPct, 0.07);
+  assert.strictEqual(m.status, 'playable');
+});
+
+test('buildExecutionMetrics: ontbrekende preferred price → targetPresent=null', () => {
+  const lt = { close: { bestPrice: 2.10, bestPreferredPrice: null }, preferredGap: null };
+  const m = execGate.buildExecutionMetrics({ lineTimeline: lt });
+  assert.strictEqual(m.targetPresent, null, 'onbekend ≠ false');
+});
+
+test('buildExecutionMetrics → applyExecutionGate end-to-end', () => {
+  const lt = {
+    close: { bestPreferredPrice: 1.95, bestPrice: 2.05 },
+    preferredGap: 0.10,
+    bookmakerCountMax: 6,
+  };
+  const eq = { overround: 0.05 };
+  const metrics = execGate.buildExecutionMetrics({ executionQuality: eq, lineTimeline: lt });
+  const r = execGate.applyExecutionGate(0.05, metrics);
+  // preferredGap=0.10 → staleAbs × 0.5
+  // preferredGapPct = 0.10/1.95 ≈ 0.0513 → gapPct × 0.6 (≥ 3.5%)
+  assert.strictEqual(r.skip, false);
+  assert.ok(Math.abs(r.combinedMultiplier - 0.30) < 0.001, `0.5 × 0.6 = 0.30, kreeg ${r.combinedMultiplier}`);
+  assert.ok(r.hk < 0.05);
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────

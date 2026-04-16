@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.10] - 2026-04-16
+
+Bouwvolgorde fundament 3 geland + verdere scanner-core driftreductie.
+
+### Added
+- **[claude] Execution-gate als Kelly-damping op runtime-metrics** (sectie 6 Bouwvolgorde fundament 3, sectie 10.A doctrine). Nieuwe `lib/execution-gate.js` met pure `applyExecutionGate(hk, metrics, thresholds?)` die stake reduceert op basis van `targetPresent` (hard skip), `preferredGap` (absolute odds), `preferredGapPct` (relatief), `overroundPct` (sport-specifiek 2-way/3-way drempel) en `bookmakerCountMax`. Multipliers stapelen multiplicatief, output is auditable: per multiplier de bron en de drempel die hem triggerde. Doctrine-thresholds als `DEFAULT_THRESHOLDS` constant, calibratable per call.
+- **[claude] `buildExecutionMetrics(...)` consolidator** die `summarizeExecutionQuality(...)` + `getLineTimeline(...)` outputs in de canonieke `executionMetrics` shape vertaalt. `targetPresent` gaat naar `null` (niet `false`) bij ontbrekende telemetrie zodat de gate niet per ongeluk hard skipt op missing data.
+- **[codex] `createPickContext(options)` helper** in `lib/picks.js` die de losse options-bag (drawdownMultiplier, activeUnitEur, adaptiveMinEdge, sport) normaliseert in één expliciete context-object. `server.js`' lokale `buildPickFactory` bouwt nu eerst de context via `createPickContext(...)` voordat hij `createPickFactory(...)` aanroept. Sectie 14.R2.F.5 doctrine-actie is hiermee opgelost — buildPickFactory groeit niet verder vast aan ad-hoc options.
+- **[claude+codex] +17 regressietests**. Claude: 16 voor execution-gate (hard-skip pad, elke threshold-tier, multiplicatief stapelen, threshold overrides, buildExecutionMetrics, end-to-end pipe). Codex: 1 voor createPickContext.
+
+### Changed
+- **[codex] Resterende pick-construction helper-drift opgeruimd**: `calcForm`, `calcMomentum`, `calcStakes`, `calcOverProb`, `calcBTTSProb`, `analyseTotal` zijn weg uit `server.js` en worden nu geïmporteerd uit `lib/picks.js` (canoniek). 88 regels uit `server.js` verdwenen, scanner-runtime en pick-factory hangen aan exact dezelfde helpers — geen silent-divergence risk meer.
+
+### Note
+- Execution-gate is nog niet ingelijfd in `buildPickFactory` zelf. Volgende ronde gebruik ik `createPickContext` als de natuurlijke plek om `executionMetrics` + `lineTimeline` doorheen te geven aan de gate.
+
+### Tests
+- `npm test` groen: `381 passed, 0 failed`.
+
 ## [10.10.9] - 2026-04-16
 
 ### Added

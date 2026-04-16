@@ -23,7 +23,16 @@ const {
   buildSpreadFairProbFns,
   convertAfOdds,
 } = require('./lib/odds-parser');
-const { buildPickFactory: createPickFactory } = require('./lib/picks');
+const {
+  createPickContext,
+  buildPickFactory: createPickFactory,
+  calcForm,
+  calcMomentum,
+  calcStakes,
+  calcOverProb,
+  calcBTTSProb,
+  analyseTotal,
+} = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 
@@ -1283,66 +1292,6 @@ async function logCheckFailure(type, wedstrijd, reason) {
   }
 }
 
-// ── FORM & SIGNALS ─────────────────────────────────────────────────────────────
-function calcForm(evts, tid) {
-  let W=0,D=0,L=0,gF=0,gA=0,cs=0;
-  for (const m of (evts||[])) {
-    const isH = m.homeTeam?.id === tid;
-    const ts  = isH ? (m.homeScore?.current??0) : (m.awayScore?.current??0);
-    const os  = isH ? (m.awayScore?.current??0) : (m.homeScore?.current??0);
-    if (ts > os) W++; else if (ts === os) D++; else L++;
-    gF += ts; gA += os;
-    if (os === 0) cs++;
-  }
-  const n = (evts||[]).length || 1;
-  return { W, D, L, pts: W*3+D, form: `${W}W${D}D${L}L`,
-           avgGF: +(gF/n).toFixed(2), avgGA: +(gA/n).toFixed(2),
-           cleanSheets: cs, n };
-}
-
-function calcMomentum(evts, tid) {
-  const f3  = calcForm((evts||[]).slice(0, 3), tid);
-  const f36 = calcForm((evts||[]).slice(3, 6), tid);
-  return f3.pts - f36.pts;
-}
-
-function calcStakes(pts, leaderPts, relegPts, cl4Pts, eu6Pts) {
-  if (!leaderPts) return { label:'', adj:0 };
-  const gapTop=leaderPts-pts, gapRel=pts-relegPts, gapCL=cl4Pts-pts, gapEU=eu6Pts-pts;
-  if (gapRel <= 0)  return { label:'🔴 IN degradatiezone', adj: 0.12 };
-  if (gapRel <= 3)  return { label:'🟠 Vecht om behoud',   adj: 0.08 };
-  if (gapTop <= 3)  return { label:'🏆 Titelrace',          adj: 0.08 };
-  if (gapCL  <= 3)  return { label:'⭐ CL-strijd',          adj: 0.05 };
-  if (gapEU  <= 3)  return { label:'🎯 Europese strijd',    adj: 0.03 };
-  if (gapRel > 15 && gapTop > 18) return { label:'😴 Niets te spelen', adj: -0.08 };
-  return { label:'', adj:0 };
-}
-
-function calcOverProb({ h2hAvgGoals, hmAvgGF, hmAvgGA, awAvgGF, awAvgGA, line=2.5 }) {
-  const projGoals = (hmAvgGF + awAvgGF + hmAvgGA + awAvgGA) / 2 * 0.88;
-  const factor    = ((projGoals - line) * 0.22) + ((h2hAvgGoals - line) * 0.15);
-  return clamp((0.50 + factor) * 100, 15, 85);
-}
-
-// v10.8.23: Bayesian shrinkage op h2hRate zodat dunne H2H samples de base-prob
-// niet meer kunnen drijven. Voorheen gaf 3/3 H2H BTTS → h2hRate=1.0 → base ~83%
-// terwijl 3 samples statistisch zwak is. Nu: h2hRate = (btts + prior·K) / (n + K).
-// Met K=8 en prior=0.52 (markt-gemiddelde BTTS-rate voetbal):
-//   0/0  H2H → 0.52 (geen h2h invloed)
-//   3/3  H2H → (3 + 4.16)/(3+8) = 0.651 (voorheen 1.00)
-//   10/12 H2H → (10 + 4.16)/(12+8) = 0.708 (voorheen 0.833)
-//   20/25 H2H → (20 + 4.16)/(25+8) = 0.732 (voorheen 0.800, minimal shift)
-// Groot effect op small-sample picks, klein op goed-sampled.
-const BTTS_H2H_PRIOR = 0.52;     // voetbal BTTS baseline
-const BTTS_H2H_PRIOR_K = 8;      // pseudo-count shrinkage strength
-function calcBTTSProb({ h2hBTTS, h2hN, hmAvgGF, awAvgGF }) {
-  const n = h2hN || 0;
-  const btts = h2hBTTS || 0;
-  const h2hRate = (btts + BTTS_H2H_PRIOR * BTTS_H2H_PRIOR_K) / (n + BTTS_H2H_PRIOR_K);
-  const formRate = Math.min(0.92, hmAvgGF / 1.8) * Math.min(0.92, awAvgGF / 1.8);
-  return clamp((h2hRate * 0.45 + formRate * 0.55) * 100, 15, 85);
-}
-
 // ── TOP LEAGUES ────────────────────────────────────────────────────────────────
 const TOP_FB = new Set([
   'Premier League','La Liga','Serie A','Bundesliga','Ligue 1',
@@ -1424,26 +1373,13 @@ function getDrawdownMultiplier() {
 }
 
 function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'football') {
-  return createPickFactory(MIN_ODDS, calibEpBuckets, {
+  const ctx = createPickContext({
     sport,
     drawdownMultiplier: getDrawdownMultiplier,
     activeUnitEur: getActiveUnitEur(),
     adaptiveMinEdge,
   });
-}
-
-// Totals analyse: zoek beste O/U odds + consensus kans
-function analyseTotal(bookmakers, outcomeName, point) {
-  const prices = [];
-  let best = { price: 0, bookie: '' };
-  for (const bk of bookmakers) {
-    const mkt = bk.markets?.find(m => m.key === 'totals');
-    const o   = mkt?.outcomes?.find(o => o.name === outcomeName && Math.abs((o.point||0)-point)<0.6);
-    if (!o) continue;
-    prices.push(o.price);
-    if (o.price > best.price) best = { price: +o.price.toFixed(3), bookie: bk.title };
-  }
-  return { best, avgIP: prices.length ? prices.reduce((s,p)=>s+1/p,0)/prices.length : 0 };
+  return createPickFactory(MIN_ODDS, calibEpBuckets, ctx);
 }
 
 // (fetchEspnStandings removed · api-football standings provide rank/form/goals)
