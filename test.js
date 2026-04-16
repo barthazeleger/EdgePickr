@@ -2226,7 +2226,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.11');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.12');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3546,6 +3546,90 @@ test('odds-parser: bestFromArr respecteert preferredBookies state', () => {
   assert.strictEqual(best.bookie, 'Unibet');
   assert.strictEqual(best.price, 2.05);
   setPreferredBookies(null);
+});
+
+// v10.10.12: nieuwe shape — preferredPrice/marketPrice altijd aanwezig.
+test('odds-parser: bestFromArr returnt nieuwe shape met preferred + market velden', () => {
+  setPreferredBookies(['bet365', 'unibet']);
+  const best = bestFromArr([
+    { price: 2.20, bookie: 'Pinnacle' },
+    { price: 2.10, bookie: 'Bet365' },
+  ]);
+  // Default requirePreferred:true → active = preferred (Bet365 2.10)
+  assert.strictEqual(best.price, 2.10);
+  assert.strictEqual(best.bookie, 'Bet365');
+  assert.strictEqual(best.isPreferred, true);
+  // Maar market-best blijft zichtbaar
+  assert.strictEqual(best.marketPrice, 2.20);
+  assert.strictEqual(best.marketBookie, 'Pinnacle');
+  // En preferred-best ook
+  assert.strictEqual(best.preferredPrice, 2.10);
+  assert.strictEqual(best.preferredBookie, 'Bet365');
+  setPreferredBookies(null);
+});
+
+test('odds-parser: bestFromArr met requirePreferred:false → active = market-best', () => {
+  setPreferredBookies(['bet365', 'unibet']);
+  const best = bestFromArr([
+    { price: 2.20, bookie: 'Pinnacle' },
+    { price: 2.10, bookie: 'Bet365' },
+  ], { requirePreferred: false });
+  assert.strictEqual(best.price, 2.20, 'active = market-best');
+  assert.strictEqual(best.bookie, 'Pinnacle');
+  assert.strictEqual(best.isPreferred, false);
+  assert.strictEqual(best.preferredPrice, 2.10, 'preferred ook zichtbaar');
+  setPreferredBookies(null);
+});
+
+test('odds-parser: bestFromArr — preferred leeg, market wel → price=0 default, marketPrice gevuld', () => {
+  setPreferredBookies(['bet365', 'unibet']);
+  // NHL/NBA/MLB scenario: alleen niet-preferred bookies
+  const best = bestFromArr([
+    { price: 2.10, bookie: 'Pinnacle' },
+    { price: 2.05, bookie: 'Bovada' },
+  ]);
+  // Default requirePreferred=true → preferred-best = niets → price 0 (huidig gedrag)
+  assert.strictEqual(best.price, 0);
+  assert.strictEqual(best.bookie, '');
+  // Maar market-best laat zien dat de markt wel actief was
+  assert.strictEqual(best.marketPrice, 2.10);
+  assert.strictEqual(best.marketBookie, 'Pinnacle');
+  assert.strictEqual(best.preferredPrice, 0);
+  setPreferredBookies(null);
+});
+
+// v10.10.12: diagBestPrice — onderscheidt 'edge te laag' van 'preferred ontbreekt'
+const { diagBestPrice } = require('./lib/odds-parser');
+
+test('diagBestPrice: preferred prijs + edge OK → null (geen diag)', () => {
+  const best = { price: 2.10, bookie: 'Bet365', preferredPrice: 2.10, preferredBookie: 'Bet365', marketPrice: 2.10, marketBookie: 'Bet365' };
+  assert.strictEqual(diagBestPrice('home', best, 0.50, 0.05), null);
+});
+
+test('diagBestPrice: preferred prijs + edge te laag → "home edge X% < Y%"', () => {
+  const best = { price: 2.10, bookie: 'Bet365', preferredPrice: 2.10, preferredBookie: 'Bet365', marketPrice: 2.10, marketBookie: 'Bet365' };
+  // fairProb 0.40 × 2.10 = 0.84 → edge = -0.16 = -16%
+  const msg = diagBestPrice('home', best, 0.40, 0.05);
+  assert.ok(msg.includes('home edge'));
+  assert.ok(msg.includes('-16.0%'));
+});
+
+test('diagBestPrice: preferred ontbreekt + market wel → echte oorzaak ipv -100%', () => {
+  const best = { price: 0, bookie: '', preferredPrice: 0, preferredBookie: '', marketPrice: 2.10, marketBookie: 'Pinnacle' };
+  // fairProb 0.50 × 2.10 = 1.05 → market-edge = +5%
+  const msg = diagBestPrice('home', best, 0.50, 0.05);
+  assert.ok(msg.includes('geen preferred prijs'), `kreeg: ${msg}`);
+  assert.ok(msg.includes('Pinnacle'));
+  assert.ok(msg.includes('2.1'));
+  assert.ok(msg.includes('5.0%'));
+  // Geen "-100%" meer
+  assert.ok(!msg.includes('-100'));
+});
+
+test('diagBestPrice: geen prijs nergens → "geen prijs in markt"', () => {
+  const best = { price: 0, bookie: '', preferredPrice: 0, preferredBookie: '', marketPrice: 0, marketBookie: '' };
+  const msg = diagBestPrice('home', best, 0.50, 0.05);
+  assert.strictEqual(msg, 'home: geen prijs in markt');
 });
 
 test('odds-parser: bestSpreadPick gebruikt preferred state zonder picks te killen', () => {

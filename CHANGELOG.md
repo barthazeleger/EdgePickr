@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.12] - 2026-04-16
+
+Multi-sport issue #1 fix: `-100% edge` was preferred-bookie filtering, geen echte no-edge.
+
+### Changed
+- **[claude] `bestFromArr()` retourneert voortaan altijd preferred-best ÉN market-best velden**. Nieuwe shape: `{ price, bookie, isPreferred, preferredPrice, preferredBookie, marketPrice, marketBookie }`. Default `requirePreferred: true` houdt `price`/`bookie` op preferred-best — bestaande call-sites (incl. heel de voetbal-flow) krijgen ongewijzigd gedrag. Met `{ requirePreferred: false }` schuift `price`/`bookie` naar market-best, voor multi-sport diagnostiek waar Bet365/Unibet niet altijd dekken.
+- **[claude] Hockey 2-way ML diag-output toont nu echte oorzaak i.p.v. `-100% edge` ruis**. Nieuwe `diagBestPrice(side, best, fairProb, minEdge)` helper splitst drie gevallen: (a) preferred prijs + edge te laag → `home edge X% < Y%` (huidig gedrag), (b) preferred ontbreekt + market wel → `home: geen preferred prijs (markt: Pinnacle @ 2.10, market-edge 5.0%)` (NIEUW — laat zien dat de markt actief is), (c) niets in markt → `home: geen prijs in markt`. NHL-scans zoals "Edmonton vs Vancouver: home 2-way edge -100.0%" worden nu interpretabel.
+
+### Added
+- **[claude] +7 regressietests**: bestFromArr-shape met preferred + market velden, `requirePreferred: false` mode, preferred-leeg-scenario (NHL/NBA/MLB), diagBestPrice gevallen (a/b/c), regressie dat `-100%` niet meer voorkomt in diag-strings als markt prijzen heeft.
+
+### Note
+- Pick-flow zelf is in deze commit niet aangeraakt — picks komen nog steeds alleen door op preferred bookies. Volgende slice: execution-gate inhaken zodat Max kan beslissen of hij niet-preferred edges als watch-signaal wil zien (sectie 10.A doctrine, `targetPresent` veld).
+
+### Tests
+- `npm test` groen: `389 passed, 0 failed`.
+
 ## [10.10.11] - 2026-04-16
 
 ### Added

@@ -19,6 +19,7 @@ const {
   bestOdds,
   bookiePrice,
   bestFromArr,
+  diagBestPrice,
   bestSpreadPick,
   buildSpreadFairProbFns,
   convertAfOdds,
@@ -3273,8 +3274,12 @@ async function runHockey(emit) {
         if (!marketFairIncOT) diag.push('geen 3-way markt → geen 2-way sanity mogelijk');
         if (!homeOddsOT.length) diag.push('geen OT-bookie odds home');
         if (!awayOddsOT.length) diag.push('geen OT-bookie odds away');
-        if (homeEdge < MIN_EDGE) diag.push(`home 2-way edge ${(homeEdge*100).toFixed(1)}% < ${(MIN_EDGE*100).toFixed(1)}%`);
-        if (awayEdge < MIN_EDGE) diag.push(`away 2-way edge ${(awayEdge*100).toFixed(1)}% < ${(MIN_EDGE*100).toFixed(1)}%`);
+        // v10.10.12: vervangt eerdere `-100% edge` ruis door echte oorzaak —
+        // diagBestPrice splitst 'preferred bookie ontbreekt' van 'edge te laag'.
+        const homeDiag = diagBestPrice('home 2-way', bH, adjHome, MIN_EDGE);
+        const awayDiag = diagBestPrice('away 2-way', bA, adjAway, MIN_EDGE);
+        if (homeDiag) diag.push(homeDiag);
+        if (awayDiag) diag.push(awayDiag);
         if (sanityHome && !sanityHome.agree) diag.push(`2-way home sanity FAIL: model ${(sanityHome.modelProb*100).toFixed(1)}% vs markt ${(sanityHome.marketProb*100).toFixed(1)}% (div ${(sanityHome.divergence*100).toFixed(1)}%)`);
         if (sanityAway && !sanityAway.agree) diag.push(`2-way away sanity FAIL: model ${(sanityAway.modelProb*100).toFixed(1)}% vs markt ${(sanityAway.marketProb*100).toFixed(1)}% (div ${(sanityAway.divergence*100).toFixed(1)}%)`);
 
