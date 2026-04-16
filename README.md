@@ -1,12 +1,20 @@
-# EdgePickr v10.4
+# EdgePickr v10.10.0
 
-**Quantitative market-disagreement engine** voor multi-sport betting analytics.
-Markt = baseline truth, model = residual overlay. Volledig autonoom met
-self-learning via point-in-time snapshots, CLV-first KPI, kill-switch
-enforcement, en minimale operator failsafes voor noodgevallen.
+**Private operator betting terminal** voor een single bankroll, een canonieke
+scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
+overlay. De scanner is het product; de rest bestaat alleen om betere picks,
+strakkere discipline en betrouwbaardere learning te ondersteunen.
 
+Geen multi-user SaaS-first denkwijze: EdgePickr optimaliseert voor een private
+operator die zo weinig mogelijk handwerk wil, point-in-time correct wil blijven
+en alleen features wil die de scan echt scherper of veiliger maken.
 
-Multi-sport betting analytics platform met een zelflerend Poisson-model per sport, market-derived sanity checks, CLV-tracking, PWA met push notificaties en een admin-panel.
+Kernprincipes:
+- Single-operator correctness boven role/tier-complexiteit
+- CLV, execution quality en bankroll discipline boven hitrate-verhalen
+- Automation boven cockpit-werk
+- Auditability boven black-box "slimme" output
+- Liever 0 picks dan 1 valse edge
 
 ## Features
 
@@ -26,7 +34,7 @@ Multi-sport betting analytics platform met een zelflerend Poisson-model per spor
 | **Tracker** | Bets per dag/week/maand, W/L, CLV%, score, NET Units, variance tracker, chronologische sort (nachtwedstrijden) |
 | **Data tab** | Bankroll-grafiek, hit rate per score/markt, signal attribution, timing-analyse, per-sport winrate |
 | **PWA** | iOS/Android installatie, offline-cache, Web Push notificaties |
-| **Admin panel** | Gebruikers goedkeuren, scan history beheren, bets recalculate, model feed, debug endpoints |
+| **Admin panel** | Operator controls, scan history, bankroll settings, debug endpoints, source toggles |
 | **v2 Snapshot layer** | fixtures, odds_snapshots, feature_snapshots, market_consensus tabellen + 90-min polling |
 | **v2 Pick pipeline** | model_versions + model_runs + pick_candidates met rejected_reason logging |
 | **Kill-switch** | Auto-disable markt bij avg CLV < -5% over ≥30 settled bets, admin override |
@@ -81,7 +89,7 @@ VAPID_CONTACT=mailto:admin@example.com
 
 ### Deploy op Render
 
-`render.yaml` staat klaar. Voeg environment variables toe via Render dashboard, push naar `master`.
+`render.yaml` staat klaar. Voeg environment variables toe via Render dashboard en push naar `master`. Iedere push wordt als productie-waardige wijziging behandeld: kleine diffs, tests eerst, point-in-time correctness altijd leidend.
 
 ## CLV backfill (admin)
 
@@ -97,7 +105,7 @@ Rate-limited op 200ms per bet. Return `{ scanned, filled, failed, details }`.
 ## Testsuite
 
 ```bash
-npm test     # 169 tests · endpoints, calibratie, signals, edge cases, market derivation, v2 integration
+npm test     # 315 tests · scanlogica, signals, CLV, security, scrapers, snapshots, regressies
 ```
 
 ### Test-categorieën
@@ -119,8 +127,9 @@ EdgePickr is ontworpen met deze principes:
 
 ## Documentatie
 
-Zie [docs/BUSINESS_PLAN.md](./docs/BUSINESS_PLAN.md) voor business-case, kosten, go-to-market.
+Zie [docs/PRIVATE_OPERATING_MODEL.md](./docs/PRIVATE_OPERATING_MODEL.md) voor de actieve productdoctrine rond scanner, learning en bankroll-discipline.
 Zie [docs/RESEARCH_MARKETS_SIGNALS.md](./docs/RESEARCH_MARKETS_SIGNALS.md) voor markt/signal expansion onderzoek.
+Zie [docs/BUSINESS_PLAN.md](./docs/BUSINESS_PLAN.md) voor het historische SaaS-plan dat niet meer leidend is voor huidige keuzes.
 Zie [CHANGELOG.md](./CHANGELOG.md) voor versiegeschiedenis.
 
 ## Licentie

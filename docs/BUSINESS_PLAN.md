@@ -1,5 +1,9 @@
 # EdgePickr Business Plan
 
+> Status: historisch document uit de eerdere SaaS-fase. Niet leidend voor de
+> huidige productrichting. Voor actieve keuzes rond scanner, learning en
+> bankroll-discipline geldt `docs/PRIVATE_OPERATING_MODEL.md`.
+
 ## Product
 EdgePickr is een multi-sport betting analytics platform dat AI en statistische modellen combineert om de beste value bets te vinden uit 6 sporten en 100+ competities wereldwijd. Het model leert van elk resultaat en wordt elke dag scherper.
 

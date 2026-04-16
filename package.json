@@ -1,7 +1,7 @@
 {
   "name": "edgepickr",
-  "version": "6.2.1",
-  "description": "EdgePickr · Outsmart the bookmaker",
+  "version": "10.10.0",
+  "description": "EdgePickr · Private operator betting terminal",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

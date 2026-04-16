@@ -1,10 +1,19 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://edgepickr-test.supabase.co';
+process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'test-key';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 
 // Pure helpers uit de ECHTE productie-module — geen mirrors meer.
 // Als iemand de implementatie in lib/model-math.js verandert, breken de tests hier.
 const modelMath = require('./lib/model-math');
+const appMeta = require('./lib/app-meta');
+const pkg = require('./package.json');
+const { buildPickFactory } = require('./lib/picks');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -1803,6 +1812,46 @@ test('summarizeSignalMetrics: kleine samples worden teruggeshrinkt', () => {
   const shrunk = out.signals.weather_over.shrunkExcessClv;
   assert.ok(raw > 0, 'raw excess should be positive');
   assert.ok(shrunk > 0 && shrunk < raw, `shrunk=${shrunk}, raw=${raw}`);
+});
+
+test('buildPickFactory: runtime hooks sturen kelly, expectedEur en audit-damping', () => {
+  const { picks, mkP } = buildPickFactory(1.6, {}, {
+    sport: 'basketball',
+    drawdownMultiplier: () => 0.5,
+    activeUnitEur: 50,
+  });
+  mkP('Lakers vs Celtics', 'NBA', 'Lakers ML', 2.0, 'test', 80, 0.10, null, 'Bet365', []);
+  assert.strictEqual(picks.length, 1);
+  const pick = picks[0];
+  assert.strictEqual(pick.sport, 'basketball');
+  assert.strictEqual(pick.audit.suspicious, true);
+  assert.strictEqual(+pick.kelly.toFixed(3), 0.03);
+  assert.strictEqual(pick.units, '0.5U');
+  assert.strictEqual(pick.expectedEur, 2);
+});
+
+test('buildPickFactory: adaptiveMinEdge kan pick uit singles en combiPool weren', () => {
+  const { picks, combiPool, mkP } = buildPickFactory(1.6, {}, {
+    sport: 'football',
+    adaptiveMinEdge: () => 0.25,
+  });
+  mkP('Ajax vs PSV', 'Eredivisie', 'Ajax ML', 2.0, 'test', 62, 0.10, null, 'Bet365', ['form:+2.0%']);
+  assert.strictEqual(picks.length, 0);
+  assert.strictEqual(combiPool.length, 0);
+});
+
+test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.0');
+  assert.strictEqual(pkg.version, appMeta.APP_VERSION);
+  const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
+  assert.strictEqual(lock.version, appMeta.APP_VERSION);
+  assert.strictEqual(lock.name, pkg.name);
+});
+
+test('release metadata: index fallbackversies matchen app-meta', () => {
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  assert.ok(html.includes(`id="scan-version">${appMeta.APP_VERSION}<`), 'scan-version fallback should match app-meta');
+  assert.ok(html.includes(`id="app-version-str">versie ${appMeta.APP_VERSION}<`), 'app-version fallback should match app-meta');
 });
 
 test('residualModelDelta: zonder coefficients → 0 (skeleton)', () => {

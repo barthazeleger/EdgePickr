@@ -7,6 +7,8 @@ const { createClient } = require('@supabase/supabase-js');
 const jwt            = require('jsonwebtoken');
 const bcrypt         = require('bcryptjs');
 const webpush        = require('web-push');
+const { APP_VERSION } = require('./lib/app-meta');
+const { buildPickFactory: createPickFactory } = require('./lib/picks');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -387,7 +389,6 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.9.9';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1446,98 +1447,12 @@ function getDrawdownMultiplier() {
 }
 
 function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'football') {
-  const picks     = [];  // standalone picks (odd >= MIN_ODDS)
-  const combiPool = [];  // alle valide picks incl. lage odds (voor combi-legs)
-
-  const mkP = (match, league, label, odd, reason, prob, boost=0, kickoff=null, bookie=null, signals=null, referee=null) => {
-    if (!odd || odd < 1.10) return;            // absoluut minimum
-    const ip = 1/odd;
-    const ep = Math.min(0.88, ip + boost);
-    if (ep < MIN_EP) return;
-    if (ep <= ip + 0.03) return;               // minimale edge vereist
-    const k = ((ep*(odd-1)) - (1-ep)) / (odd-1);
-    if (k <= 0.015) return;
-
-    // Odds-penalty: hogere odds = hogere variance = lagere strength
-    const vP = odd > 3.50 ? 0.42
-             : odd > 2.50 ? 0.65
-             : odd > 2.00 ? 0.85
-             : 1.0;
-
-    // Data confidence: meer signalen = meer vertrouwen in de pick
-    // Bewezen: full data model +35% accuracy vs odds-only (ScienceDirect 2024)
-    const sigCount = (signals || []).length;
-    const dataConf = sigCount >= 6 ? 1.0    // volledige data
-                   : sigCount >= 3 ? 0.70   // gedeeltelijke data
-                   : sigCount >= 1 ? 0.50   // minimale data
-                   : 0.40;                   // alleen odds
-
-    const bk  = epBucketKey(ep);
-    const epW = (calibEpBuckets[bk]?.n >= 15 && calibEpBuckets[bk]?.weight)
-      ? calibEpBuckets[bk].weight
-      : DEFAULT_EPW[bk];
-
-    // v10.8.17/21/22: per-pick audit. Baseline = markt-implied uit de odds.
-    // signal_contrib = som van markt-relevante signalen met expliciete +/- sign.
-    // base_prob = final prob minus signalen (≈ calcBTTSProb/fpHome pre-adjust).
-    const labelLc = (label || '').toLowerCase();
-    const isBttsPick = /btts/i.test(labelLc);
-    const isOverUnderPick = /over\s*\d|under\s*\d/i.test(labelLc);
-    const relevantSignals = (signals || []).filter(s => {
-      const sigLc = s.toLowerCase();
-      if (isBttsPick) return /btts|aggregate_push_btts/.test(sigLc);
-      if (isOverUnderPick) return /(weather|poisson|team_stats|over|under|goals|o2\.5|u2\.5)/.test(sigLc);
-      return !/btts|aggregate_push_btts|totalscore|o2\.5|u2\.5/.test(sigLc);
-    });
-    const baselineProb = +(100 / odd).toFixed(1);
-    const signalContrib = +(relevantSignals.reduce((s, sig) => {
-      const m = /([+-]\d+\.?\d*)%/.exec(sig);
-      return s + (m ? parseFloat(m[1]) : 0);
-    }, 0)).toFixed(1);
-    const probGap = +(prob - baselineProb).toFixed(1);
-    const basePct = +(prob - signalContrib).toFixed(1);
-    const baseGap = +(basePct - baselineProb).toFixed(1);
-    // v10.9.4: audit-suspicious werkt door in de stake. Als base-model claim
-    // groot is zonder signaal-ondersteuning → Kelly-hk ×0.6 → automatisch
-    // lagere stake + lagere score. Flag + high stake tegelijk = niet meer.
-    const auditSuspicious = probGap > 15 && Math.abs(baseGap) > 15
-      && Math.abs(signalContrib) < Math.abs(baseGap) * 0.3;
-    const auditDampen = auditSuspicious ? 0.6 : 1.0;
-    const audit = {
-      baseline_prob: baselineProb, base_prob: basePct, base_gap: baseGap,
-      signal_contrib: signalContrib, prob_gap: probGap,
-      suspicious: auditSuspicious, stake_dampen: auditDampen,
-    };
-
-    // Half-Kelly unit sizing met drawdown protection + audit-damping.
-    const ddMult = getDrawdownMultiplier();
-    const hk = k * getKellyFraction() * ddMult * auditDampen;
-    const u  = kellyToUnits(hk);
-    const edge = Math.round((ep * odd - 1) * 100 * 10) / 10;
-
-    const uNum = parseFloat(u);
-    // v10.9.9: gebruik admin's actuele unit i.p.v. globale constant → compounding
-    // (€25 → €50 → €100) werkt automatisch door in expectedEur-display en
-    // pick-ranking (picks sorten op expectedEur).
-    const expectedEur = +(uNum * getActiveUnitEur() * (edge / 100) * dataConf).toFixed(2);
-    const pick = { match, league, label, odd, units: u, reason, prob, ep: +ep.toFixed(3),
-                   strength: k*(odd-1)*vP*epW*dataConf, kelly: hk, edge, expectedEur, kickoff, bookie,
-                   signals: signals || [], referee: referee || null, dataConfidence: dataConf, sport,
-                   audit };
-
-    // Adaptive MIN_EDGE gate: voor markten met <100 settled bets vereist
-    // strenger edge percentage. Voorkomt dat we vroeg te veel risico nemen op
-    // markten zonder bewezen CLV-historie. Helper definieert tier (PROVEN/EARLY/UNPROVEN).
-    // v10.1.4: combiPool wordt OOK gefilterd — geen combo's op onbewezen markten.
-    if (typeof adaptiveMinEdge === 'function') {
-      const requiredEdgePct = adaptiveMinEdge(sport, label, 0.055) * 100;
-      if (edge < requiredEdgePct) return; // te zwak: niet in singles én niet in combiPool
-    }
-
-    combiPool.push(pick);            // combi-eligible (na adaptive gate)
-    if (odd >= MIN_ODDS) picks.push(pick);  // alleen in singles als >= MIN_ODDS
-  };
-  return { picks, combiPool, mkP };
+  return createPickFactory(MIN_ODDS, calibEpBuckets, {
+    sport,
+    drawdownMultiplier: getDrawdownMultiplier,
+    activeUnitEur: getActiveUnitEur(),
+    adaptiveMinEdge,
+  });
 }
 
 // ── ODDS ANALYSE HELPERS ───────────────────────────────────────────────────────

@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.0] - 2026-04-16
+
+### Changed
+- **Eén centrale versiebron toegevoegd**. Nieuwe `lib/app-meta.js` levert `APP_VERSION` aan zowel `server.js` als `lib/config.js`, en `package.json`/UI-fallbacks zijn gelijkgetrokken naar `10.10.0`. Dit voorkomt dat Render-deploys, shared libs, docs en UI nog verschillende versies tonen voor dezelfde release.
+- **Repo-framing aangescherpt naar private operator-tool**. `README.md` beschrijft EdgePickr nu expliciet als single-operator betting terminal in plaats van generieke multi-user analytics app. Dat maakt de bedoelde productrichting ook voor reviewers en toekomstige refactors duidelijker.
+- **Historische SaaS-denklijn gedegradeerd naar archiefstatus**. `docs/BUSINESS_PLAN.md` blijft bewaard als historisch document, maar is niet meer leidend voor huidige productkeuzes. Nieuwe actieve doctrine staat in `docs/PRIVATE_OPERATING_MODEL.md`.
+- **Live pick-factory nu gedeeld met `lib/picks.js`**. `server.js` gebruikt voortaan dezelfde centrale buildPickFactory-implementatie als de gedeelde lib, met runtime-hooks voor drawdown, active unit en adaptive edge gating. Dit verwijdert drift-risico tussen “voorbereide” lib-code en de echte scanner-runtime.
+
+### Added
+- **`docs/PRIVATE_OPERATING_MODEL.md`**. Compacte productdoctrine voor scanner, learning, bankroll-discipline, point-in-time correctness en feature-gating.
+- **Versie-consistentietest**. De test-suite controleert nu dat `lib/app-meta.js`, `package.json` en de front-end fallbackversies hetzelfde release-nummer voeren, zodat dit niet ongemerkt weer uit elkaar loopt.
+
 ## [10.9.9] - 2026-04-16
 
 ### Added
