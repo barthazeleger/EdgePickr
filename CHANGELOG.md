@@ -2,6 +2,12 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.5] - 2026-04-16
+
+### Changed
+- **Kleine architectuur-cleanup na repo-review**. Ongebruikte duplicate `lib/poisson.js` is verwijderd; de canonieke Poisson-helpers leven nu alleen nog in `lib/model-math.js`. Dat verkleint drift-risico en maakt duidelijker welke math-pad productie echt gebruikt.
+- **Releaseflow opnieuw synchroon gebracht**. Versie, changelog, info-page en docs zijn bijgewerkt naar `10.10.5` volgens de vaste release-discipline.
+
 ## [10.10.4] - 2026-04-16
 
 ### Fixed
