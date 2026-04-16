@@ -2,6 +2,13 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.9.9] - 2026-04-16
+
+### Added
+- **Scrape-source toggles persisteren in calib**. `POST /api/admin/v2/scrape-sources` schrijft sinds nu `cs.scraper_sources[name] = true/false` naar Supabase. Op boot worden enabled-flags toegepast via `setSourceEnabled`. Deploys resetten de state niet meer — eenmalig enablen blijft gelden tot expliciet uit. Adresseert LOW-finding uit external review.
+- **Dynamic UNIT_EUR via admin-settings**. Pick-ranking (`expectedEur` in `buildPickFactory`) gebruikt voortaan `getActiveUnitEur()` die admin's `settings.unitEur` uitleest (fallback naar globale constant). `refreshActiveUnitEur()` draait bij scan-start en bij boot zodat compounding-updates (unit €25→€50→€100) direct doorwerken op stake-sizing én expectedEur-display zonder code-deploy. Geldt ook voor `startBankroll` (admin-setting override). Adresseert MEDIUM-finding uit external review.
+- Scan-log toont `💰 Actieve unit: €X · bankroll: €Y` als admin-settings afwijken van defaults.
+
 ## [10.9.8] - 2026-04-16
 
 ### Security / single-operator hardening

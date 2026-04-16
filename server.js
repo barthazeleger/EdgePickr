@@ -387,7 +387,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.9.8';
+const APP_VERSION    = '10.9.9';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -413,6 +413,25 @@ function defaultSettings() {
     telegramEnabled: false,
     preferredBookies: ['Bet365', 'Unibet'],
   };
+}
+
+// v10.9.9: dynamic UNIT_EUR. Admin's settings.unitEur override de globale
+// constant zodat compounding (unit €25 → €50 → €100) de pick-ranking en
+// expectedEur meeschuift zonder code-deploy. `mkP` leest synchrone cache —
+// `refreshActiveUnitEur()` wordt bij elke scan-start aangeroepen.
+let _activeUnitEur = UNIT_EUR;
+let _activeStartBankroll = START_BANKROLL;
+function getActiveUnitEur() { return _activeUnitEur; }
+function getActiveStartBankroll() { return _activeStartBankroll; }
+async function refreshActiveUnitEur() {
+  try {
+    const users = await loadUsers().catch(() => []);
+    const admin = users.find(u => u.role === 'admin');
+    const ue = parseFloat(admin?.settings?.unitEur);
+    if (isFinite(ue) && ue > 0 && ue < 10000) _activeUnitEur = ue;
+    const sb = parseFloat(admin?.settings?.startBankroll);
+    if (isFinite(sb) && sb > 0 && sb < 1000000) _activeStartBankroll = sb;
+  } catch { /* keep defaults */ }
 }
 
 // v10.9.8: helper voor single-operator scoping. Alle bankroll/ROI-adviezen
@@ -919,12 +938,13 @@ async function runPortfolioAnalysis() {
   // v10.9.8: admin-scoped. Portfolio-analyse advies is persoonlijk voor de
   // operator, geen globale aggregaat over meerdere user-bets.
   const adminUserId = await getAdminUserId();
-  const { stats: s } = await readBets(adminUserId);
+  const money = await getUserMoneySettings(adminUserId);
+  const { stats: s } = await readBets(adminUserId, money);
   if (c.totalSettled < 5) return; // te weinig data
 
   const roi      = s.roi ?? 0;
-  const bankroll = s.bankroll ?? START_BANKROLL;
-  const profit   = bankroll - START_BANKROLL;
+  const bankroll = s.bankroll ?? money.startBankroll;
+  const profit   = bankroll - money.startBankroll;
   const lines    = [];
 
   lines.push(`📊 PORTFOLIO ANALYSE · ${new Date().toLocaleDateString('nl-NL')}`);
@@ -969,11 +989,11 @@ async function runPortfolioAnalysis() {
   }
 
   // Unit size aanbeveling op basis van bankroll groei
-  const bankrollGrowth = bankroll - START_BANKROLL;
-  const currentUnit = UNIT_EUR;
-  if (bankrollGrowth >= START_BANKROLL) {
+  const bankrollGrowth = bankroll - money.startBankroll;
+  const currentUnit = money.unitEur;
+  if (bankrollGrowth >= money.startBankroll) {
     lines.push(`💰 UNIT VERHOGING: Bankroll +100% (€${bankroll.toFixed(0)}) → overweeg unit van €${currentUnit} naar €${currentUnit*2}`);
-  } else if (bankrollGrowth >= START_BANKROLL * 0.5) {
+  } else if (bankrollGrowth >= money.startBankroll * 0.5) {
     lines.push(`💰 Unit verhoging mogelijk: Bankroll +50% (€${bankroll.toFixed(0)}) → overweeg €${currentUnit} → €${Math.round(currentUnit*1.5)}`);
   }
 
@@ -987,12 +1007,12 @@ async function runPortfolioAnalysis() {
       note: `Portfolio: ${c.totalSettled} bets · ROI ${(roi*100).toFixed(1)}% · W/L ${c.totalWins}/${c.totalSettled-c.totalWins} · P/L €${profit.toFixed(2)}`
     });
   }
-  if (bankrollGrowth >= START_BANKROLL) {
+  if (bankrollGrowth >= money.startBankroll) {
     inboxEntries.push({
       date: new Date().toISOString(), type: 'upgrade_advice',
       note: `💰 Bankroll +100% (€${bankroll.toFixed(0)}) · unit verhoging naar €${currentUnit*2} aanbevolen`
     });
-  } else if (bankrollGrowth >= START_BANKROLL * 0.5) {
+  } else if (bankrollGrowth >= money.startBankroll * 0.5) {
     inboxEntries.push({
       date: new Date().toISOString(), type: 'upgrade_advice',
       note: `💰 Bankroll +50% (€${bankroll.toFixed(0)}) · overweeg unit van €${currentUnit} naar €${Math.round(currentUnit*1.5)}`
@@ -1500,7 +1520,10 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
     const edge = Math.round((ep * odd - 1) * 100 * 10) / 10;
 
     const uNum = parseFloat(u);
-    const expectedEur = +(uNum * UNIT_EUR * (edge / 100) * dataConf).toFixed(2);
+    // v10.9.9: gebruik admin's actuele unit i.p.v. globale constant → compounding
+    // (€25 → €50 → €100) werkt automatisch door in expectedEur-display en
+    // pick-ranking (picks sorten op expectedEur).
+    const expectedEur = +(uNum * getActiveUnitEur() * (edge / 100) * dataConf).toFixed(2);
     const pick = { match, league, label, odd, units: u, reason, prob, ep: +ep.toFixed(3),
                    strength: k*(odd-1)*vP*epW*dataConf, kelly: hk, edge, expectedEur, kickoff, bookie,
                    signals: signals || [], referee: referee || null, dataConfidence: dataConf, sport,
@@ -6420,9 +6443,10 @@ async function runPrematch(emit) {
     const cs = loadCalib();
     // v10.9.8: admin-scoped, geen globale readBets.
     const adminUserId = await getAdminUserId();
-    const { stats } = await readBets(adminUserId).catch(() => ({ stats: {} }));
-    const bkr = stats.bankroll ?? START_BANKROLL;
-    const bkrGrowth = bkr - START_BANKROLL;
+    const money = await getUserMoneySettings(adminUserId);
+    const { stats } = await readBets(adminUserId, money).catch(() => ({ stats: {} }));
+    const bkr = stats.bankroll ?? money.startBankroll;
+    const bkrGrowth = bkr - money.startBankroll;
     const roi2 = stats.roi ?? 0;
     // v10.9.5: upgrade-aanbevelingen ook naar inbox (Supabase notifications),
     // niet alleen Telegram. Telegram kan user missen of niet checken; inbox is
@@ -6443,10 +6467,10 @@ async function runPrematch(emit) {
       const lastAt = cs.upgrades_lastAt[key] || 0;
       return (now - lastAt) > WEEK_MS;
     };
-    if (bkrGrowth >= START_BANKROLL && canFire('upgrade_unit')) {
+    if (bkrGrowth >= money.startBankroll && canFire('upgrade_unit')) {
       const title = `💰 Unit-verhoging aanbevolen`;
-      const body = `Bankroll: €${bkr.toFixed(0)} (+100% sinds start). Overweeg unit van €${UNIT_EUR} → €${UNIT_EUR * 2}. Accepteer via Instellingen. (Wordt pas over 7 dagen opnieuw getoond; dismiss permanent via admin.)`;
-      await tg(`💰 UNIT VERHOGING AANBEVOLEN\nBankroll: €${bkr.toFixed(0)} (+100%)\nOverweeg unit van €${UNIT_EUR} → €${UNIT_EUR*2}\n\nAccepteer via de instellingen.`).catch(() => {});
+      const body = `Bankroll: €${bkr.toFixed(0)} (+100% sinds start). Overweeg unit van €${money.unitEur} → €${money.unitEur * 2}. Accepteer via Instellingen. (Wordt pas over 7 dagen opnieuw getoond; dismiss permanent via admin.)`;
+      await tg(`💰 UNIT VERHOGING AANBEVOLEN\nBankroll: €${bkr.toFixed(0)} (+100%)\nOverweeg unit van €${money.unitEur} → €${money.unitEur*2}\n\nAccepteer via de instellingen.`).catch(() => {});
       await supabase.from('notifications').insert({
         type: 'upgrade_unit', title, body, read: false, user_id: null,
       }).then(() => {}, () => {});
@@ -6697,7 +6721,8 @@ function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
            potentialWin, potentialLoss, todayBetsCount };
 }
 
-async function readBets(userId = null) {
+async function readBets(userId = null, money = null) {
+  const effectiveMoney = money || await getUserMoneySettings(userId);
   let query = supabase.from('bets').select('*').order('bet_id', { ascending: true });
   if (userId) query = query.eq('user_id', userId);
   const { data, error } = await query;
@@ -6705,22 +6730,37 @@ async function readBets(userId = null) {
   const bets = (data || []).map(r => ({
     id: r.bet_id, datum: r.datum || '', sport: r.sport || '', wedstrijd: r.wedstrijd || '',
     markt: r.markt || '', odds: r.odds || 0, units: r.units || 0,
-    inzet: r.inzet || +(r.units * UNIT_EUR).toFixed(2),
+    inzet: r.inzet != null ? r.inzet : +(r.units * effectiveMoney.unitEur).toFixed(2),
     tip: r.tip || 'Bet365', uitkomst: r.uitkomst || 'Open', wl: r.wl || 0,
     tijd: r.tijd || '', score: r.score || null,
     signals: r.signals || '', clvOdds: r.clv_odds || null, clvPct: r.clv_pct || null,
     fixtureId: r.fixture_id || null,
   }));
-  return { bets, stats: calcStats(bets), _raw: data };
+  return { bets, stats: calcStats(bets, effectiveMoney.startBankroll, effectiveMoney.unitEur), _raw: data };
+}
+
+// Helper: haal user's bankroll/unit settings in 1 read zodat analytics,
+// staking en compounding overal dezelfde waarheid gebruiken.
+async function getUserMoneySettings(userId) {
+  if (!userId) return { startBankroll: START_BANKROLL, unitEur: UNIT_EUR };
+  try {
+    const users = await loadUsers();
+    const settings = users.find(u => u.id === userId)?.settings || {};
+    const startBankrollRaw = parseFloat(settings.startBankroll);
+    const unitEurRaw = parseFloat(settings.unitEur);
+    return {
+      startBankroll: isFinite(startBankrollRaw) && startBankrollRaw > 0 ? startBankrollRaw : START_BANKROLL,
+      unitEur: isFinite(unitEurRaw) && unitEurRaw > 0 ? unitEurRaw : UNIT_EUR,
+    };
+  } catch {
+    return { startBankroll: START_BANKROLL, unitEur: UNIT_EUR };
+  }
 }
 
 // Helper: haal user's unitEur (stake per unit) of fallback naar default.
 async function getUserUnitEur(userId) {
-  if (!userId) return UNIT_EUR;
-  try {
-    const users = await loadUsers();
-    return users.find(u => u.id === userId)?.settings?.unitEur ?? UNIT_EUR;
-  } catch { return UNIT_EUR; }
+  const { unitEur } = await getUserMoneySettings(userId);
+  return unitEur;
 }
 
 async function writeBet(bet, userId = null, unitEur = null) {
@@ -7243,7 +7283,12 @@ app.post('/api/admin/v2/scrape-sources', requireAdmin, async (req, res) => {
     }
     if (!validNames.includes(body.name)) return res.status(400).json({ error: 'unknown source; allowed: ' + validNames.join(', ') });
     scraperBase.setSourceEnabled(body.name, !!body.enabled);
-    res.json({ ok: true, name: body.name, enabled: !!body.enabled });
+    // v10.9.9: persist naar calib zodat toggle-state deploys/restarts overleeft.
+    const cs = loadCalib();
+    cs.scraper_sources = cs.scraper_sources || {};
+    cs.scraper_sources[body.name] = !!body.enabled;
+    await saveCalib(cs).catch(() => {});
+    res.json({ ok: true, name: body.name, enabled: !!body.enabled, persisted: true });
   } catch (e) {
     res.status(500).json({ error: 'scrape-sources update failed', detail: e.message });
   }
@@ -7790,6 +7835,12 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
   try {
     setPreferredBookies(prefs);
     if (prefs?.length) emit({ log: `🏦 Edge-evaluatie op jouw bookies: ${prefs.join(', ')}` });
+    // v10.9.9: refresh admin's actieve unit/bankroll zodat pick-ranking en
+    // expectedEur-display meeschalen met compounding-updates (admin-settings).
+    await refreshActiveUnitEur();
+    if (_activeUnitEur !== UNIT_EUR || _activeStartBankroll !== START_BANKROLL) {
+      emit({ log: `💰 Actieve unit: €${_activeUnitEur} · bankroll: €${_activeStartBankroll}` });
+    }
 
     const footballPicks = await runPrematch(emit);
 
@@ -8839,12 +8890,13 @@ app.get('/api/potd', requireAdmin, async (req, res) => {
 
     // Record ophalen
     const userId = req.user?.id;
-    const { bets, stats } = await readBets(userId);
+    const money = await getUserMoneySettings(userId);
+    const { bets, stats } = await readBets(userId, money);
     const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
     const W = settled.filter(b => b.uitkomst === 'W').length;
     const L = settled.filter(b => b.uitkomst === 'L').length;
     const P = 0; // push/void
-    const profitU = +(settled.reduce((s, b) => s + (b.wl || 0), 0) / UNIT_EUR).toFixed(1);
+    const profitU = +(settled.reduce((s, b) => s + (b.wl || 0), 0) / money.unitEur).toFixed(1);
     const profitStr = profitU >= 0 ? `+${profitU}U` : `${profitU}U`;
 
     // Last 5
@@ -9706,16 +9758,17 @@ app.get('/api/notifications', async (req, res) => {
     // v10.9.8: single-operator. Bankroll/ROI-adviezen altijd op admin's bets,
     // niet globale aggregatie. Voorheen: readBets() zonder userId → global mix.
     const adminUserId = await getAdminUserId();
-    const { stats } = await readBets(adminUserId).catch(() => ({ stats: {} }));
+    const money = await getUserMoneySettings(adminUserId);
+    const { stats } = await readBets(adminUserId, money).catch(() => ({ stats: {} }));
     const roi = stats.roi ?? 0;
-    const bankroll = stats.bankroll ?? START_BANKROLL;
-    const bankrollGrowth = bankroll - START_BANKROLL;
+    const bankroll = stats.bankroll ?? money.startBankroll;
+    const bankrollGrowth = bankroll - money.startBankroll;
 
     // Unit size aanbeveling op basis van bankroll groei
-    if (bankrollGrowth >= START_BANKROLL) {
-      alerts.push({ type: 'success', icon: '💰', msg: `Bankroll +100% (€${bankroll.toFixed(0)}) · unit verhoging aanbevolen: €${UNIT_EUR} → €${UNIT_EUR*2}`, unitAdvice: true });
-    } else if (bankrollGrowth >= START_BANKROLL * 0.5) {
-      alerts.push({ type: 'info', icon: '💰', msg: `Bankroll +50% (€${bankroll.toFixed(0)}) · overweeg unit van €${UNIT_EUR} naar €${Math.round(UNIT_EUR*1.5)}`, unitAdvice: true });
+    if (bankrollGrowth >= money.startBankroll) {
+      alerts.push({ type: 'success', icon: '💰', msg: `Bankroll +100% (€${bankroll.toFixed(0)}) · unit verhoging aanbevolen: €${money.unitEur} → €${money.unitEur*2}`, unitAdvice: true });
+    } else if (bankrollGrowth >= money.startBankroll * 0.5) {
+      alerts.push({ type: 'info', icon: '💰', msg: `Bankroll +50% (€${bankroll.toFixed(0)}) · overweeg unit van €${money.unitEur} naar €${Math.round(money.unitEur*1.5)}`, unitAdvice: true });
     }
 
     // All Sports ($99/mnd) upgrade aanbeveling
@@ -11261,6 +11314,26 @@ app.listen(PORT, () => {
   scheduleSignalStatsRefresh();
   scheduleHealthAlerts();
   scheduleRetentionCleanup();
+
+  // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
+  // reset elke deploy alle sources naar default off — operationeel irritant.
+  try {
+    const scraperBase = require('./lib/scraper-base');
+    const cs = loadCalib();
+    const persisted = cs.scraper_sources || {};
+    const known = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+    let applied = 0;
+    for (const name of known) {
+      if (persisted[name] === true) { scraperBase.setSourceEnabled(name, true); applied++; }
+    }
+    if (applied) console.log(`🔌 Scrape-sources hersteld: ${applied} source(s) enabled uit calib`);
+  } catch (e) { console.warn('scrape-sources restore failed:', e.message); }
+
+  // v10.9.9: active unit/bankroll bij boot laden zodat pick-ranking vanaf de
+  // eerste scan met admin's actuele settings rekent.
+  refreshActiveUnitEur().then(() => {
+    if (_activeUnitEur !== UNIT_EUR) console.log(`💰 Active unit overridden via admin settings: €${_activeUnitEur}`);
+  });
 
   // Kill-switch initial load + 30-min refresh
   // Operator state laden VÓÓR kill-switch refresh zodat market_auto_kill_enabled correct staat
