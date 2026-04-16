@@ -2,6 +2,13 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.8.22] - 2026-04-16
+
+### Added
+- **`base_prob` in audit + UI-weergave**. Audit toont nu drie lagen: `Markt: X% · base: Y% · signalen: ±Zpp → model: W%`. `base_prob` = model output vóór signal-adjustments (= `prob − relevante signalen`), dus feitelijk de `calcBTTSProb` / `fpHome` / base Poisson output. Lost hoofdpijn op: user zag "signalen -6.8pp" bij Bromley en dacht "hoe kan model dan 2U/10/10 zijn" — nu zichtbaar dat base ~82.8% is (H2H + GF gedreven) en signalen die tempert naar 76%.
+- **Slimmere ⚠️-flag**: triggered nu alleen als `gap>15pp` én base-divergentie van markt is ook groot én signalen dekken <30% van die base-afwijking. Betekent: de **kern** van de model-claim zit ver van markt zonder signaal-ondersteuning — dán extra checken. Reduceert false positives van de vorige "signalen < 50% gap" heuristiek.
+- **Inbox-notificatie body** toont nu zowel `base` als `final` prob + signalen zodat user in de notif direct ziet waar de claim vandaan komt.
+
 ## [10.8.21] - 2026-04-16
 
 ### Fixed

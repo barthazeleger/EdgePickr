@@ -384,7 +384,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
-const APP_VERSION    = '10.8.21';
+const APP_VERSION    = '10.8.22';
 const TOKEN      = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT       = process.env.TELEGRAM_CHAT_ID || '';
 const TG_URL     = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
@@ -1463,7 +1463,14 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
       return s + (m ? parseFloat(m[1]) : 0);
     }, 0)).toFixed(1);
     const probGap = +(prob - baselineProb).toFixed(1);
-    const audit = { baseline_prob: baselineProb, signal_contrib: signalContrib, prob_gap: probGap };
+    // v10.8.22: base_prob = model output vóór signal-adjustments (final − signalen).
+    // Transparantie: user ziet of 76% claim uit calcBTTSProb/fpHome base komt of
+    // uit signaal-stapeling. Gebruikt markt-relevante signalen zodat base klopt
+    // met de actual pre-adjustment waarde (voor BTTS: calcBTTSProb output; voor
+    // ML: fpHome + ha=0; voor Over: base poisson prob).
+    const basePct = +(prob - signalContrib).toFixed(1);
+    const baseGap = +(basePct - baselineProb).toFixed(1);
+    const audit = { baseline_prob: baselineProb, base_prob: basePct, base_gap: baseGap, signal_contrib: signalContrib, prob_gap: probGap };
     const pick = { match, league, label, odd, units: u, reason, prob, ep: +ep.toFixed(3),
                    strength: k*(odd-1)*vP*epW*dataConf, kelly: hk, edge, expectedEur, kickoff, bookie,
                    signals: signals || [], referee: referee || null, dataConfidence: dataConf, sport,
@@ -7619,27 +7626,29 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
     for (const p of allPicks) p.selected = topSet.has(p);
     saveScanEntry(allPicks, 'prematch', beforeKill);
 
-    // v10.8.17: audit — flag geselecteerde picks waar de model prob >15pp
-    // boven markt-implied zit zonder dat signal_contrib die gap draagt.
-    // Schrijft alleen naar Supabase notifications (inbox), geen Telegram.
-    // Drempel: gap >15pp én signal_contrib < 50% van die gap = onverklaard.
+    // v10.8.17/22: audit — flag picks waar de base-model (pre-signalen) ver
+    // van markt afwijkt EN signalen dat niet wegduwen. Dat signaleert een
+    // base-calc-driven claim die we extra willen controleren (bv. calcBTTSProb
+    // met weinig H2H samples, of fpHome-derivering op dunne bookie-consensus).
     try {
       const flagged = topPicks
         .filter(p => p.audit && p.audit.prob_gap > 15)
         .filter(p => {
           const gap = p.audit.prob_gap;
-          const contrib = p.audit.signal_contrib || 0;
-          return contrib < gap * 0.5;
+          const baseGap = p.audit.base_gap != null ? Math.abs(p.audit.base_gap) : gap;
+          const contrib = Math.abs(p.audit.signal_contrib || 0);
+          return baseGap > 15 && contrib < baseGap * 0.3;
         });
       if (flagged.length > 0) {
         const body = flagged.map(p => {
           const a = p.audit;
-          return `• ${p.match} · ${p.label}: markt ${a.baseline_prob}% → model ${p.prob}% (gap +${a.prob_gap}pp, signalen +${a.signal_contrib}pp)`;
+          const baseTxt = a.base_prob != null ? `base ${a.base_prob}% → ` : '';
+          return `• ${p.match} · ${p.label}: markt ${a.baseline_prob}% → ${baseTxt}model ${p.prob}% (gap +${a.prob_gap}pp, signalen ${a.signal_contrib >= 0 ? '+' : ''}${a.signal_contrib}pp)`;
         }).join('\n');
         await supabase.from('notifications').insert({
           type: 'pick_audit',
-          title: `⚠️ ${flagged.length} pick(s) met onverklaarbare prob-sprong`,
-          body: `Deze picks claimen >15pp boven markt zonder dat signalen de helft dekken. Check de analyse vóór je inzet:\n\n${body}`.slice(0, 1500),
+          title: `⚠️ ${flagged.length} pick(s) met base-model divergentie`,
+          body: `Deze picks hebben een base-prob (kern model vóór signalen) die ver van markt afwijkt zonder dat signalen het steunen. Check H2H / stats onderbouwing vóór inzet:\n\n${body}`.slice(0, 1500),
           read: false, user_id: null,
         });
       }
