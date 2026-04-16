@@ -2,6 +2,17 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.9.2] - 2026-04-16
+
+### Changed
+- **Humanized scraping**. Bot-like User-Agent ("EdgePickrBot") vervangen door echte Chrome 128 UA's (macOS/Windows/Linux + Safari) geroteerd per call. Complete browser-header set toegevoegd: `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`, `sec-fetch-dest/mode/site`, `Accept-Language`, `Accept-Encoding`, `Cache-Control`, `Connection: keep-alive`. Anti-bot detectors die op headers screenen zien nu een echte browser.
+- **Rate-limiter jitter ±30%**. Vaste intervallen = kloktik-patroon dat bot-detectie triggert. Nu randomized offset per call.
+- **Per-source Referer/Origin**: sofascore stuurt `Referer: https://www.sofascore.com/`, fotmob `https://www.fotmob.com/`, nba-stats `https://www.nba.com/` (+ x-nba-stats-* headers). Matcht wat echte browsers bij die API-calls sturen.
+
+### Added
+- **`GET /api/admin/v2/scrape-diagnose?name=X`** — live-test één bron en retourneert HTTP status + error reden + eerste 400 chars van response. Nieuw `returnDetails=true` mode op `safeFetch`. UI: typ `diag:sofascore` in Scrape Sources prompt → zie exact waarom een bron faalt (403 anti-bot vs 404 endpoint-change vs timeout vs json_parse_fail).
+- Default timeout 5s → 7s (sommige endpoints zijn trager).
+
 ## [10.9.1] - 2026-04-16
 
 ### Fixed

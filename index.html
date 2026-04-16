@@ -4808,8 +4808,25 @@ async function loadScrapeSourcesView() {
   lines.push('');
   lines.push('Typ een source-naam om te togglen (sofascore/fotmob/nba-stats/nhl-api/mlb-stats-ext):');
   lines.push('Prefix met "reset:" om circuit breaker te resetten, bv. "reset:sofascore"');
+  lines.push('Prefix met "diag:" om een live-diagnose te draaien, bv. "diag:sofascore" (toont HTTP status + error)');
   const input = prompt(lines.join('\n'), '');
   if (!input) return;
+  if (input.startsWith('diag:')) {
+    const name = input.slice(5).trim();
+    const d = await api('/api/admin/v2/scrape-diagnose?name=' + encodeURIComponent(name)).then(x => x?.json()).catch(() => null);
+    if (!d) { alert('diagnose: geen response'); return; }
+    const msg = [
+      `Source: ${d.source}`,
+      `URL: ${d.url}`,
+      `OK: ${d.ok}`,
+      `HTTP status: ${d.status}`,
+      `Latency: ${d.latencyMs}ms`,
+      d.error ? `Error: ${d.error}` : '',
+      d.sample ? `Sample (first 400 chars):\n${d.sample}` : '',
+    ].filter(Boolean).join('\n');
+    alert(msg);
+    return;
+  }
   let action = {};
   if (input.startsWith('reset:')) {
     action = { action: 'reset-breaker', name: input.slice(6).trim() };
