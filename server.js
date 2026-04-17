@@ -10845,6 +10845,45 @@ function scheduleRetentionCleanup() {
   }, 5 * 60 * 1000);
 }
 
+// v10.12.12 Phase C.12: scan-heartbeat watcher. Scans horen rond 07:30,
+// 14:00, 21:00 Amsterdam tijd te vuren (max gap ~10.5h). Als we 14h+ geen
+// scan-tick in de notifications tabel zien → alert dat de scheduler stil
+// ligt. Voorkomt de silent-fail failure mode waar scheduler crashed en
+// operator het pas dagen later merkt.
+let _lastHeartbeatAlertAt = 0;
+async function runScanHeartbeatCheck() {
+  try {
+    const since = new Date(Date.now() - 14 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('created_at')
+      .in('type', ['cron_tick', 'scan_final_selection', 'unit_change'])
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) return;
+    const hasRecent = Array.isArray(data) && data.length > 0;
+    if (hasRecent) return;
+    // Fire max 1x per 24h om spam te voorkomen.
+    const MIN_REALERT_MS = 24 * 60 * 60 * 1000;
+    if (Date.now() - _lastHeartbeatAlertAt < MIN_REALERT_MS) return;
+    _lastHeartbeatAlertAt = Date.now();
+    notify(
+      `🫀 SCANNER STIL\nGeen scan-tick in de notifications tabel sinds de laatste 14 uur.\nMogelijke oorzaken: scheduler gecrasht, Render keep-alive down, of Supabase unreachable.\nCheck server logs en /api/status.`,
+      'heartbeat_miss'
+    ).catch(() => {});
+  } catch (e) {
+    console.warn('[heartbeat] check failed:', e.message);
+  }
+}
+function scheduleScanHeartbeatWatcher() {
+  // Eerste check na 30 min (geeft boot + eerste scan ruimte), daarna hourly.
+  setTimeout(() => {
+    runScanHeartbeatCheck();
+    setInterval(runScanHeartbeatCheck, 60 * 60 * 1000);
+  }, 30 * 60 * 1000);
+}
+
 function scheduleHealthAlerts() {
   const INTERVAL_MS = 60 * 60 * 1000; // hourly check
 
@@ -11509,6 +11548,7 @@ app.listen(PORT, () => {
   scheduleSignalStatsRefresh();
   scheduleHealthAlerts();
   scheduleRetentionCleanup();
+  scheduleScanHeartbeatWatcher();
 
   // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
   // reset elke deploy alle sources naar default off — operationeel irritant.

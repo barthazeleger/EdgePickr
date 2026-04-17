@@ -2,6 +2,29 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.12] - 2026-04-17
+
+Phase C.12 · Scan-heartbeat watcher. Sluit de silent-fail failure-mode waarbij de scheduler stilletjes stopt en operator het pas dagen later merkt.
+
+### Added
+- **[claude] `scheduleScanHeartbeatWatcher()`** — hourly check (start 30 min na boot). Queryt `notifications` tabel voor `type IN ('cron_tick', 'scan_final_selection', 'unit_change')` in de laatste 14 uur. Als geen resultaat → web-push alert `type='heartbeat_miss'`: "🫀 SCANNER STIL · Geen scan-tick sinds 14u."
+- **De-spam guard**: heartbeat alert fireert max 1× per 24 uur zodat een aanhoudende outage niet spamt. In-memory `_lastHeartbeatAlertAt` tracking.
+
+### Threshold rationale
+Scans gaan om 07:30 / 14:00 / 21:00 Amsterdam → max normale gap = ~10.5h (21:00 → 07:30 volgende dag). 14h drempel geeft ~3.5h speling voor opstart-delays + `scheduleDailyScan` drift zonder false positives. Als er 14h geen cron-tick is, is er echt iets stuk.
+
+### Operator-integrity per doctrine §14.R2.B
+Uit de survivability audit: heartbeat was als open item gemarkeerd ("Silent-fail coverage: if quiet for N hours, operator assumes healthy. No heartbeat check"). Deze commit sluit dat gat.
+
+### Not in this commit (queued)
+- Heartbeat voor andere kritieke subsystemen (Supabase reachability, api-football quota). Aparte slices.
+- Audit log tabel (Phase C.11)
+- Unified step-up/down engine (Phase C.10) — eigen grote slice
+- Per-bookie volume cap (Phase C.9)
+
+### Tests
+- `npm test`: 501 passed, 0 failed. (Geen nieuwe tests — pure timer logic die setInterval gebruikt; integration-test met mock supabase is Phase E.22 sprint.)
+
 ## [10.12.11] - 2026-04-17
 
 Phase B.5 · Benjamini-Hochberg FDR correctie in `autoTuneSignalsByClv`. Voorkomt dat multiple-comparisons ruis (14+ signalen × meerdere sporten) als "edge" wordt geïnterpreteerd en signal-gewichten onterecht omhoog worden gescaled.
