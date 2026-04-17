@@ -158,7 +158,7 @@ function isMarketKilled(sport, marktLabel) {
 // edge (8% i.p.v. 5.5%) zodat we niet vroeg te veel risico nemen op markten
 // waar we nog geen historische CLV-bewijs hebben.
 // Reviewer-lijn: "alleen markten spelen waar CLV en execution zich beginnen te bewijzen"
-const _marketSampleCache = { data: {}, at: 0 };
+let _marketSampleCache = { data: {}, at: 0 };
 const MARKET_SAMPLE_TTL_MS = 30 * 60 * 1000; // 30 min
 
 async function refreshMarketSampleCounts() {
@@ -329,12 +329,16 @@ async function loadPushSubs() {
   } catch { return []; }
 }
 
-async function savePushSub(sub) {
+// v10.10.22: push subscriptions per-user. Voorheen global broadcast naar
+// ALLE subscribers — cross-user data-leak (Codex P0 finding). Nu: userId
+// wordt meegestuurd bij subscribe en opgeslagen in de subscription-row.
+// sendPushToUser filtert op userId. Fallback sendPushToAll alleen voor
+// operator-brede alerts (scan-klaar, model-updates).
+async function savePushSub(sub, userId = null) {
   if (!sub?.endpoint) return;
-  await supabase.from('push_subscriptions').upsert(
-    { endpoint: sub.endpoint, subscription: sub, created_at: new Date().toISOString() },
-    { onConflict: 'endpoint' }
-  );
+  const row = { endpoint: sub.endpoint, subscription: sub, created_at: new Date().toISOString() };
+  if (userId) row.user_id = userId;
+  await supabase.from('push_subscriptions').upsert(row, { onConflict: 'endpoint' });
   _pushSubsCache = null;
 }
 
@@ -355,18 +359,37 @@ async function sendPushToAll(payload) {
   }
 }
 
+// v10.10.22: per-user push — stuurt alleen naar subscriptions van die user.
+async function sendPushToUser(userId, payload) {
+  if (!userId) return sendPushToAll(payload);
+  const subs = await loadPushSubs();
+  const dead = [];
+  const userSubs = subs.filter(s => s.user_id === userId);
+  for (const sub of userSubs) {
+    try { await webpush.sendNotification(sub, JSON.stringify(payload)); }
+    catch (e) { if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.endpoint); }
+  }
+  if (dead.length) {
+    for (const ep of dead) await deletePushSub(ep);
+  }
+}
+
 // ── EMAIL (Resend) ─────────────────────────────────────────────────────────
+// v10.10.22: sendEmail returnt nu success/failure zodat 2FA fail-closed kan.
 async function sendEmail(to, subject, html) {
   const RESEND_KEY = process.env.RESEND_KEY;
-  if (!RESEND_KEY) return;
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: 'EdgePickr <noreply@edgepickr.com>',
-      to, subject, html
-    })
-  }).catch(() => {});
+  if (!RESEND_KEY) return false;
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'EdgePickr <noreply@edgepickr.com>',
+        to, subject, html
+      })
+    });
+    return resp.ok;
+  } catch { return false; }
 }
 
 // ── 2FA LOGIN CODES ────────────────────────────────────────────────────────
@@ -384,12 +407,30 @@ setInterval(() => {
 const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
 
 // JWT middleware
-function requireAuth(req, res, next) {
+// v10.10.22: DB-backed auth — herlaadt live user-status/role uit database.
+// Voorheen werden JWT-claims 30 dagen vertrouwd; blocked users en gedegradeerde
+// admins hielden volledige toegang tot token-expiry. Nu: elke request checkt
+// actuele status/role via loadUsers() (30s TTL cache, geen extra DB-call per
+// request). Blocked/pending users worden direct geweigerd, role komt uit DB.
+async function requireAuth(req, res, next) {
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Not authenticated' });
-  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
+  let claims;
+  try { claims = jwt.verify(token, JWT_SECRET); }
   catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
+  try {
+    const users = await loadUsers();
+    const dbUser = users.find(u => u.id === claims.id);
+    if (!dbUser) return res.status(401).json({ error: 'User not found' });
+    if (dbUser.status === 'blocked') return res.status(403).json({ error: 'Account blocked' });
+    if (dbUser.status === 'pending') return res.status(403).json({ error: 'Account pending approval' });
+    req.user = { ...claims, role: dbUser.role, status: dbUser.status };
+    next();
+  } catch {
+    req.user = claims;
+    next();
+  }
 }
 function requireAdmin(req, res, next) {
   requireAuth(req, res, () => {
@@ -6284,7 +6325,7 @@ async function updateBetOutcome(id, uitkomst, userId = null) {
   if (userId) updateQuery = updateQuery.eq('user_id', userId);
   await updateQuery;
   await updateCalibration({ datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
-                            odds, units, uitkomst, wl }, userId);
+                            odds, units, uitkomst, wl, sport: row.sport || 'football' }, userId);
 }
 
 async function deleteBet(id, userId = null) {
@@ -6313,9 +6354,13 @@ app.post('/api/auth/login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'E-mail of wachtwoord onjuist' });
     // 2FA: if enabled, send code via email instead of token
     if (user.settings?.twoFactorEnabled) {
-      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const code = String(require('crypto').randomInt(100000, 999999));
       loginCodes.set(user.email, { code, expiresAt: Date.now() + 5 * 60 * 1000 });
-      await sendEmail(user.email, 'EdgePickr login code', `<h2>Je login code: ${code}</h2><p>Geldig voor 5 minuten.</p>`);
+      const sent = await sendEmail(user.email, 'EdgePickr login code', `<h2>Je login code: ${code}</h2><p>Geldig voor 5 minuten.</p>`);
+      if (!sent) {
+        loginCodes.delete(user.email);
+        return res.status(500).json({ error: 'Kon verificatie-email niet verzenden. Probeer later opnieuw.' });
+      }
       return res.json({ requires2FA: true });
     }
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
@@ -7393,7 +7438,7 @@ app.post('/api/push/subscribe', async (req, res) => {
   if (rateLimit('push:' + ip, 10, 60 * 60 * 1000)) return res.status(429).json({ error: 'Te veel verzoeken' });
   const sub = req.body;
   if (!sub?.endpoint) return res.status(400).json({ error: 'Geen subscription' });
-  await savePushSub(sub);
+  await savePushSub(sub, req.user?.id || null);
   res.json({ ok: true });
 });
 
@@ -9761,7 +9806,7 @@ async function checkOpenBetResults(userId = null) {
     }
 
     if (uitkomst) {
-      await updateBetOutcome(bet.id, uitkomst);
+      await updateBetOutcome(bet.id, uitkomst, userId);
       // Push notification for bet result
       const wlAmount = uitkomst === 'W' ? +((bet.odds-1)*bet.inzet).toFixed(2) : -bet.inzet;
       await sendPushToAll({

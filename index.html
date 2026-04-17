@@ -3370,7 +3370,7 @@ function copyPOTD(type) {
   });
 }
 
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // ── MATCH ANALYSER ────────────────────────────────────────────────────────────
 
@@ -3566,7 +3566,7 @@ function doSearch() {
   ) : picks;
 
   if (!filtered.length) {
-    out.innerHTML = `<div class="empty-state"><div class="ico">🔎</div><div>Geen resultaten voor "<strong>${q}</strong>".</div></div>`;
+    out.innerHTML = `<div class="empty-state"><div class="ico">🔎</div><div>Geen resultaten voor "<strong>${escHtml(q)}</strong>".</div></div>`;
     return;
   }
 
@@ -3579,8 +3579,8 @@ function doSearch() {
     div.innerHTML = `
       <div class="pick-full-hd">
         <div>
-          <div class="pick-full-title">${i===0&&!q?'⭐ ':''}${p.label}</div>
-          <div class="pick-full-meta">${p.match||''} · ${p.league||''} · Odds: <strong>${p.odd||p.odds||'?'}</strong> · ${p.units||''}</div>
+          <div class="pick-full-title">${i===0&&!q?'⭐ ':''}${escHtml(p.label||'')}</div>
+          <div class="pick-full-meta">${escHtml(p.match||'')} · ${escHtml(p.league||'')} · Odds: <strong>${escHtml(String(p.odd||p.odds||'?'))}</strong> · ${escHtml(p.units||'')}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-size:18px;font-weight:700;color:${pc}">${prob}%</div>
