@@ -2,6 +2,45 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.18] - 2026-04-17
+
+UI-fix · pick-card bookie-badge toont nu de werkelijke bookie-naam i.p.v. te liegen.
+
+### Bug (pre-existing, gemeld door operator)
+`index.html:1544` had een hardcoded ternary:
+```js
+${p.bookie.toLowerCase().includes('bet365') ? 'Bet365' : 'Unibet'}
+```
+Elke pick waarvan de werkelijke best-price-bookie **niet** Bet365 was, werd in de badge gelabeld als "Unibet" — ongeacht of het William Hill, Pinnacle, Bet365's bookie X, enzovoorts was. Operator zag bijvoorbeeld een K-League BTTS pick waarbij:
+- Pick-card badge: "Unibet"
+- Reason-tekst in dezelfde card: "William Hill: 2"
+- Modal: "Bet365"
+3 verschillende bookie-labels op dezelfde pick.
+
+### Fix
+- **[claude] UI badge toont nu `p.bookie` direct** via `escHtml(p.bookie)`.
+- **Kleur-codering** op preferred-status:
+  - Bet365 → groen
+  - Unibet → blauw
+  - Andere bookies uit `userSettings.preferredBookies` → paars
+  - Non-preferred (scan vond betere odds buiten jouw set) → **oranje** = waarschuwing dat dit niet jouw gewoonlijke bookie is
+- `title` attribute = full bookie name (voor hover tooltip).
+- `escHtml()` toegepast — bookie-string is server-gegenereerd maar defense-in-depth.
+
+### Follow-up onderzoek nodig (niet in deze commit)
+Dat de scan een "William Hill" pick produceerde is op zich een vraagpunt: operator's preferred bookies zijn `[Bet365, Unibet]`, dus execution zou daar moeten landen. Mogelijke oorzaken:
+1. **Preferred-filter niet actief** op dat codepad — `setPreferredBookies` race
+2. **Fallback gedrag** als geen preferred-bookie een competitieve prijs heeft — ga naar "best overall"
+3. **`bestFromArr` negeert preferred filter** in bepaalde kart-types
+
+Dit is een aparte bug/doctrine-vraag — opname in next sprint. Voor nu toont de UI de waarheid zodat operator niet meer mis-informatie krijgt.
+
+### Modal-mismatch onderzoek
+Bart meldde dat modal "Bet365" toonde voor dezelfde pick die in de badge "Unibet" zei. Als pick.bookie = "William Hill" kan modal geen "Bet365" tonen zonder zelf ook een hardcoded fallback te hebben. Vraagt aparte trace in next session.
+
+### Tests
+- `npm test`: 512 passed, 0 failed.
+
 ## [10.12.17] - 2026-04-17
 
 Phase D.13b · Lineup-certainty shadow signal voor football. Complementair met fixture-congestion (v10.12.14).

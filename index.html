@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.17</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.18</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -622,7 +622,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.17</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.18</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -1541,7 +1541,21 @@ function renderPicks(el, picks) {
       <div class="pick-right">
         <div class="pick-odds">${p.odd||p.odds||'?'}</div>
         <div class="pick-units" style="margin-top:3px">${p.units}</div>
-        ${p.bookie ? `<div style="margin-top:6px;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.03em;text-align:center;${p.bookie.toLowerCase().includes('bet365') ? 'background:#1a6b3a;color:#4ade80' : 'background:#1a2e6b;color:#93c5fd'}">${p.bookie.toLowerCase().includes('bet365') ? 'Bet365' : 'Unibet'}</div>` : ''}
+        ${p.bookie ? (() => {
+          // v10.12.18 fix: toon de echte bookie-naam i.p.v. hardcoded ternary
+          // Bet365/Unibet (die loog over elke andere bookie). Kleur-codering:
+          // Bet365 → groen (execution-preferred), Unibet → blauw, andere
+          // preferred → paars, non-preferred → oranje (waarschuwing: dit is
+          // niet jouw gewoonlijke bookie).
+          const bkLc = p.bookie.toLowerCase();
+          const prefs = (userSettings?.preferredBookies || ['Bet365', 'Unibet']).map(b => b.toLowerCase());
+          let bg, fg;
+          if (bkLc.includes('bet365'))      { bg = '#1a6b3a'; fg = '#4ade80'; }
+          else if (bkLc.includes('unibet')) { bg = '#1a2e6b'; fg = '#93c5fd'; }
+          else if (prefs.some(p => bkLc.includes(p))) { bg = '#4a1a6b'; fg = '#c4b5fd'; }
+          else                              { bg = '#6b4a1a'; fg = '#fbbf24'; }  // warning: non-preferred
+          return `<div style="margin-top:6px;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:.03em;text-align:center;background:${bg};color:${fg}" title="${escHtml(p.bookie)}">${escHtml(p.bookie)}</div>`;
+        })() : ''}
         <div class="pick-log-btn">${(() => {
           const alGelogd = betData && (betData.bets||[]).some(b =>
             b.wedstrijd.toLowerCase() === (p.match||'').toLowerCase() &&
