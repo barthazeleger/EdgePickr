@@ -39,6 +39,7 @@ const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const { shouldRunPostResultsModelJobs } = require('./lib/daily-results');
+const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/live-board');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -9905,11 +9906,12 @@ app.get('/api/live-scores', async (req, res) => {
 
     // Live en vandaag geplande wedstrijden ophalen in parallel — alle sporten
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
     const [
       liveFixtures, todayFixtures,
       bbLive, bbToday,
       hkLive, hkToday,
-      baLive, baToday,
+      baLive, baToday, baYesterday,
       nflLive, nflToday,
       hbLive, hbToday,
     ] = await Promise.all([
@@ -9921,6 +9923,7 @@ app.get('/api/live-scores', async (req, res) => {
       afGet('v1.hockey.api-sports.io', '/games', { date: today }).catch(() => []),
       afGet('v1.baseball.api-sports.io', '/games', { live: 'all' }).catch(() => []),
       afGet('v1.baseball.api-sports.io', '/games', { date: today }).catch(() => []),
+      afGet('v1.baseball.api-sports.io', '/games', { date: yesterday }).catch(() => []),
       afGet('v1.american-football.api-sports.io', '/games', { date: today }).catch(() => []),
       afGet('v1.american-football.api-sports.io', '/games', { date: today }).catch(() => []),
       afGet('v1.handball.api-sports.io', '/games', { live: 'all' }).catch(() => []),
@@ -9928,8 +9931,6 @@ app.get('/api/live-scores', async (req, res) => {
     ]);
 
     const LIVE_STATUSES = new Set(['1H','HT','2H','ET','BT','P','INT','LIVE']);
-    // v1 sport APIs use different status codes for live
-    const V1_LIVE_STATUSES = new Set(['Q1','Q2','Q3','Q4','OT','BT','HT','LIVE','P1','P2','P3','OT','BT','IN1','IN2','IN3','IN4','IN5','IN6','IN7','IN8','IN9']);
 
     // ── Football mapper ──────────────────────────────────────────────────────
     const mapFixture = (f) => {
@@ -9971,7 +9972,7 @@ app.get('/api/live-scores', async (req, res) => {
     // ── Generic v1 sport mapper (basketball, hockey, baseball, NFL, handball) ─
     const mapV1Game = (g, sport, leagueNamesMap) => {
       const statusShort = (g.status?.short || g.game?.status?.short || '').toUpperCase();
-      const isLive = V1_LIVE_STATUSES.has(statusShort);
+      const isLive = isV1LiveStatus(statusShort);
       const isFT = statusShort === 'FT' || statusShort === 'AOT' || statusShort === 'AP';
       const isNS = statusShort === 'NS';
 
@@ -10030,7 +10031,7 @@ app.get('/api/live-scores', async (req, res) => {
     }
 
     // ── Collect other sports (dedup live vs today) ───────────────────────────
-    const addV1Sport = (liveGames, todayGames, sport, knownIds, namesMap) => {
+    const addV1Sport = (liveGames, datedGames, sport, knownIds, namesMap, options = {}) => {
       const sportSeen = new Set();
       for (const g of (liveGames || [])) {
         const lid = g.league?.id;
@@ -10039,13 +10040,13 @@ app.get('/api/live-scores', async (req, res) => {
         sportSeen.add(gid);
         events.push(mapV1Game(g, sport, namesMap));
       }
-      for (const g of (todayGames || [])) {
+      for (const g of (datedGames || [])) {
         const lid = g.league?.id;
         const gid = g.id || g.game?.id;
         if (!knownIds.has(lid)) continue;
         if (sportSeen.has(gid)) continue;
         const st = (g.status?.short || g.game?.status?.short || '').toUpperCase();
-        if (st !== 'NS') continue;
+        if (!shouldIncludeDatedV1Game(st, options)) continue;
         sportSeen.add(gid);
         events.push(mapV1Game(g, sport, namesMap));
       }
@@ -10053,7 +10054,7 @@ app.get('/api/live-scores', async (req, res) => {
 
     addV1Sport(bbLive,  bbToday,  'basketball',       knownBBLeagueIds,  bbLeagueNames);
     addV1Sport(hkLive,  hkToday,  'hockey',           knownHKLeagueIds,  hkLeagueNames);
-    addV1Sport(baLive,  baToday,  'baseball',         knownBALeagueIds,  baLeagueNames);
+    addV1Sport(baLive,  [...(baToday || []), ...(baYesterday || [])], 'baseball', knownBALeagueIds, baLeagueNames, { includeLiveStatuses: true });
     addV1Sport(nflLive, nflToday, 'american-football', knownNFLLeagueIds, nflLeagueNames);
     addV1Sport(hbLive,  hbToday,  'handball',         knownHBLeagueIds,  hbLeagueNames);
 

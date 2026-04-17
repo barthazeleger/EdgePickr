@@ -36,6 +36,7 @@ const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const dailyResults = require('./lib/daily-results');
+const liveBoard = require('./lib/live-board');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -4616,6 +4617,22 @@ test('daily-results: post-results model jobs draaien alleen bij nieuwe settlemen
   assert.deepStrictEqual(
     dailyResults.shouldRunPostResultsModelJobs(NaN),
     { shouldRun: false, reason: 'no_new_results' }
+  );
+});
+
+test('live-board: dated baseball fallback accepteert live inning-statussen', () => {
+  assert.strictEqual(liveBoard.isV1LiveStatus('IN4'), true);
+  assert.strictEqual(
+    liveBoard.shouldIncludeDatedV1Game('IN4', { includeLiveStatuses: true }),
+    true
+  );
+  assert.strictEqual(
+    liveBoard.shouldIncludeDatedV1Game('IN4', { includeLiveStatuses: false }),
+    false
+  );
+  assert.strictEqual(
+    liveBoard.shouldIncludeDatedV1Game('NS', { includeLiveStatuses: false }),
+    true
   );
 });
 
