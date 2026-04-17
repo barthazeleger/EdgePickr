@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.4] - 2026-04-17
+
+Phase B.4 · Walk-forward validator. Fundering voor eerlijke edge-claims: elke backtest of signal-validatie moet nu op een time-aware split draaien. Zonder dit lekken random splits toekomst-info in trainingsdata en overschat de tool zijn eigen edge.
+
+### Added — `lib/walk-forward.js`
+- **[claude] `walkForward(records, opts)`** — pure iterator. Chronologisch gesorteerd, generates tuples `{trainStart, trainEnd, testStart, testEnd, train, test}`. Config: `trainDays` (default 180), `testDays` (30), `strideDays` (=testDays), `minTrainN` (50), `minTestN` (5), `anchorMs` (optional). Garandeert `maxTrainTs < minTestTs` — geen leakage.
+- **[claude] `computeBrier` + `computeLogLoss`** — mean squared / log-likelihood over `{predicted_prob, outcome_binary}` records. Null-safe, clipped at `ε=1e-9` om log(0) te voorkomen.
+- **[claude] `computeClvAvg`** — gemiddelde CLV over records (bets).
+- **[claude] `walkForwardBrier(records, splitOpts, metricOpts)`** — convenience: loopt walk-forward splits en rapporteert per-split + weighted-avg Brier.
+- **[claude] `parseRecordDate(record, field)`** — parseert ISO, epoch-ms en `dd-mm-yyyy` (bets.datum format). Returnt null bij onparsebare data.
+
+### Tests
+- 11 nieuwe tests: empty input, undated records, lookahead-vrijwaring (strict train<test check), minTrainN gate, bets.datum format parsing, Brier perfect/50-50/skip-null cases, log-loss perfect-prediction, CLV avg, integration end-to-end.
+- `npm test`: 487 passed, 0 failed.
+
+### Rationale
+Doctrine §14.R2.A: "Random split lekt toekomst-info in trainingsdata en overschat edge." Calibration-monitor draaide op alle-samples-tegelijk, wat conservatieve schattingen geeft maar GEEN time-aware validatie. Autotune's drift-gates (Phase A.3) verliezen kracht als de onderliggende Brier-score zelf biased is door in-sample-fitting. Deze module is de foundation waar toekomstige backtests, signal-validation en promotion-gates (signal-promotion doctrine) verplicht op moeten draaien.
+
+### Not in this commit (follow-up slices)
+- **Autotune op walk-forward Brier**: `autoTuneSignalsByClv` leest nu uit `signal_calibration` tabel (all-samples). Next: migratie van `calibration-monitor` zelf om per-signal per-sport per-market walk-forward Brier te schrijven i.p.v. single-window. Phase B.4b.
+- **Backtest admin endpoint**: expose `walkForwardBrier(bets)` via `/api/admin/v2/backtest-wf` zodat Bart signaal × sport kan querien. Phase B.4c (klein slice, na Phase A.1b wire-up zodat pick-side probabilities beschikbaar zijn).
+- **Bonferroni/FDR op multi-signal tuning**: Phase B.5.
+- **Rolling 90/365 drift graph**: Phase B.6.
+
 ## [10.12.3] - 2026-04-17
 
 Phase A.3 · Brier → autotune feedback loop + concept-drift guard. Voorheen werd `signal_calibration` alleen gelezen voor inspectie; nu overruled het de CLV-gate wanneer een signaal kalibratie-gedrift vertoont (ranking kan correct zijn terwijl probability-output drift — Kelly-sizing gebruikt die probability).

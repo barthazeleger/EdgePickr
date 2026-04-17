@@ -34,6 +34,7 @@ const execGate = require('./lib/execution-gate');
 const playability = require('./lib/playability');
 const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
+const walkForward = require('./lib/walk-forward');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const dailyResults = require('./lib/runtime/daily-results');
 const liveBoard = require('./lib/runtime/live-board');
@@ -2305,7 +2306,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.3');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5636,6 +5637,114 @@ test('operatorDay: converteert kickoff naar Amsterdam kalenderdag', () => {
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T22:00:00Z'), '2026-04-18');
   // 2026-04-17T12:00:00Z = 17 apr 14:00 in CEST
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T12:00:00Z'), '2026-04-17');
+});
+
+// ── WALK-FORWARD VALIDATOR (v10.12.4, Phase B.4, doctrine §14.R2.A) ──────────
+console.log('\n  Walk-forward validator:');
+
+test('walkForward: empty records → lege splits', () => {
+  assert.deepStrictEqual(walkForward.walkForward([], {}), []);
+  assert.deepStrictEqual(walkForward.walkForward(null, {}), []);
+});
+
+test('walkForward: records zonder datum → overgeslagen', () => {
+  const records = [{ foo: 'bar' }, { baz: 'qux' }];
+  const r = walkForward.walkForward(records, { dateField: 'kickoff_at' });
+  assert.deepStrictEqual(r, []);
+});
+
+test('walkForward: chronological split, geen lookahead', () => {
+  // 300 records gelijkmatig verspreid over 400 dagen (1 per ~1.33 dag)
+  const base = Date.parse('2025-01-01T00:00:00Z');
+  const DAY = 86400000;
+  const records = Array.from({ length: 300 }, (_, i) => ({
+    kickoff_at: new Date(base + i * 1.333 * DAY).toISOString(),
+    idx: i,
+  }));
+  const splits = walkForward.walkForward(records, { trainDays: 100, testDays: 30, strideDays: 30, minTrainN: 10, minTestN: 5 });
+  assert.ok(splits.length > 0, 'moet meerdere splits opleveren');
+  // Elke split: alle train-records < test-records in tijd (geen lookahead)
+  for (const s of splits) {
+    const maxTrain = Math.max(...s.train.map(r => Date.parse(r.kickoff_at)));
+    const minTest  = Math.min(...s.test.map(r => Date.parse(r.kickoff_at)));
+    assert.ok(maxTrain < minTest, 'train moet strikt vóór test liggen (geen leakage)');
+  }
+});
+
+test('walkForward: minTrainN gate → kleine training sets worden overgeslagen', () => {
+  const base = Date.parse('2026-01-01T00:00:00Z');
+  const DAY = 86400000;
+  const records = Array.from({ length: 20 }, (_, i) => ({
+    kickoff_at: new Date(base + i * DAY).toISOString(),
+  }));
+  const splits = walkForward.walkForward(records, { trainDays: 7, testDays: 3, minTrainN: 100 });
+  assert.strictEqual(splits.length, 0, 'geen training set haalt de minTrainN van 100');
+});
+
+test('walkForward: dd-mm-yyyy datum-formaat uit bets.datum wordt correct geparsed', () => {
+  // bets.datum formaat is dd-mm-yyyy (niet ISO). walkForward moet dit aankunnen.
+  const records = [
+    { datum: '15-01-2026' }, { datum: '16-01-2026' }, { datum: '17-01-2026' },
+  ];
+  const r = records.map(rec => ({ ms: walkForward.parseRecordDate(rec, 'datum'), rec }));
+  assert.ok(r.every(x => Number.isFinite(x.ms)), 'alle datums parsebaar');
+  assert.ok(r[0].ms < r[1].ms && r[1].ms < r[2].ms, 'chronologisch oplopend');
+});
+
+test('computeBrier: perfect voorspeld → 0', () => {
+  const recs = [
+    { predicted_prob: 1.0, outcome_binary: 1 },
+    { predicted_prob: 0.0, outcome_binary: 0 },
+  ];
+  assert.strictEqual(walkForward.computeBrier(recs).score, 0);
+});
+
+test('computeBrier: random 0.5 op {0,1} → ~0.25', () => {
+  const recs = [
+    { predicted_prob: 0.5, outcome_binary: 1 },
+    { predicted_prob: 0.5, outcome_binary: 0 },
+    { predicted_prob: 0.5, outcome_binary: 1 },
+    { predicted_prob: 0.5, outcome_binary: 0 },
+  ];
+  assert.strictEqual(walkForward.computeBrier(recs).score, 0.25);
+});
+
+test('computeBrier: skipt records zonder prob/outcome', () => {
+  const recs = [
+    { predicted_prob: 0.5, outcome_binary: 1 },
+    { predicted_prob: null, outcome_binary: 0 },
+    { predicted_prob: 0.3 }, // outcome ontbreekt
+  ];
+  const r = walkForward.computeBrier(recs);
+  assert.strictEqual(r.n, 1, 'maar 1 valide record');
+});
+
+test('computeLogLoss: perfect voorspeld → 0', () => {
+  const recs = [
+    { predicted_prob: 0.9999, outcome_binary: 1 },
+    { predicted_prob: 0.0001, outcome_binary: 0 },
+  ];
+  const r = walkForward.computeLogLoss(recs);
+  assert.ok(r.score < 0.001, `verwacht ~0, kreeg ${r.score}`);
+});
+
+test('computeClvAvg: mean over records', () => {
+  const recs = [{ clv_pct: 2.0 }, { clv_pct: -1.0 }, { clv_pct: 0.5 }];
+  assert.strictEqual(walkForward.computeClvAvg(recs).avg, 0.5);
+});
+
+test('walkForwardBrier: integratie met mock dataset', () => {
+  const base = Date.parse('2025-01-01T00:00:00Z');
+  const DAY = 86400000;
+  // 100 records: random prob 0.5 → Brier ~0.25 consistent over splits
+  const records = Array.from({ length: 200 }, (_, i) => ({
+    kickoff_at: new Date(base + i * DAY).toISOString(),
+    predicted_prob: 0.5,
+    outcome_binary: i % 2,
+  }));
+  const r = walkForward.walkForwardBrier(records, { trainDays: 50, testDays: 20, minTrainN: 20, minTestN: 5 });
+  assert.ok(r.splitCount > 0, 'meerdere splits');
+  assert.strictEqual(r.weightedAvgBrier, 0.25, 'weighted avg Brier = 0.25 voor 50/50');
 });
 
 // ── BAYESIAN FORM SHRINKAGE (v10.10.19, broad shrinkage roadmap punt 5) ──────
