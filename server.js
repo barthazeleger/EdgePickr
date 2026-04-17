@@ -2023,26 +2023,63 @@ function buildAggregateInfo(aggHome, aggAway) {
 async function fetchLastPlayedDate(sport, cfg, teamId, beforeKickoffMs) {
   if (!AF_KEY || !teamId) return null;
   if (!afCache.lastPlayed[sport]) afCache.lastPlayed[sport] = {};
+  // v10.12.14 Phase D.13: ook een recente-matches cache voor congestion signal.
+  if (!afCache.recentMatches) afCache.recentMatches = {};
+  if (!afCache.recentMatches[sport]) afCache.recentMatches[sport] = {};
+
   const cached = afCache.lastPlayed[sport][teamId];
   if (cached !== undefined) return cached; // null ook geldig (= niet gevonden)
   try {
     const path = cfg.host.includes('football') ? '/fixtures' : '/games';
-    const rows = await afGet(cfg.host, path, { team: teamId, last: 1 });
-    // Extract date from response — structure varies per sport api-sports
+    // v10.12.14: fetch last=3 zodat we congestion-density kunnen berekenen.
+    // Zelfde API-call kost als last=1 (1 API-call, meer rows terug).
+    const rows = await afGet(cfg.host, path, { team: teamId, last: 3 });
     let dateStr = null;
-    const row = rows?.[0];
-    if (row) {
-      dateStr = row.fixture?.date || row.date || row.timestamp || null;
+    const recentDates = [];
+    for (const row of (rows || [])) {
+      const d = row.fixture?.date || row.date || row.timestamp || null;
+      if (d) recentDates.push(d);
     }
-    // Cache ook null zodat we niet nogmaals fetchen voor onbekende team
+    if (recentDates.length) dateStr = recentDates[0];
+    // Cache ook null zodat we niet nogmaals fetchen voor onbekende team.
     afCache.lastPlayed[sport][teamId] = dateStr;
+    afCache.recentMatches[sport][teamId] = recentDates;
     await sleep(80);
     return dateStr;
   } catch (e) {
     console.warn(`fetchLastPlayedDate failed voor ${sport}/${teamId}:`, e.message);
     afCache.lastPlayed[sport][teamId] = null;
+    afCache.recentMatches[sport][teamId] = [];
     return null;
   }
+}
+
+// v10.12.14 Phase D.13: read-helper voor recente wedstrijden.
+function getRecentMatchDates(sport, teamId) {
+  if (!afCache.recentMatches || !afCache.recentMatches[sport]) return [];
+  return afCache.recentMatches[sport][teamId] || [];
+}
+
+// v10.12.14 Phase D.13: fixture-congestion. Telt matches in de laatste N dagen
+// vóór kickoff. Pure helper — testbaar zonder API-calls.
+function computeFixtureCongestion(recentDates, kickoffMs, windowDays = 7) {
+  if (!Array.isArray(recentDates) || recentDates.length === 0 || !Number.isFinite(kickoffMs)) {
+    return { count: 0, congested: false, densityDays: null };
+  }
+  const msPerDay = 86400000;
+  const cutoff = kickoffMs - windowDays * msPerDay;
+  let count = 0;
+  let earliestMs = null;
+  for (const d of recentDates) {
+    const ms = Date.parse(d);
+    if (!Number.isFinite(ms) || ms > kickoffMs) continue;
+    if (ms >= cutoff) count++;
+    if (earliestMs === null || ms < earliestMs) earliestMs = ms;
+  }
+  const densityDays = earliestMs !== null ? +((kickoffMs - earliestMs) / msPerDay).toFixed(1) : null;
+  // Congested: ≥ 3 matches in the last N days. Doctrine §10.B "fixture congestion" proxy.
+  const congested = count >= 3;
+  return { count, congested, densityDays };
 }
 
 // Bereken rest-days + maak signal/note.
@@ -2051,7 +2088,7 @@ async function fetchLastPlayedDate(sport, cfg, teamId, beforeKickoffMs) {
 //   MLB:     <1 dag = tired (uncommon, usually off-days)
 //   NFL:     <4 dagen = short week
 //   Football:<3 dagen = midweek after CL/EL
-function buildRestDaysInfo(sport, kickoffMs, homeLastDate, awayLastDate) {
+function buildRestDaysInfo(sport, kickoffMs, homeLastDate, awayLastDate, opts = {}) {
   const msPerDay = 86400000;
   const hmDays = homeLastDate ? Math.max(0, (kickoffMs - new Date(homeLastDate).getTime()) / msPerDay) : null;
   const awDays = awayLastDate ? Math.max(0, (kickoffMs - new Date(awayLastDate).getTime()) / msPerDay) : null;
@@ -2068,6 +2105,28 @@ function buildRestDaysInfo(sport, kickoffMs, homeLastDate, awayLastDate) {
   if (hmDays !== null && awDays !== null && Math.abs(hmDays - awDays) >= 3) {
     signals.push(hmDays > awDays ? 'rest_mismatch_home_advantage:0%' : 'rest_mismatch_away_advantage:0%');
   }
+
+  // v10.12.14 Phase D.13: fixture-congestion signaal. Ships in shadow mode
+  // (value=0%, weight=0). Auto-promote via autoTuneSignalsByClv zodra n≥50
+  // picks met positieve CLV én BH-FDR pass (v10.12.11).
+  // Rules:
+  //   - home ≥3 matches in last 7d → fixture_congestion_home_tired
+  //   - away ≥3 matches in last 7d → fixture_congestion_away_tired
+  //   - Eén van de teams congested én de ander niet → mismatch advantage
+  //     voor de NIET-congested team.
+  let homeCong = { count: 0, congested: false, densityDays: null };
+  let awayCong = { count: 0, congested: false, densityDays: null };
+  if (Array.isArray(opts.homeRecentDates)) {
+    homeCong = computeFixtureCongestion(opts.homeRecentDates, kickoffMs, 7);
+  }
+  if (Array.isArray(opts.awayRecentDates)) {
+    awayCong = computeFixtureCongestion(opts.awayRecentDates, kickoffMs, 7);
+  }
+  if (homeCong.congested) signals.push('fixture_congestion_home_tired:0%');
+  if (awayCong.congested) signals.push('fixture_congestion_away_tired:0%');
+  if (homeCong.congested && !awayCong.congested) signals.push('congestion_mismatch_away_advantage:0%');
+  if (awayCong.congested && !homeCong.congested) signals.push('congestion_mismatch_home_advantage:0%');
+
   // Menselijke note
   let note = '';
   if (hmDays !== null && awDays !== null) {
@@ -2077,7 +2136,12 @@ function buildRestDaysInfo(sport, kickoffMs, homeLastDate, awayLastDate) {
       note = ` | 🛌 rust: thuis ${hmStr} / uit ${awStr}`;
     }
   }
-  return { hmDays, awDays, homeTired, awayTired, signals, note };
+  if (homeCong.congested || awayCong.congested) {
+    const hmC = homeCong.congested ? `${homeCong.count}🔥` : `${homeCong.count}`;
+    const awC = awayCong.congested ? `${awayCong.count}🔥` : `${awayCong.count}`;
+    note += ` | 📅 congestion 7d: thuis ${hmC} / uit ${awC}`;
+  }
+  return { hmDays, awDays, homeTired, awayTired, signals, note, homeCongested: homeCong.congested, awayCongested: awayCong.congested, homeCongestionCount: homeCong.count, awayCongestionCount: awayCong.count };
 }
 
 // Haal H2H op voor twee teams (lazy-loaded, max 5x per scan)
@@ -5414,9 +5478,21 @@ async function runPrematch(emit) {
           ]);
           if (hmCached) scanTelemetry.restDaysCacheHits++; else scanTelemetry.restDaysLookups++;
           if (awCached) scanTelemetry.restDaysCacheHits++; else scanTelemetry.restDaysLookups++;
-          restInfo = buildRestDaysInfo('football', kickoffMs, hmLast, awLast);
+          // v10.12.14 Phase D.13: fixture-congestion uit cached recent-matches.
+          // fetchLastPlayedDate populeert afCache.recentMatches met last=3 dates.
+          const hmRecent = getRecentMatchDates('football', hmId);
+          const awRecent = getRecentMatchDates('football', awId);
+          restInfo = buildRestDaysInfo('football', kickoffMs, hmLast, awLast, {
+            homeRecentDates: hmRecent, awayRecentDates: awRecent,
+          });
           if (restInfo.homeTired) scanTelemetry.restDaysTiredHome++;
           if (restInfo.awayTired) scanTelemetry.restDaysTiredAway++;
+          if (restInfo.homeCongested) {
+            scanTelemetry.fixtureCongestionHome = (scanTelemetry.fixtureCongestionHome || 0) + 1;
+          }
+          if (restInfo.awayCongested) {
+            scanTelemetry.fixtureCongestionAway = (scanTelemetry.fixtureCongestionAway || 0) + 1;
+          }
         } catch (e) { scanTelemetry.restDaysFails++; console.warn('Rest-days (football) fetch failed:', e.message); }
 
         // ── Knockout / leg-info (CL, EL, Conference, domestic cups) ───

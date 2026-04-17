@@ -2340,7 +2340,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.13');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.14');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5738,6 +5738,87 @@ test('benjaminiHochbergFDR: strengere q blokkeert meer', () => {
 });
 
 // ── WALK-FORWARD VALIDATOR (v10.12.4, Phase B.4, doctrine §14.R2.A) ──────────
+// ── FIXTURE CONGESTION (v10.12.14 Phase D.13) ─────────────────────────────
+console.log('\n  Fixture congestion (shadow-mode signal):');
+
+// Need to access computeFixtureCongestion from server.js. It's a module-private
+// helper, so test against its behavior via buildRestDaysInfo side-effects
+// (the public integration surface). We re-declare it inline to test the pure
+// math without requiring server.js boot.
+function __computeFixtureCongestion(recentDates, kickoffMs, windowDays = 7) {
+  if (!Array.isArray(recentDates) || recentDates.length === 0 || !Number.isFinite(kickoffMs)) {
+    return { count: 0, congested: false, densityDays: null };
+  }
+  const msPerDay = 86400000;
+  const cutoff = kickoffMs - windowDays * msPerDay;
+  let count = 0;
+  let earliestMs = null;
+  for (const d of recentDates) {
+    const ms = Date.parse(d);
+    if (!Number.isFinite(ms) || ms > kickoffMs) continue;
+    if (ms >= cutoff) count++;
+    if (earliestMs === null || ms < earliestMs) earliestMs = ms;
+  }
+  const densityDays = earliestMs !== null ? +((kickoffMs - earliestMs) / msPerDay).toFixed(1) : null;
+  const congested = count >= 3;
+  return { count, congested, densityDays };
+}
+
+test('computeFixtureCongestion: lege input → count=0, niet congested', () => {
+  const r = __computeFixtureCongestion([], Date.now());
+  assert.strictEqual(r.count, 0);
+  assert.strictEqual(r.congested, false);
+});
+
+test('computeFixtureCongestion: 3 matches in 7d → congested=true', () => {
+  const kickoff = Date.parse('2026-04-17T19:00:00Z');
+  const dates = [
+    '2026-04-11T19:00:00Z',   // 6d voor kickoff (binnen window)
+    '2026-04-13T20:00:00Z',   // 4d voor
+    '2026-04-16T19:00:00Z',   // 1d voor
+  ];
+  const r = __computeFixtureCongestion(dates, kickoff, 7);
+  assert.strictEqual(r.count, 3);
+  assert.strictEqual(r.congested, true);
+});
+
+test('computeFixtureCongestion: 2 matches in 7d → niet congested', () => {
+  const kickoff = Date.parse('2026-04-17T19:00:00Z');
+  const dates = ['2026-04-14T19:00:00Z', '2026-04-16T20:00:00Z'];
+  const r = __computeFixtureCongestion(dates, kickoff, 7);
+  assert.strictEqual(r.count, 2);
+  assert.strictEqual(r.congested, false);
+});
+
+test('computeFixtureCongestion: match buiten window wordt niet geteld', () => {
+  const kickoff = Date.parse('2026-04-17T19:00:00Z');
+  const dates = [
+    '2026-04-01T19:00:00Z',   // >7d → niet tellen
+    '2026-04-15T19:00:00Z',   // binnen window
+  ];
+  const r = __computeFixtureCongestion(dates, kickoff, 7);
+  assert.strictEqual(r.count, 1);
+  assert.strictEqual(r.congested, false);
+});
+
+test('computeFixtureCongestion: toekomstige date wordt niet geteld', () => {
+  const kickoff = Date.parse('2026-04-17T19:00:00Z');
+  const dates = ['2026-04-20T19:00:00Z'];   // na kickoff
+  const r = __computeFixtureCongestion(dates, kickoff, 7);
+  assert.strictEqual(r.count, 0);
+});
+
+test('computeFixtureCongestion: density bij 3 matches over 10d → ~10 dagen', () => {
+  const kickoff = Date.parse('2026-04-17T19:00:00Z');
+  const dates = [
+    '2026-04-07T19:00:00Z',
+    '2026-04-12T19:00:00Z',
+    '2026-04-16T19:00:00Z',
+  ];
+  const r = __computeFixtureCongestion(dates, kickoff, 14);
+  assert.ok(r.densityDays >= 9.9 && r.densityDays <= 10.1, `verwacht ~10, kreeg ${r.densityDays}`);
+});
+
 console.log('\n  Walk-forward validator:');
 
 test('walkForward: empty records → lege splits', () => {

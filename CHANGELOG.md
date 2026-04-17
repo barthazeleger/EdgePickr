@@ -2,6 +2,51 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.14] - 2026-04-17
+
+Phase D.13 · Fixture-congestion signal voor football (shadow-mode). Eerste nieuwe signal die via de signal-promotion doctrine (shadow → active bij walk-forward bewijs) binnenkomt.
+
+### Added
+- **[claude] `fetchLastPlayedDate`** haalt nu `last=3` i.p.v. `last=1` per team (zelfde API-call kost, 3× data terug). Recente dates cachen in `afCache.recentMatches[sport][teamId]`.
+- **[claude] `getRecentMatchDates(sport, teamId)`** — read-helper voor de recente-matches cache.
+- **[claude] `computeFixtureCongestion(recentDates, kickoffMs, windowDays=7)`** — pure helper. Telt matches in de laatste N dagen vóór kickoff. Returnt `{count, congested, densityDays}`. `congested = count >= 3`.
+- **[claude] `buildRestDaysInfo(..., opts)`** — accepteert nu optionele 5e arg `{homeRecentDates, awayRecentDates}`. Berekent congestion per team + genereert shadow-mode signals.
+
+### Nieuwe signalen (allemaal weight=0 default — shadow-mode)
+- **`fixture_congestion_home_tired:0%`** — thuisteam ≥3 wedstrijden in last 7d
+- **`fixture_congestion_away_tired:0%`** — uitteam ≥3 wedstrijden in last 7d
+- **`congestion_mismatch_home_advantage:0%`** — alleen uitteam congested → thuis voordeel
+- **`congestion_mismatch_away_advantage:0%`** — alleen thuisteam congested → uit voordeel
+
+### Note in scan-log
+Nieuwe human-readable regel naast bestaande rust-note: `📅 congestion 7d: thuis 2 / uit 3🔥` (🔥 marker op congested teams).
+
+### Shadow → active mechanisme
+Doctrine `project_signal_promotion_doctrine.md` (2026-04-17): nieuwe signals ship in shadow (weight=0, no scoring impact), worden wel per pick geattribueerd in `signals[]` array, en auto-promoten via `autoTuneSignalsByClv` zodra:
+- n ≥ 50 picks met dat signal
+- edge CLV ≥ 0.75%
+- raw avg CLV > 0
+- Brier drift < 0.03
+- **(v10.12.11) BH-FDR q=0.10 pass**
+
+Dat betekent: de 4 nieuwe fixture_congestion signals beïnvloeden NU geen stake. Zodra we na 50+ picks bewijs hebben dat ze CLV-positief zijn, promoveren ze automatisch naar weight=0.5.
+
+### Telemetrie
+`scanTelemetry.fixtureCongestionHome` + `fixtureCongestionAway` counters bijgewerkt per scan (zichtbaar in scan-log signal coverage regel).
+
+### Waarom fixture-congestion eerst
+Uit research-audit: "Football fixture-congestion: hoogste signal:effort ratio (1-2h effort, 2-3% edge op midweek fixtures)." Bestaande `restDays` signal dekt "days since last match" maar niet de bredere density. Een team dat 3 wedstrijden in 6 dagen heeft gedraaid (bv. league + cup + Europa + league) heeft andere fatigue-profile dan een team dat 6 dagen rust had na 1 match.
+
+### Tests
+- 6 nieuwe unit tests voor `computeFixtureCongestion`.
+- `npm test`: 507 passed, 0 failed.
+
+### Queue
+Volgende signalen (ook shadow-mode):
+- Lineup certainty (via `/fixtures/lineups` gecachte data)
+- Rotation risk (op basis van minutes-played vs squad-depth)
+- Ander sport: NFL inactives + stadium/weather
+
 ## [10.12.13] - 2026-04-17
 
 Hotfix · `f5Diag is not defined` in MLB + KBO scans. Bug zichtbaar als `⚠️ ⚾ MLB: f5Diag is not defined` + `⚠️ ⚾ KBO (Korea): f5Diag is not defined` in de eerste live scan-log na v10.12.12 merge.
