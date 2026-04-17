@@ -2305,7 +2305,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.1');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4874,6 +4874,97 @@ test('lineTimeline.getLineTimeline: integration met mock supabase happy path', a
   assert.ok(home);
   assert.ok(home.timeline.drift > 0.09, 'home prob steeg ~10pp');
   assert.ok(home.timeline.firstSeenOnPreferred);
+});
+
+// ── Phase A.1 · deriveExecutionMetrics + buildScanTimelineMap (v10.12.2) ────
+test('lineTimeline.deriveExecutionMetrics: null timeline → null', () => {
+  assert.strictEqual(lineTimeline.deriveExecutionMetrics(null), null);
+  assert.strictEqual(lineTimeline.deriveExecutionMetrics(undefined), null);
+});
+
+test('lineTimeline.deriveExecutionMetrics: preferredGap uit timeline → preferredGapPct + stalePct', () => {
+  const fakeTimeline = {
+    close: { bestPrice: 2.10, bestPreferredPrice: 2.00, marketAvgProb: 0.50, bookmakerCount: 8 },
+    preferredGap: 0.10,
+    bookmakerCountMax: 8,
+    samples: 5,
+    sharpGap: 0.05,
+    drift: 0.01,
+  };
+  const m = lineTimeline.deriveExecutionMetrics(fakeTimeline);
+  assert.ok(m);
+  assert.strictEqual(m.preferredGap, 0.10);
+  // (2.10 - 2.00) / 2.00 × 100 = 5%
+  assert.strictEqual(m.preferredGapPct, 5);
+  assert.strictEqual(m.stalePct, 5);
+  assert.strictEqual(m.bookmakerCountMax, 8);
+  assert.strictEqual(m.hasTargetBookie, true);
+});
+
+test('lineTimeline.deriveExecutionMetrics: overroundPct 3-way vs 2-way', () => {
+  // marketAvgProb 0.40 → 3-way overround: 0.40*3-1 = 0.20 = 20%
+  const fakeTimeline = {
+    close: { bestPrice: 2.50, bestPreferredPrice: 2.45, marketAvgProb: 0.40, bookmakerCount: 6 },
+    preferredGap: 0.05,
+    bookmakerCountMax: 6,
+    samples: 3,
+  };
+  const m3 = lineTimeline.deriveExecutionMetrics(fakeTimeline);
+  assert.strictEqual(m3.overroundPct, 20);
+  const m2 = lineTimeline.deriveExecutionMetrics(fakeTimeline, { twoWayMarket: true });
+  // 2-way: 0.40*2-1 = -0.20 → clamped naar 0
+  assert.strictEqual(m2.overroundPct, 0);
+});
+
+test('lineTimeline.deriveExecutionMetrics: geen preferred price → hasTargetBookie=false', () => {
+  const fakeTimeline = {
+    close: { bestPrice: 2.50, bestPreferredPrice: null, marketAvgProb: 0.45, bookmakerCount: 4 },
+    preferredGap: null,
+    bookmakerCountMax: 4,
+  };
+  const m = lineTimeline.deriveExecutionMetrics(fakeTimeline);
+  assert.strictEqual(m.hasTargetBookie, false);
+  assert.strictEqual(m.preferredGapPct, null);
+});
+
+test('lineTimeline.buildScanTimelineMap: empty fixtureIds → lege Map zonder query', async () => {
+  let called = false;
+  const fakeSupabase = { from: () => { called = true; return { select: () => ({ in: () => ({ order: async () => ({ data: [] }) }) }) }; } };
+  const r = await lineTimeline.buildScanTimelineMap(fakeSupabase, { fixtureIds: [] });
+  assert.strictEqual(r.size, 0);
+  assert.strictEqual(called, false);
+});
+
+test('lineTimeline.buildScanTimelineMap: meerdere fixtures → per-bucket keys', async () => {
+  const rows = [
+    { fixture_id: 1, captured_at: '2026-04-16T18:00:00Z', bookmaker: 'pinnacle', market_type: 'h2h', selection_key: 'home', line: null, odds: 2.10 },
+    { fixture_id: 1, captured_at: '2026-04-16T19:00:00Z', bookmaker: 'bet365',   market_type: 'h2h', selection_key: 'home', line: null, odds: 2.00 },
+    { fixture_id: 2, captured_at: '2026-04-16T18:00:00Z', bookmaker: 'pinnacle', market_type: 'h2h', selection_key: 'away', line: null, odds: 3.50 },
+  ];
+  // Builder returns itself so .in().order().in() chains; awaiting resolves with data.
+  const builder = {};
+  builder.select = () => builder;
+  builder.in = () => builder;
+  builder.order = () => builder;
+  builder.then = (resolve) => resolve({ data: rows, error: null });
+  const fakeSupabase = { from: () => builder };
+  const map = await lineTimeline.buildScanTimelineMap(fakeSupabase, {
+    fixtureIds: [1, 2], marketTypes: ['h2h'], preferredBookies: ['bet365'],
+  });
+  assert.strictEqual(map.size, 2);
+  assert.ok(map.has('1|h2h|home|null'));
+  assert.ok(map.has('2|h2h|away|null'));
+});
+
+test('lineTimeline.lookupTimeline: O(1) key-match', () => {
+  const map = new Map([
+    ['1|h2h|home|null', { fixtureId: 1, timeline: { samples: 3 } }],
+    ['1|totals|over|2.5', { fixtureId: 1, timeline: { samples: 5 } }],
+  ]);
+  assert.ok(lineTimeline.lookupTimeline(map, { fixtureId: 1, marketType: 'h2h', selectionKey: 'home', line: null }));
+  assert.ok(lineTimeline.lookupTimeline(map, { fixtureId: 1, marketType: 'totals', selectionKey: 'over', line: 2.5 }));
+  assert.strictEqual(lineTimeline.lookupTimeline(map, { fixtureId: 1, marketType: 'h2h', selectionKey: 'away', line: null }), null);
+  assert.strictEqual(lineTimeline.lookupTimeline(null, { fixtureId: 1, marketType: 'h2h', selectionKey: 'home', line: null }), null);
 });
 
 // ── EXECUTION GATE: applyExecutionGate (v10.10.10+, fundament 3 Bouwvolgorde) ─

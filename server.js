@@ -44,6 +44,9 @@ const { matchesClvRecomputeTarget, resolveEarlyLiveOutcome } = require('./lib/ru
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
+
+// Price-memory query layer (Phase A.1 wiring): read-side helpers bovenop odds_snapshots.
+const lineTimelineLib = require('./lib/line-timeline');
 let _currentModelVersionId = null; // gevuld bij boot (registerModelVersion)
 
 // ── OPERATOR FAILSAFES (v10.2.1, persistent v10.2.3) ────────────────────────
@@ -6549,6 +6552,89 @@ app.get('/api/admin/v2/calibration-monitor', requireAdmin, async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── v2 Admin: line-timeline + execution-gate preview (Phase A.1) ────────────
+// GET /api/admin/v2/line-timeline-preview?fixture_id=123&market_type=h2h
+//      &selection_key=home&line=2.5&two_way=1
+// Returns timeline + derived execution-gate metrics + what applyExecutionGate
+// WOULD do for a hypothetical kelly fraction (hk=0.05). Observability voor de
+// price-memory pipeline. Verbruikt GEEN api-football quota; alleen supabase read.
+app.get('/api/admin/v2/line-timeline-preview', requireAdmin, async (req, res) => {
+  try {
+    const fixtureId = parseInt(req.query.fixture_id, 10);
+    const marketType = typeof req.query.market_type === 'string' ? req.query.market_type : 'h2h';
+    const selectionKey = typeof req.query.selection_key === 'string' ? req.query.selection_key : null;
+    const lineRaw = req.query.line != null && req.query.line !== '' ? parseFloat(req.query.line) : null;
+    const twoWay = req.query.two_way === '1' || req.query.two_way === 'true';
+    if (!Number.isFinite(fixtureId) || fixtureId <= 0) return res.status(400).json({ error: 'fixture_id is verplicht' });
+
+    // Optioneel: preferred-bookies uit admin settings voor de preferred-gap
+    // berekening (anders is preferredGap altijd null).
+    let preferredBookies = [];
+    try {
+      const users = await loadUsers();
+      const admin = users.find(u => u.role === 'admin');
+      preferredBookies = admin?.settings?.preferredBookies || ['Bet365', 'Unibet'];
+    } catch { preferredBookies = ['Bet365', 'Unibet']; }
+
+    // Optioneel: kickoff time uit fixtures tabel voor pre-kickoff window
+    let kickoffMs = null;
+    try {
+      const { data: fxRow } = await supabase.from('fixtures').select('kickoff_time').eq('id', fixtureId).single();
+      if (fxRow?.kickoff_time) {
+        const t = Date.parse(fxRow.kickoff_time);
+        if (Number.isFinite(t)) kickoffMs = t;
+      }
+    } catch { /* fixtures tabel misschien niet aanwezig; niet-fataal */ }
+
+    const timelineParams = { fixtureId, marketType, preferredBookies };
+    if (selectionKey) timelineParams.selectionKey = selectionKey;
+    if (lineRaw != null && Number.isFinite(lineRaw)) timelineParams.line = lineRaw;
+    if (kickoffMs) timelineParams.kickoffTime = kickoffMs;
+
+    const timelineMap = await lineTimelineLib.getLineTimeline(supabase, timelineParams);
+    if (timelineMap.size === 0) {
+      return res.json({
+        fixtureId, marketType, ready: false,
+        reason: 'Geen odds_snapshots gevonden voor deze combinatie',
+        buckets: [],
+      });
+    }
+
+    const { applyExecutionGate } = require('./lib/execution-gate');
+    const buckets = [];
+    for (const [bucketKey, entry] of timelineMap) {
+      const metrics = lineTimelineLib.deriveExecutionMetrics(entry.timeline, { twoWayMarket: twoWay });
+      // Simuleer wat de gate zou doen met een hk=0.05 (typische half-Kelly input).
+      const gated = metrics ? applyExecutionGate(0.05, metrics) : null;
+      buckets.push({
+        bucketKey,
+        selectionKey: entry.selectionKey,
+        line: entry.line,
+        timeline: entry.timeline,
+        metrics,
+        simulatedGate: gated ? {
+          hk_input: 0.05,
+          hk_output: gated.hk,
+          combined_multiplier: gated.combinedMultiplier,
+          multipliers: gated.multipliers,
+          reasons: gated.reasons,
+          skipped: gated.skip === true,
+        } : null,
+      });
+    }
+
+    return res.json({
+      fixtureId, marketType, preferredBookies, kickoffMs, twoWayMarket: twoWay,
+      ready: true,
+      bucketCount: buckets.length,
+      buckets,
+    });
+  } catch (e) {
+    console.error('line-timeline-preview error:', e.message);
+    res.status(500).json({ error: 'Interne fout · check server logs' });
   }
 });
 

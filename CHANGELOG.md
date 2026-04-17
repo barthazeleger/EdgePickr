@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.2] - 2026-04-17
+
+Phase A.1 scaffolding · price-memory → execution-gate plumbing. Library primitives toegevoegd + observability endpoint. Per-sport wire-up van getLineTimeline in de scan-flow volgt in A.1b (eigen slice per sport zodat fixture-id threading niet in één grote commit landt).
+
+### Added
+- **[claude] `lineTimeline.deriveExecutionMetrics(timeline, { twoWayMarket })`** — pure helper die een `buildTimeline()` output converteert naar de metrics-shape die `applyExecutionGate()` verwacht. Velden: `preferredGap`, `preferredGapPct`, `stalePct`, `overroundPct`, `bookmakerCountMax`, `hasTargetBookie`, `sharpGap`, `drift`, `samples`. Null-tolerant: fields die de timeline niet heeft komen terug als null → applyExecutionGate laat multiplier 1.0 (geen demping, geen skip).
+- **[claude] `lineTimeline.buildScanTimelineMap(supabase, { fixtureIds, marketTypes, preferredBookies, kickoffByFixtureId, scanAnchorMs })`** — bulk-loader. Eén supabase select voor alle fixtures in de scan, bouwt per (fixture_id, market_type, selection_key, line) een timeline. Returnt `Map<"${fixtureId}|${marketType}|${selectionKey}|${line}", entry>`. Voorkomt N-queries-per-scan wanneer de gate straks per-pick wordt geraadpleegd.
+- **[claude] `lineTimeline.lookupTimeline(map, {fixtureId, marketType, selectionKey, line})`** — O(1) lookup voor de bulk-map.
+- **[claude] Admin endpoint `GET /api/admin/v2/line-timeline-preview`** — parameters: `fixture_id` (required), `market_type` (default h2h), `selection_key`, `line`, `two_way`. Returnt de ruwe timeline + afgeleide execution-metrics + een simulatie van wat `applyExecutionGate` zou doen bij `hk=0.05` (typische half-Kelly input). Observability: toont per-bucket of de gate zou skippen / welke multipliers zouden firen / welke reasons.
+
+### Rationale
+De research-audit (memory file `execution-edge-inventory.md`) liet zien dat `lib/line-timeline.js` volledig getest was maar nergens geconsumeerd in runtime. Dit landt de primitieven + een preview-endpoint zodat de infrastructure bruikbaar is VOORDAT we mkP-call-sites aanraken. Per-sport wire-up (A.1b) kan dan per scan flow in een eigen commit zonder dat we in één commit alle sports breken.
+
+### Phase A.1b (queued — niet in deze commit)
+- Thread `fixture_id` + `market_type` + `selection_key` + `line` door de pick-factory zodat `resolveExecutionMetrics` de juiste bucket kan lookuppen in `buildScanTimelineMap`.
+- Wire per sport: football (runPrematch) → basketball → hockey → baseball → NFL → handball. Elke sport = eigen slice.
+- Acceptance per sport: pick waarvan `preferred_gap_pct ≥ 3.5%` krijgt `executionAudit.combined_multiplier = 0.6` en eindigt met kelly × 0.6.
+
+### Tests
+- 7 nieuwe tests voor `deriveExecutionMetrics` (null/gap-pct/overround 2-way vs 3-way/has-target-bookie), `buildScanTimelineMap` (empty → no-query, multi-fixture bucket keys), `lookupTimeline` (O(1) match / miss / null-safety).
+- `npm test` groen: 476 passed, 0 failed.
+
 ## [10.12.1] - 2026-04-17
 
 Security batch — Claude deep-review findings P0 + P1 uit 2026-04-17 audit doorgevoerd. Geen breaking changes; gedrag strakker, attack surface kleiner.
