@@ -5618,11 +5618,15 @@ async function runPrematch(emit) {
 
         // ── Lineups (alleen als aftrap < 3 uur weg) ───────────────────
         let lineupNote = '', lineupPenalty = { home: 0, away: 0 };
+        // v10.12.17 Phase D.13b: lineup-certainty shadow signal.
+        // States: 'both' | 'home_only' | 'away_only' | 'neither' | 'too_early' | 'unknown'
+        let lineupCertainty = 'too_early';
         const minsToKo = (kickoffMs - Date.now()) / 60000;
         if (minsToKo > 0 && minsToKo < 180 && apiCallsUsed < 290) {
           await sleep(80);
           const luResp = await afGet('v3.football.api-sports.io', '/fixtures/lineups', { fixture: fid });
           apiCallsUsed++;
+          lineupCertainty = 'neither';
           if (luResp?.length >= 2) {
             const hmLu = luResp.find(t => t.team?.id === f.teams?.home?.id);
             const awLu = luResp.find(t => t.team?.id === f.teams?.away?.id);
@@ -5633,7 +5637,16 @@ async function runPrematch(emit) {
             // Rotatiesignaal: als een ploeg duidelijk roteert (< 9 starters geteld)
             if (hmXI > 0 && hmXI < 9) { lineupPenalty.home = -0.03; lineupNote += ` ⚠️ ${hm.split(' ').pop()} roteert`; }
             if (awXI > 0 && awXI < 9) { lineupPenalty.away = -0.03; lineupNote += ` ⚠️ ${aw.split(' ').pop()} roteert`; }
+            // Certainty label (≥9 starters = confirmed)
+            const homeConfirmed = hmXI >= 9;
+            const awayConfirmed = awXI >= 9;
+            lineupCertainty = homeConfirmed && awayConfirmed ? 'both'
+              : homeConfirmed ? 'home_only'
+              : awayConfirmed ? 'away_only'
+              : 'neither';
           }
+        } else if (minsToKo <= 0) {
+          lineupCertainty = 'unknown';  // post-kickoff, shouldn't happen
         }
 
         // ── api-football.com stats: vorm, blessures, scheidsrechter ───
@@ -5799,6 +5812,14 @@ async function runPrematch(emit) {
           if (Math.abs(predAdj) >= 0.005) sigs.push(`api_pred:${predAdj>0?'+':''}${(predAdj*100).toFixed(1)}%`);
           if (lineupPenalty.home !== 0) sigs.push(`lineup:${(lineupPenalty.home*100).toFixed(1)}%`);
           if (lineupPenalty.away !== 0) sigs.push(`lineup:${(lineupPenalty.away*100).toFixed(1)}%`);
+          // v10.12.17 Phase D.13b: lineup-certainty shadow signal.
+          // Auto-promotes via autoTuneSignalsByClv als "bets met confirmed lineup"
+          // structureel hogere CLV blijken te hebben dan "too early" bets.
+          if (lineupCertainty === 'both') sigs.push('lineup_confirmed_both:0%');
+          else if (lineupCertainty === 'home_only') sigs.push('lineup_confirmed_home_only:0%');
+          else if (lineupCertainty === 'away_only') sigs.push('lineup_confirmed_away_only:0%');
+          else if (lineupCertainty === 'neither') sigs.push('lineup_pending:0%');
+          else if (lineupCertainty === 'too_early') sigs.push('lineup_too_early:0%');
           if (Math.abs(congestionAdj) >= 0.005) sigs.push(`congestion:${(congestionAdj*100).toFixed(1)}%`);
           if (weatherData && (weatherData.rain > 5 || weatherData.wind > 30)) sigs.push(`weather:${(weatherAdj*100).toFixed(1)}%`);
           if (poissonOverP !== null) sigs.push(`poisson_o25:${(poissonOverP*100).toFixed(1)}%`);

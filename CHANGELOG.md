@@ -2,6 +2,38 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.17] - 2026-04-17
+
+Phase D.13b · Lineup-certainty shadow signal voor football. Complementair met fixture-congestion (v10.12.14).
+
+### Added
+- **[claude] `lineupCertainty` state variable** in football scan, gezet tijdens bestaande `/fixtures/lineups` fetch. 5 states:
+  - `'both'` — beide teams confirmed (≥9 startXI spelers)
+  - `'home_only'` / `'away_only'` — één team confirmed, ander nog niet
+  - `'neither'` — lineup-fetch draaide maar geen teams confirmed
+  - `'too_early'` — meer dan 3u tot kickoff (lineup-fetch geskipt)
+  - `'unknown'` — edge case
+- **[claude] 5 shadow-mode signalen** in `buildSignals()`:
+  - `lineup_confirmed_both:0%`
+  - `lineup_confirmed_home_only:0%`
+  - `lineup_confirmed_away_only:0%`
+  - `lineup_pending:0%`
+  - `lineup_too_early:0%`
+
+### Geen extra API calls
+De `/fixtures/lineups` fetch draait al (lines 5622-5637). Deze commit voegt alleen state-extractie + shadow-signal-push toe. Zero API-overhead.
+
+### Hypothese (te valideren via auto-promote)
+Picks gemaakt wanneer beide teams `confirmed` zijn moeten hogere CLV hebben dan `too_early` picks — omdat de markt al ingeprijsd heeft op bekende lineups, en ons model met dezelfde informatie werkt. Als data dit confirmeert, promoveert `lineup_confirmed_both` naar weight=0.5 automatisch via `autoTuneSignalsByClv` (v10.12.3 Brier-drift gates + v10.12.11 BH-FDR gates zorgen dat deze promotie defensief is).
+
+Omgekeerd: als `lineup_too_early` structureel betere CLV laat zien, is dat ook leerzaam — waarschijnlijk omdat markt nog niet efficient ingeprijsd heeft.
+
+### Tests
+- `npm test`: 512 passed, 0 failed. (Pure signal attribution — test coverage komt via de integration-test in Phase E.22.)
+
+### Naming
+`lineup_confirmed_both/home_only/away_only/pending/too_early` als afzonderlijke signal-keys i.p.v. één signal met value-field. Dit is consistent met hoe knockout signals (`knockout_1st_leg:0%`, `knockout_2nd_leg:0%`) worden bijgehouden — elke state is een eigen proxy die autotune apart kan wegen.
+
 ## [10.12.16] - 2026-04-17
 
 Phase C.9 · Per-bookie volume-concentration watcher. Sluit het grootste onopgeloste operator-survivability risico uit de audit (§14.R2.E "survival > peak EV").
