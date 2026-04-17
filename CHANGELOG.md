@@ -149,7 +149,7 @@ Execution truth afmaken — slice 1 van de EV-gedreven roadmap (Codex × Claude 
 
 ### Added
 - **[claude] Execution-gate live in pick-flow** (component A, sectie 6 Bouwvolgorde fundament 3). `createPickContext` krijgt optioneel `executionMetrics` veld (canonical shape, niet ruwe `lineTimeline` — Codex-nuance). `buildPickFactory` roept `applyExecutionGate(hk, metrics)` aan binnen `mkP`, vóór `kellyToUnits`: dempt stake op stale/gap/overround/thin_market, hard skip bij `targetPresent=false`. Plus optionele `resolveExecutionMetrics(pick)` hook voor per-pick metrics. Geen pick-flow verandering voor call-sites zonder metrics (backwards-compat). `pick.executionAudit` geeft per pick het multiplier-spoor.
-- **[claude] `lib/playability.js` matrix** (component D). Per `(sport, market_type)` een assessment met vier aparte assen: `executable` (preferred coverage?), `dataRich` (injury/lineup/starter feeds actief?), `lineQuality` (bookmaker-count tier), `playable` (aggregaat = `executable && lineQuality !== 'low'`). **`dataRich` blijft bewust aparte dimensie** (Codex-nuance): dunne enrichment maakt markt niet onspeelbaar, beïnvloedt confidence/ranking apart. Leunt op `lib/api-sports-capabilities.js` (Codex v10.10.11) voor injury-support detectie. Voorlopige `RELEVANT_FEEDS` mapping per sport × markt — te kalibreren op basis van echte scan-resultaten.
+- **[claude] `lib/playability.js` matrix** (component D). Per `(sport, market_type)` een assessment met vier aparte assen: `executable` (preferred coverage?), `dataRich` (injury/lineup/starter feeds actief?), `lineQuality` (bookmaker-count tier), `playable` (aggregaat = `executable && lineQuality !== 'low'`). **`dataRich` blijft bewust aparte dimensie** (Codex-nuance): dunne enrichment maakt markt niet onspeelbaar, beïnvloedt confidence/ranking apart. Leunt op `lib/integrations/api-sports-capabilities.js` (Codex v10.10.11) voor injury-support detectie. Voorlopige `RELEVANT_FEEDS` mapping per sport × markt — te kalibreren op basis van echte scan-resultaten.
 - **[claude] Hockey 3-way ML diag-symmetrie** (component B, downscoped). `diagBestPrice` in 3-way flow — geen stille skip meer als preferred ontbreekt. Consistent met v10.10.12 hockey 2-way.
 - **[claude] +16 regressietests**: 6 voor execution-gate integratie (createPickContext met/zonder metrics, resolveExecutionMetrics voorrang, skip-pad, kelly-demping), 10 voor playability (lineQuality tiers, overround downgrade, dataRich aparte as van playable, apiHost auto-fill).
 
@@ -198,7 +198,7 @@ Multi-sport issue #1 fix: `-100% edge` was preferred-bookie filtering, geen echt
 ## [10.10.11] - 2026-04-16
 
 ### Added
-- **[codex] Nieuwe `lib/api-sports-capabilities.js` helper** die API-Sports sportfamilies classificeert en expliciet aangeeft voor welke sporten injury coverage ondersteund wordt. Op dit moment: voetbal en American Football wel, basketball/hockey/baseball niet.
+- **[codex] Nieuwe `lib/integrations/api-sports-capabilities.js` helper** die API-Sports sportfamilies classificeert en expliciet aangeeft voor welke sporten injury coverage ondersteund wordt. Op dit moment: voetbal en American Football wel, basketball/hockey/baseball niet.
 
 ### Changed
 - **[codex] Multi-sport scan doet geen misleidende injury-calls meer op unsupported API-Sports feeds**. NBA/NHL/MLB vragen niet langer blind `/injuries` op en loggen voortaan expliciet dat de blessurefeed door API-Sports niet ondersteund wordt, in plaats van `0 rows` alsof dat een bruikbare injury-bron was.
@@ -301,7 +301,7 @@ Follow-up op pre-merge review-feedback voor Codex's v10.10.2 (sport-specific sta
 ## [10.10.2] - 2026-04-16
 
 ### Added
-- **NHL goalie-preview laag toegevoegd**. Nieuwe `lib/nhl-goalie-preview.js` leest de officiële NHL gamecenter-preview uit en projecteert per team de meest waarschijnlijke starter, inclusief confidence-factor. De hockeyscanner kan deze matchup nu voorzichtig meewegen in de live ranking in plaats van goalie-context volledig te missen.
+- **NHL goalie-preview laag toegevoegd**. Nieuwe `lib/integrations/nhl-goalie-preview.js` leest de officiële NHL gamecenter-preview uit en projecteert per team de meest waarschijnlijke starter, inclusief confidence-factor. De hockeyscanner kan deze matchup nu voorzichtig meewegen in de live ranking in plaats van goalie-context volledig te missen.
 - **Nieuwe pure sport-context helpers + tests**. `lib/model-math.js` bevat nu `goalieAdjustment`, `injurySeverityWeight`, `nbaAvailabilityAdjustment` en `pitcherReliabilityFactor`, zodat goalie/injury/rest/starter-logica unit-testbaar en gedeeld blijft.
 
 ### Changed
@@ -425,13 +425,13 @@ toe om dunne H2H-samples en stale stats op te vangen. Master-switch default
 UIT — admin schakelt na productie-verificatie aan.
 
 ### Added
-- **`lib/scraper-base.js`** — gedeelde primitives: `safeFetch` met SSRF-guard (blokkeert localhost/private IPs/non-https), `RateLimiter` (serialised met min-interval), `TTLCache` (LRU + TTL), `normalizeTeamKey` (diacritics + suffix-tokens strip), `CircuitBreaker` (closed/open/half-open state machine met exponential cooldown), per-source `isSourceEnabled`/`setSourceEnabled` registry.
-- **`lib/sources/sofascore.js`** — SofaScore adapter (api.sofascore.com) met findTeamId + fetchH2HEvents + fetchTeamFormEvents voor football/basketball/hockey/baseball/handball/volleyball. Cache 24h, rate-limit 1200ms.
-- **`lib/sources/fotmob.js`** — FotMob adapter (www.fotmob.com) voor football-form + H2H via team-fixtures kruising. Cache 12h, rate-limit 1500ms.
-- **`lib/sources/nba-stats.js`** — stats.nba.com officiële endpoints met juiste headers (x-nba-stats-origin/token, Referer/Origin). Levert standings + team summary (records, streak, L10). Cache 1u.
-- **`lib/sources/nhl-api.js`** — api-web.nhle.com officieel. Standings + team summary (points, GD, home/road, L10, streak). Cache 1u.
-- **`lib/sources/mlb-stats-ext.js`** — statsapi.mlb.com uitbreiding. Standings met run-diff + splits + streak. Cache 1u.
-- **`lib/data-aggregator.js`** — unified API `getMergedH2H` / `getMergedForm` / `getTeamSummary` per sport. Event-level dedup (date + sorted-team-pair) zodat twee bronnen die dezelfde H2H tonen niet dubbel-tellen. Fail-safe: elke source-fail → skip, aggregator faalt nooit.
+- **`lib/integrations/scraper-base.js`** — gedeelde primitives: `safeFetch` met SSRF-guard (blokkeert localhost/private IPs/non-https), `RateLimiter` (serialised met min-interval), `TTLCache` (LRU + TTL), `normalizeTeamKey` (diacritics + suffix-tokens strip), `CircuitBreaker` (closed/open/half-open state machine met exponential cooldown), per-source `isSourceEnabled`/`setSourceEnabled` registry.
+- **`lib/integrations/sources/sofascore.js`** — SofaScore adapter (api.sofascore.com) met findTeamId + fetchH2HEvents + fetchTeamFormEvents voor football/basketball/hockey/baseball/handball/volleyball. Cache 24h, rate-limit 1200ms.
+- **`lib/integrations/sources/fotmob.js`** — FotMob adapter (www.fotmob.com) voor football-form + H2H via team-fixtures kruising. Cache 12h, rate-limit 1500ms.
+- **`lib/integrations/sources/nba-stats.js`** — stats.nba.com officiële endpoints met juiste headers (x-nba-stats-origin/token, Referer/Origin). Levert standings + team summary (records, streak, L10). Cache 1u.
+- **`lib/integrations/sources/nhl-api.js`** — api-web.nhle.com officieel. Standings + team summary (points, GD, home/road, L10, streak). Cache 1u.
+- **`lib/integrations/sources/mlb-stats-ext.js`** — statsapi.mlb.com uitbreiding. Standings met run-diff + splits + streak. Cache 1u.
+- **`lib/integrations/data-aggregator.js`** — unified API `getMergedH2H` / `getMergedForm` / `getTeamSummary` per sport. Event-level dedup (date + sorted-team-pair) zodat twee bronnen die dezelfde H2H tonen niet dubbel-tellen. Fail-safe: elke source-fail → skip, aggregator faalt nooit.
 - **Admin endpoints**:
   - `GET /api/admin/v2/scrape-sources` → status per source (enabled, health, breaker-state, latency)
   - `POST /api/admin/v2/scrape-sources` → toggle enable/disable óf `{action:'reset-breaker', name}` zonder redeploy

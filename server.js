@@ -35,12 +35,12 @@ const {
   analyseTotal,
 } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
-const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
+const { fetchNhlGoaliePreview } = require('./lib/integrations/nhl-goalie-preview');
 const { applyCorrelationDamp } = require('./lib/correlation-damp');
-const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
-const { shouldRunPostResultsModelJobs } = require('./lib/daily-results');
-const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/live-board');
-const { matchesClvRecomputeTarget, resolveEarlyLiveOutcome } = require('./lib/operator-actions');
+const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
+const { shouldRunPostResultsModelJobs } = require('./lib/runtime/daily-results');
+const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/runtime/live-board');
+const { matchesClvRecomputeTarget, resolveEarlyLiveOutcome } = require('./lib/runtime/operator-actions');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -499,25 +499,14 @@ const UNIT_EUR   = 25;
 const START_BANKROLL = 250;
 // (calibration + signal weights stored in Supabase)
 
-// ── USER MANAGEMENT (Supabase "users" table) ────────────────────────────────
-let _usersCache     = null;
-let _usersCacheAt   = 0;
-const USERS_TTL     = 30 * 1000; // 30 sec cache
-
-function defaultSettings() {
-  return {
-    startBankroll: START_BANKROLL,
-    unitEur:       UNIT_EUR,
-    language:      'nl',
-    timezone:      'Europe/Amsterdam',
-    scanTimes:     ['07:30'],
-    scanEnabled:   true,
-    twoFactorEnabled: false,
-    telegramChatId: null,
-    telegramEnabled: false,
-    preferredBookies: ['Bet365', 'Unibet'],
-  };
-}
+// ── USER MANAGEMENT — v10.11.0 fase 3: gecollapsed naar lib/db.js ──────────
+// Voorheen: volledige duplicaten van loadUsers/saveUser/defaultSettings/
+// getUserMoneySettings in zowel server.js als lib/db.js. Nu: één canonieke
+// bron in lib/db.js, server.js importeert.
+const {
+  defaultSettings, loadUsers, saveUser, getUsersCache, clearUsersCache,
+  getUserMoneySettings,
+} = require('./lib/db');
 
 // v10.9.9: dynamic UNIT_EUR. Admin's settings.unitEur override de globale
 // constant zodat compounding (unit €25 → €50 → €100) de pick-ranking en
@@ -552,32 +541,7 @@ async function getAdminUserId() {
   } catch { return null; }
 }
 
-async function loadUsers(force = false) {
-  if (!force && _usersCache && Date.now() - _usersCacheAt < USERS_TTL) return _usersCache;
-  try {
-    const { data, error } = await supabase.from('users').select('*');
-    if (error) throw new Error(error.message);
-    _usersCache = (data || []).map(r => ({
-      id: r.id, email: (r.email || '').toLowerCase(), passwordHash: r.password_hash || '',
-      role: r.role || 'user', status: r.status || 'pending',
-      settings: (() => { try { return { ...defaultSettings(), ...(typeof r.settings === 'string' ? JSON.parse(r.settings) : (r.settings || {})) }; } catch { return defaultSettings(); } })(),
-      createdAt: r.created_at || ''
-    }));
-    _usersCacheAt = Date.now();
-    return _usersCache;
-  } catch { return _usersCache || []; }
-}
-
-async function saveUser(user) {
-  const { error } = await supabase.from('users').upsert({
-    id: user.id, email: user.email, password_hash: user.passwordHash,
-    role: user.role, status: user.status,
-    settings: user.settings || defaultSettings(),
-    created_at: user.createdAt || new Date().toISOString()
-  }, { onConflict: 'id' });
-  if (error) throw new Error(error.message);
-  _usersCache = null;
-}
+// loadUsers + saveUser: nu uit lib/db.js (boven geïmporteerd)
 
 async function seedAdminUser() {
   if (!ADMIN_EMAIL || !ADMIN_PASSW) return;
@@ -627,7 +591,7 @@ async function updateCalibration(bet, userId = null) {
   if (!bet || !['W','L'].includes(bet.uitkomst)) return;
   // Model alleen trainen op admin data (voorkomt vervuiling door andere users)
   if (userId) {
-    const users = _usersCache || [];
+    const users = getUsersCache() || [];
     const user = users.find(u => u.id === userId);
     if (user && user.role !== 'admin') return; // skip non-admin bets
   }
@@ -940,7 +904,7 @@ async function autoTuneSignalsByClv() {
 async function autoTuneSignals() {
   try {
     // Alleen admin bets voor model training
-    const adminUser = (_usersCache || []).find(u => u.role === 'admin');
+    const adminUser = (getUsersCache() || []).find(u => u.role === 'admin');
     const { bets } = await readBets(adminUser?.id || null);
     const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
     if (settled.length < 20) return; // te weinig data
@@ -2662,7 +2626,7 @@ async function runBasketball(emit) {
         // v10.9.0: fallback naar stats.nba.com als api-sports standings dun zijn.
         if (OPERATOR.scraping_enabled && homeSplitAdj === 0) {
           try {
-            const agg = require('./lib/data-aggregator');
+            const agg = require('./lib/integrations/data-aggregator');
             const [hmExt, awExt] = await Promise.all([
               agg.getTeamSummary('basketball', hm),
               agg.getTeamSummary('basketball', aw),
@@ -3150,7 +3114,7 @@ async function runHockey(emit) {
         } else if (OPERATOR.scraping_enabled) {
           // v10.9.0: fallback naar api-web.nhle.com als api-sports dun is.
           try {
-            const agg = require('./lib/data-aggregator');
+            const agg = require('./lib/integrations/data-aggregator');
             const [hmExt, awExt] = await Promise.all([
               agg.getTeamSummary('hockey', hm),
               agg.getTeamSummary('hockey', aw),
@@ -3856,7 +3820,7 @@ async function runBaseball(emit) {
         let mlbExtSummary = null;
         if (OPERATOR.scraping_enabled && (!hmSt || hmSt.totalGames < 10 || !awSt || awSt.totalGames < 10)) {
           try {
-            const agg = require('./lib/data-aggregator');
+            const agg = require('./lib/integrations/data-aggregator');
             const [hmExt, awExt] = await Promise.all([
               agg.getTeamSummary('baseball', hm),
               agg.getTeamSummary('baseball', aw),
@@ -5681,7 +5645,7 @@ async function runPrematch(emit) {
               // meeste samples (grotere n → minder shrinkage in calcBTTSProb).
               if (OPERATOR.scraping_enabled) {
                 try {
-                  const agg = require('./lib/data-aggregator');
+                  const agg = require('./lib/integrations/data-aggregator');
                   const merged = await agg.getMergedH2H('football', hm, aw);
                   if (merged && merged.n > afN) {
                     h2hN    = merged.n;
@@ -6816,7 +6780,7 @@ app.post('/api/admin/v2/upgrade-ack', requireAdmin, async (req, res) => {
 // safeFetch. Gebruik om te zien waarom een bron faalt in productie.
 app.get('/api/admin/v2/scrape-diagnose', requireAdmin, async (req, res) => {
   try {
-    const { safeFetch } = require('./lib/scraper-base');
+    const { safeFetch } = require('./lib/integrations/scraper-base');
     const name = String(req.query.name || '').trim();
     const probes = {
       'sofascore': { url: 'https://api.sofascore.com/api/v1/search/suggestions/Arsenal', hosts: ['api.sofascore.com'] },
@@ -6854,8 +6818,8 @@ app.get('/api/admin/v2/scrape-diagnose', requireAdmin, async (req, res) => {
 // Levert health, breaker state, enabled-flag. Geen auth-lekkage; alleen admin.
 app.get('/api/admin/v2/scrape-sources', requireAdmin, async (req, res) => {
   try {
-    const dataAggregator = require('./lib/data-aggregator');
-    const scraperBase = require('./lib/scraper-base');
+    const dataAggregator = require('./lib/integrations/data-aggregator');
+    const scraperBase = require('./lib/integrations/scraper-base');
     const [health, breakers] = await Promise.all([
       dataAggregator.healthCheckAll(),
       Promise.resolve(scraperBase.allBreakerStatuses()),
@@ -6875,7 +6839,7 @@ app.get('/api/admin/v2/scrape-sources', requireAdmin, async (req, res) => {
 // Body: { name: 'sofascore', enabled: true } of { action: 'reset-breaker', name: 'sofascore' }
 app.post('/api/admin/v2/scrape-sources', requireAdmin, async (req, res) => {
   try {
-    const scraperBase = require('./lib/scraper-base');
+    const scraperBase = require('./lib/integrations/scraper-base');
     const body = req.body || {};
     const validNames = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
     if (body.action === 'reset-breaker') {
@@ -7467,7 +7431,7 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     if (user.email === req.user.email)
       return res.status(400).json({ error: 'Je kunt je eigen account niet verwijderen' });
     await supabase.from('users').delete().eq('id', req.params.id);
-    _usersCache = null;
+    clearUsersCache();
     res.json({ deleted: true });
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
@@ -9147,7 +9111,7 @@ app.post('/api/admin/rebuild-calib', requireAdmin, async (req, res) => {
     const QUERY_CEILING = 10000;
 
     // Alle admin settled bets (model trainen alleen op admin data).
-    const users = _usersCache || [];
+    const users = getUsersCache() || [];
     const adminIds = users.filter(u => u.role === 'admin').map(u => u.id);
     let q = supabase.from('bets').select('*').in('uitkomst', ['W', 'L']).limit(QUERY_CEILING);
     if (adminIds.length) q = q.in('user_id', adminIds);
@@ -11111,7 +11075,7 @@ app.listen(PORT, () => {
   // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
   // reset elke deploy alle sources naar default off — operationeel irritant.
   try {
-    const scraperBase = require('./lib/scraper-base');
+    const scraperBase = require('./lib/integrations/scraper-base');
     const cs = loadCalib();
     const persisted = cs.scraper_sources || {};
     const known = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
@@ -11137,7 +11101,7 @@ app.listen(PORT, () => {
   // retroactief kan zien welke bron down/up ging. Rate-limit via breaker zelf
   // (alleen state-transitions tellen, niet elke fetch).
   try {
-    const scraperBase = require('./lib/scraper-base');
+    const scraperBase = require('./lib/integrations/scraper-base');
     scraperBase.onBreakerStateChange(ev => {
       const body = ev.to === 'open'
         ? `Bron "${ev.name}" auto-gedeactiveerd na ${ev.status.totalFails}/${ev.status.totalCalls} fails. Cooldown ~${Math.round(ev.status.cooldownMs / 60000)}min.`
@@ -11578,7 +11542,7 @@ async function evaluateActionableTodos() {
 
   // v10.8.7: actionable alerts — unit-increase + bookie-spreid bij groeiende bankroll
   try {
-    const users = _usersCache || [];
+    const users = getUsersCache() || [];
     const admin = users.find(u => u.role === 'admin');
     if (admin) {
       const ue = admin.settings?.unitEur || UNIT_EUR;

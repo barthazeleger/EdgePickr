@@ -28,16 +28,16 @@ const {
 } = require('./lib/odds-parser');
 const { createPickContext, buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
-const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
+const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/integrations/nhl-goalie-preview');
 const lineTimeline = require('./lib/line-timeline');
 const execGate = require('./lib/execution-gate');
 const playability = require('./lib/playability');
 const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
-const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
-const dailyResults = require('./lib/daily-results');
-const liveBoard = require('./lib/live-board');
-const operatorActions = require('./lib/operator-actions');
+const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
+const dailyResults = require('./lib/runtime/daily-results');
+const liveBoard = require('./lib/runtime/live-board');
+const operatorActions = require('./lib/runtime/operator-actions');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -3932,7 +3932,7 @@ test('modal: lagere odds schalen origUnits met kelly-ratio, niet met pure Kelly'
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n  Scraper Base (v10.9.0):');
 
-const scraperBase = require('./lib/scraper-base');
+const scraperBase = require('./lib/integrations/scraper-base');
 const { isUrlSafe, TTLCache, RateLimiter, CircuitBreaker, normalizeTeamKey,
         setSourceEnabled, isSourceEnabled, allBreakerStatuses, getBreaker } = scraperBase;
 
@@ -4166,7 +4166,7 @@ function withMockFetch(handler, testFn) {
 // ── SOFASCORE ──────────────────────────────────────────────────────────────
 console.log('\n  Sources/SofaScore (v10.9.0):');
 
-const sofa = require('./lib/sources/sofascore');
+const sofa = require('./lib/integrations/sources/sofascore');
 
 test('sofascore: disabled source → null (default off)', async () => {
   sofa._clearCache();
@@ -4321,7 +4321,7 @@ test('sofascore: fetchTeamFormEvents: parseert W/D/L + home/away', async () => {
 // ── FOTMOB ──────────────────────────────────────────────────────────────
 console.log('\n  Sources/FotMob (v10.9.0):');
 
-const fotmob = require('./lib/sources/fotmob');
+const fotmob = require('./lib/integrations/sources/fotmob');
 
 test('fotmob: disabled → null', async () => {
   fotmob._clearCache(); fotmob._breaker.reset();
@@ -4374,7 +4374,7 @@ test('fotmob: fetchTeamFormEvents skipt non-finished + malformed', async () => {
 // ── NBA-STATS ──────────────────────────────────────────────────────────
 console.log('\n  Sources/NBA-stats (v10.9.0):');
 
-const nbaStats = require('./lib/sources/nba-stats');
+const nbaStats = require('./lib/integrations/sources/nba-stats');
 
 test('nba-stats: fetchStandings parseert resultSets', async () => {
   nbaStats._clearCache(); nbaStats._breaker.reset();
@@ -4423,7 +4423,7 @@ test('nba-stats: no resultSets → null', async () => {
 // ── NHL-API ────────────────────────────────────────────────────────────
 console.log('\n  Sources/NHL-api (v10.9.0):');
 
-const nhlApi = require('./lib/sources/nhl-api');
+const nhlApi = require('./lib/integrations/sources/nhl-api');
 
 test('nhl-api: fetchStandings parseert nested team fields', async () => {
   nhlApi._clearCache(); nhlApi._breaker.reset();
@@ -4460,7 +4460,7 @@ test('nhl-api: findTeamByName case-insensitive', async () => {
 // ── MLB-EXT ────────────────────────────────────────────────────────────
 console.log('\n  Sources/MLB-stats-ext (v10.9.0):');
 
-const mlbExt = require('./lib/sources/mlb-stats-ext');
+const mlbExt = require('./lib/integrations/sources/mlb-stats-ext');
 
 test('mlb-ext: fetchStandings parseert records-splits', async () => {
   mlbExt._clearCache(); mlbExt._breaker.reset();
@@ -4494,7 +4494,7 @@ test('mlb-ext: fetchStandings parseert records-splits', async () => {
 // ── DATA AGGREGATOR ────────────────────────────────────────────────────
 console.log('\n  Data Aggregator (v10.9.0):');
 
-const agg = require('./lib/data-aggregator');
+const agg = require('./lib/integrations/data-aggregator');
 
 test('aggregator: _dedupH2H verwijdert duplicates by date+pair', () => {
   const events = [
