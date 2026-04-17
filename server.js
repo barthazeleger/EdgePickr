@@ -6262,25 +6262,8 @@ async function readBets(userId = null, money = null) {
   return { bets, stats: calcStats(bets, effectiveMoney.startBankroll, effectiveMoney.unitEur), _raw: data };
 }
 
-// Helper: haal user's bankroll/unit settings in 1 read zodat analytics,
-// staking en compounding overal dezelfde waarheid gebruiken.
-async function getUserMoneySettings(userId) {
-  if (!userId) return { startBankroll: START_BANKROLL, unitEur: UNIT_EUR };
-  try {
-    const users = await loadUsers();
-    const settings = users.find(u => u.id === userId)?.settings || {};
-    const startBankrollRaw = parseFloat(settings.startBankroll);
-    const unitEurRaw = parseFloat(settings.unitEur);
-    return {
-      startBankroll: isFinite(startBankrollRaw) && startBankrollRaw > 0 ? startBankrollRaw : START_BANKROLL,
-      unitEur: isFinite(unitEurRaw) && unitEurRaw > 0 ? unitEurRaw : UNIT_EUR,
-    };
-  } catch {
-    return { startBankroll: START_BANKROLL, unitEur: UNIT_EUR };
-  }
-}
-
-// Helper: haal user's unitEur (stake per unit) of fallback naar default.
+// getUserMoneySettings: nu uit lib/db.js (boven geïmporteerd)
+// getUserUnitEur: thin wrapper voor writeBet/updateBetOutcome
 async function getUserUnitEur(userId) {
   const { unitEur } = await getUserMoneySettings(userId);
   return unitEur;
