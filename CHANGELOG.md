@@ -2,6 +2,37 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.10] - 2026-04-17
+
+Phase A.2 · `assessPlayability` wired als pre-score filter. Picks met `playable=false` worden gedropt vóór de execution-gate, zodat dunne markten / zonder target-bookie / lage lineQuality geen stake meer krijgen.
+
+### Added
+- **[claude] Playability-pass in `applyPostScanGate`** — per pick met `_fixtureMeta`:
+  1. Derive metrics (al bestaand)
+  2. **NIEUW**: `assessPlayability({sport, marketType, preferredHasCoverage, bookmakerCount, overroundPct})`
+  3. Als `playable=false` + `strictPlayability=true` (default) → pick wordt gedropt
+  4. Als `playable=false` + `strictPlayability=false` → pick krijgt `shadow=true` maar blijft in de lijst
+  5. Alle picks krijgen `p.playabilityAudit = {executable, dataRich, lineQuality, playable, coverageKnown}` voor observability
+- **[claude] `preferredHasCoverage` inference** — matcht `p.bookie` tegen `opts.preferredBookies` (case-insensitive, substring).
+
+### Stats-uitbreiding
+`applyPostScanGate` returnt nu ook `stats.playabilityDropped` + `stats.playabilityShadowed` naast de bestaande `gated/skipped/dampened`.
+
+### Effect
+Picks die de playability-check niet halen:
+- Eén bookie coverage (bookmakerCount < 3) → lineQuality=low → drop
+- Hoge overround (>10% soft downgrade) → lineQuality hoger-tier degraded
+- Unknown execution coverage (geen preferred bookie signal) → conservatief gedrop
+
+Hierdoor dalen picks-met-dunne-markten voor ze zelfs in de top-5 ranking komen. Combineerd met de gate-demping geeft dit: "liever 0 picks dan 1 met twijfelachtige execution" per doctrine §3.
+
+### Tests
+- 2 nieuwe tests: strict drop bij lineQuality=low, soft-shadow bij strictPlayability=false.
+- `npm test`: 494 passed, 0 failed.
+
+### Rationale
+Doctrine §10.A en §10.D: "liever 0 picks dan 1 valse edge" + "selection engine die ook goed kan skippen". Playability-check operationaliseert dit: geen stake op dunne markten, geen stake zonder target-bookie. Shadow-mode blijft beschikbaar als operator eventueel de check wil verlichten (bv. cold-start waar odds_snapshots nog te dun zijn).
+
 ## [10.12.9] - 2026-04-17
 
 Phase A.1b voltooid voor alle 6 sporten. Execution-gate draait nu op elke ML-pick (primair markt) + football's totals/BTTS/DNB. Ook market_type misalignment (`totals` → `total`) gefixt waardoor de lookup daadwerkelijk timelines vindt.

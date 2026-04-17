@@ -2340,7 +2340,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.9');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.10');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5783,6 +5783,52 @@ test('applyPostScanGate: picks zonder _fixtureMeta → ongewijzigd terug', async
   const r = await scanGate.applyPostScanGate(picks, {}, {});
   assert.strictEqual(r.picks.length, 1);
   assert.strictEqual(r.stats.gated, 0, 'geen gate fired');
+});
+
+test('applyPostScanGate: playability dropt pick met low lineQuality (default strict)', async () => {
+  // Eén bookie → bookmakerCount=1 → lineQuality=low → playable=false
+  const rows = [
+    { fixture_id: 1, captured_at: '2026-04-16T18:00:00Z', bookmaker: 'pinnacle', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.90 },
+  ];
+  const builder1 = {};
+  builder1.select = () => builder1;
+  builder1.in = () => builder1;
+  builder1.order = () => builder1;
+  builder1.then = (resolve) => resolve({ data: rows, error: null });
+  const fakeSupabase1 = { from: () => builder1 };
+  const picks1 = [{
+    match: 'A vs B', label: '🏠 A wint', kelly: 0.05, units: '1.0U',
+    expectedEur: 5, edge: 10, dataConfidence: 1, sport: 'basketball', bookie: 'Bet365',
+    _fixtureMeta: { fixtureId: 1, marketType: 'moneyline', selectionKey: 'home', line: null },
+  }];
+  const r1 = await scanGate.applyPostScanGate(picks1, fakeSupabase1, {
+    marketTypes: ['moneyline'], preferredBookies: ['Bet365'],
+  });
+  assert.strictEqual(r1.stats.playabilityDropped, 1);
+  assert.strictEqual(r1.picks.length, 0);
+});
+
+test('applyPostScanGate: strictPlayability=false → shadow, niet dropt', async () => {
+  const rows = [
+    { fixture_id: 1, captured_at: '2026-04-16T18:00:00Z', bookmaker: 'pinnacle', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.90 },
+  ];
+  const builderS = {};
+  builderS.select = () => builderS;
+  builderS.in = () => builderS;
+  builderS.order = () => builderS;
+  builderS.then = (resolve) => resolve({ data: rows, error: null });
+  const fakeSupabaseS = { from: () => builderS };
+  const picksS = [{
+    match: 'A vs B', label: '🏠 A wint', kelly: 0.05, units: '1.0U',
+    expectedEur: 5, edge: 10, dataConfidence: 1, sport: 'basketball', bookie: 'Bet365',
+    _fixtureMeta: { fixtureId: 1, marketType: 'moneyline', selectionKey: 'home', line: null },
+  }];
+  const rS = await scanGate.applyPostScanGate(picksS, fakeSupabaseS, {
+    marketTypes: ['moneyline'], preferredBookies: ['Bet365'], strictPlayability: false,
+  });
+  assert.strictEqual(rS.stats.playabilityShadowed, 1);
+  assert.strictEqual(rS.picks.length, 1);
+  assert.strictEqual(rS.picks[0].shadow, true);
 });
 
 test('applyPostScanGate: pick met _fixtureMeta maar lege timelineMap → pick survivest', async () => {
