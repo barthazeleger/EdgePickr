@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.19] - 2026-04-17
+
+Hotfix · `marketFairHb is not defined` in handbal scan. Zelfde type scope-bug als de v10.12.13 `f5Diag` fix.
+
+### Bug
+`server.js:5243` (`snap.writeFeatureSnapshot`) gebruikte `marketFairHb?.home/draw/away`, maar `marketFairHb` werd op line 5219 gedeclareerd INSIDE `if (parsed.threeWay && parsed.threeWay.length) {}` block (lines 5198-5237). Als die `if` doorging kwam de variabele buiten scope bij line 5243 → `ReferenceError` die gehele handball-loop catche stopte.
+
+Live scan 14:00 toonde: `⚠️ 🤾 Starligue (Frankrijk): marketFairHb is not defined`.
+
+### Fix
+`let marketFairHb = null;` verplaatst buiten het if-block (op de buiten-scope). Assignment blijft binnen de if. Alle downstream gebruiken (`marketFairHb?.home` etc.) zijn al optional-chaining, dus null is veilig.
+
+### Regression-check
+Hockey-scan heeft hetzelfde 3-way Poisson patroon maar gebruikt `marketFairReg` die al op buiten-scope zit (line 3483) — geen bug. Alleen handbal had de scope-issue.
+
+### Operational impact
+- Voor v10.12.19: handbal-scan verloor de hele try-iteratie voor elke Starligue/Bundesliga/etc league met 3-way odds. 0 handbal picks.
+- Na v10.12.19: feature_snapshot schrijft + ML scoring werkt weer schoon.
+
+### Tests
+- `npm test`: 512 passed, 0 failed.
+
 ## [10.12.18] - 2026-04-17
 
 UI-fix · pick-card bookie-badge toont nu de werkelijke bookie-naam i.p.v. te liegen.

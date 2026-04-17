@@ -5195,6 +5195,10 @@ async function runHandball(emit) {
 
         // ── 3-weg ML voor handbal (Home/Draw/Away 60-min) via Poisson ──
         // Handbal heeft vaak een 3-weg markt (gelijkspel in reguliere tijd is mogelijk).
+        // v10.12.19 fix: marketFairHb gelift uit het inner block zodat het
+        // downstream (snap.writeFeatureSnapshot line ~5243) bereikbaar is.
+        // Voorheen out-of-scope → `marketFairHb is not defined` error in handbal scan.
+        let marketFairHb = null;
         if (parsed.threeWay && parsed.threeWay.length) {
           const hmGFpg = hmSt?.totalGames ? (hmSt.goalsFor / hmSt.totalGames) : 28;
           const hmGApg = hmSt?.totalGames ? (hmSt.goalsAgainst / hmSt.totalGames) : 28;
@@ -5216,7 +5220,7 @@ async function runHandball(emit) {
           const e3A = bA3.price > 0 ? p3.pAway * bA3.price - 1 : -1;
 
           // Sanity-check handbal Poisson tegen markt consensus (zelfde principe als hockey)
-          const marketFairHb = consensus3Way(parsed.threeWay);
+          marketFairHb = consensus3Way(parsed.threeWay);
           const sanH3 = marketFairHb ? modelMarketSanityCheck(p3.pHome, marketFairHb.home) : { agree: true };
           const sanD3 = marketFairHb ? modelMarketSanityCheck(p3.pDraw, marketFairHb.draw) : { agree: true };
           const sanA3 = marketFairHb ? modelMarketSanityCheck(p3.pAway, marketFairHb.away) : { agree: true };
