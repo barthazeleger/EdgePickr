@@ -2922,10 +2922,24 @@ function pushNotif(title, body, icon = '⚽') {
   new Notification(title, { body, icon: '/favicon.ico', silent: false });
 }
 
-function checkBetNotifications(events) {
+async function syncTrackerFromResultsCheck() {
+  try {
+    const d = await api('/api/check-results').then(r => r?.json());
+    if (!d || d.error || !d.bets) return null;
+    betData = { bets: d.bets, stats: d.stats };
+    renderStats(d.stats);
+    refreshBets(d.bets);
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+async function checkBetNotifications(events) {
   if (!betData) return;
   const openBets = (betData.bets || []).filter(b => b.uitkomst === 'Open');
   if (!openBets.length) return;
+  let shouldSyncTracker = false;
 
   for (const e of events) {
     if (!e.live) continue;
@@ -2948,6 +2962,7 @@ function checkBetNotifications(events) {
     const wasLive = prev.live === true;
     const justEnded = wasLive && !e.live;
     if (justEnded && !notified.has('ft')) {
+      shouldSyncTracker = true;
       notified.add('ft');
       // Bepaal uitkomst
       let result = '?';
@@ -2993,6 +3008,10 @@ function checkBetNotifications(events) {
 
     livePrevState.set(e.id, { scoreH: sH, scoreA: sA, live: e.live, notified });
   }
+
+  if (shouldSyncTracker) {
+    await syncTrackerFromResultsCheck();
+  }
 }
 
 let liveAutoTimer = null;
@@ -3006,7 +3025,7 @@ async function fetchLive() {
     liveEvts = d.events || [];
     const lc = d.liveCount ?? liveEvts.filter(e=>e.live).length;
     document.getElementById('live-info').textContent = `${lc} live • ${liveEvts.length} totaal`;
-    checkBetNotifications(liveEvts);
+    await checkBetNotifications(liveEvts);
     filterLive();
     if (document.getElementById('liveAutoRefresh')?.checked) startLiveAutoRefresh();
   } catch {
@@ -3024,7 +3043,7 @@ function startLiveAutoRefresh() {
       liveEvts = d.events || [];
       const lc = liveEvts.filter(e=>e.live).length;
       document.getElementById('live-info').textContent = `${lc} live • ${liveEvts.length} totaal`;
-      checkBetNotifications(liveEvts);
+      await checkBetNotifications(liveEvts);
       filterLive();
     } catch {}
   }, 60000);

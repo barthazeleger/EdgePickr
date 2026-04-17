@@ -40,6 +40,7 @@ const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const { shouldRunPostResultsModelJobs } = require('./lib/daily-results');
 const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/live-board');
+const { matchesClvRecomputeTarget } = require('./lib/operator-actions');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -95,12 +96,27 @@ const KILL_SWITCH = {
   enabled: true, // master flag; admin kan dit later via UI uitzetten
 };
 
+// v10.10.22 fase 3: gecombineerde bets-refresh. Voorheen 3 aparte full-table
+// scans (refreshKillSwitch, refreshMarketSampleCounts, refreshSportCaps) die
+// elk dezelfde tabel opvroegen. Nu: één query, drie consumers.
+let _settledBetsCache = { rows: [], at: 0 };
+const SETTLED_BETS_TTL_MS = 5 * 60 * 1000;
+async function loadSettledBetsOnce() {
+  if (_settledBetsCache.rows.length && Date.now() - _settledBetsCache.at < SETTLED_BETS_TTL_MS) return _settledBetsCache.rows;
+  try {
+    const { data } = await supabase.from('bets')
+      .select('sport, markt, uitkomst, inzet, wl, clv_pct')
+      .in('uitkomst', ['W', 'L']);
+    _settledBetsCache = { rows: data || [], at: Date.now() };
+    return _settledBetsCache.rows;
+  } catch { return _settledBetsCache.rows; }
+}
+
 async function refreshKillSwitch() {
   if (!KILL_SWITCH.enabled) { KILL_SWITCH.set.clear(); return; }
   try {
-    const { data: bets } = await supabase.from('bets')
-      .select('sport, markt, clv_pct').not('clv_pct', 'is', null);
-    const all = (bets || []).filter(b => typeof b.clv_pct === 'number' && !isNaN(b.clv_pct));
+    const bets = await loadSettledBetsOnce();
+    const all = bets.filter(b => typeof b.clv_pct === 'number' && !isNaN(b.clv_pct));
     const byMarket = {};
     for (const b of all) {
       const s = normalizeSport(b.sport || 'football');
@@ -165,10 +181,9 @@ const MARKET_SAMPLE_TTL_MS = 30 * 60 * 1000; // 30 min
 
 async function refreshMarketSampleCounts() {
   try {
-    const { data: bets } = await supabase.from('bets')
-      .select('sport, markt, uitkomst').in('uitkomst', ['W', 'L']);
+    const bets = await loadSettledBetsOnce();
     const counts = {};
-    for (const b of (bets || [])) {
+    for (const b of bets) {
       const key = `${normalizeSport(b.sport)}_${detectMarket(b.markt || 'other')}`;
       counts[key] = (counts[key] || 0) + 1;
     }
@@ -187,10 +202,9 @@ let _sportCapCache = { caps: {}, stats: {}, at: 0 };
 
 async function refreshSportCaps() {
   try {
-    const { data: bets } = await supabase.from('bets')
-      .select('sport, inzet, wl, uitkomst').in('uitkomst', ['W', 'L']);
+    const bets = await loadSettledBetsOnce();
     const bySport = {};
-    for (const b of (bets || [])) {
+    for (const b of bets) {
       const s = normalizeSport(b.sport || 'football');
       if (!bySport[s]) bySport[s] = { n: 0, staked: 0, profit: 0 };
       bySport[s].n++;
@@ -302,6 +316,13 @@ function rateLimit(key, maxReqs, windowMs) {
   rateLimitMap.set(key, entry);
   return entry.count > maxReqs;
 }
+// v10.10.22 fase 3: cleanup expired entries elke 10 min (voorkomt unbounded growth bij distributed traffic)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(key);
+  }
+}, 10 * 60 * 1000);
 
 // Scan lock · voorkom concurrent scans
 let scanRunning = false;
@@ -1502,14 +1523,28 @@ const sportRateLimits = {
   } catch { afRateLimit.date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' }); }
 })();
 
+// v10.10.22 fase 3: saveAfUsage debounced. Voorheen werd dit bij ELKE
+// api-sports call aangeroepen (600+ Supabase writes per scan). Nu: debounce
+// naar max 1x per 30 seconden. Flush bij scan-einde via de existing
+// saveAfUsage() call in scan-coordinator.
+let _afUsageDirty = false;
+let _afUsageTimer = null;
 function saveAfUsage() {
-  // Totaal opslaan
+  _afUsageDirty = true;
+  if (_afUsageTimer) return; // debounce actief
+  _afUsageTimer = setTimeout(() => {
+    _afUsageTimer = null;
+    if (!_afUsageDirty) return;
+    _afUsageDirty = false;
+    _flushAfUsage();
+  }, 30 * 1000);
+}
+function _flushAfUsage() {
   supabase.from('api_usage').upsert({
     date: afRateLimit.date, calls: afRateLimit.callsToday,
     remaining: afRateLimit.remaining, api_limit: afRateLimit.limit,
     updated_at: new Date().toISOString()
   }).then(() => {}).catch(() => {});
-  // Per sport opslaan (date = "2026-04-13_football" etc)
   for (const [sport, srl] of Object.entries(sportRateLimits)) {
     if (srl.callsToday > 0) {
       supabase.from('api_usage').upsert({
@@ -8287,6 +8322,8 @@ app.post('/api/clv/recompute', requireAdmin, async (req, res) => {
   try {
     const all = req.body?.all === true;
     const dryRun = req.body?.dryRun === true;
+    const rawBetId = parseInt(req.body?.betId);
+    const targetBetId = Number.isFinite(rawBetId) && rawBetId > 0 ? rawBetId : null;
     // v10.7.22: validate minDeltaPct against NaN/Infinity. Zonder isFinite zou
     // minDeltaPct=Infinity alle bets skippen (stille no-op) of NaN → bij delta<NaN
     // altijd false → alle bets processed (resource exhaustion).
@@ -8301,12 +8338,14 @@ app.post('/api/clv/recompute', requireAdmin, async (req, res) => {
     // Cap op 10k om DoS te voorkomen (elke bet doet ~1 api-sports call = 150ms).
     let q = supabase.from('bets').select('*').in('uitkomst', ['W', 'L']).limit(QUERY_CEILING);
     if (userId) q = q.eq('user_id', userId);
+    if (targetBetId != null) q = q.eq('bet_id', targetBetId);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
     const details = [];
     let updated = 0, skipped = 0, failed = 0;
     for (const r of (data || [])) {
+      if (!matchesClvRecomputeTarget(r, { betId: targetBetId })) continue;
       const id = r.bet_id;
       const wedstrijd = r.wedstrijd || '';
       const sport = r.sport || 'football';
@@ -8403,7 +8442,7 @@ app.post('/api/clv/recompute', requireAdmin, async (req, res) => {
       catch (e) { tuning.kellyStepup = { ok: false, error: e.message }; }
     }
 
-    res.json({ scanned: (data || []).length, updated, skipped, failed, dryRun, minDelta, details, tuning,
+    res.json({ scanned: (data || []).length, updated, skipped, failed, dryRun, minDelta, betId: targetBetId, details, tuning,
                rateLimit: { remaining: afRateLimit.remaining, limit: afRateLimit.limit,
                             callsToday: afRateLimit.callsToday, perSport: sportRateLimits } });
   } catch (e) {

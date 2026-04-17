@@ -37,6 +37,7 @@ const corrDamp = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const dailyResults = require('./lib/daily-results');
 const liveBoard = require('./lib/live-board');
+const operatorActions = require('./lib/operator-actions');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -4634,6 +4635,28 @@ test('live-board: dated baseball fallback accepteert live inning-statussen', () 
     liveBoard.shouldIncludeDatedV1Game('NS', { includeLiveStatuses: false }),
     true
   );
+});
+
+test('operator-actions: auto-sync tracker triggert alleen bij live → einde overgang', () => {
+  assert.strictEqual(
+    operatorActions.shouldAutoSyncTrackerOnLiveEnd({ wasLive: true, isLive: false, alreadyNotifiedFt: false }),
+    true
+  );
+  assert.strictEqual(
+    operatorActions.shouldAutoSyncTrackerOnLiveEnd({ wasLive: false, isLive: false, alreadyNotifiedFt: false }),
+    false
+  );
+  assert.strictEqual(
+    operatorActions.shouldAutoSyncTrackerOnLiveEnd({ wasLive: true, isLive: false, alreadyNotifiedFt: true }),
+    false
+  );
+});
+
+test('operator-actions: CLV recompute target kan op één bet focussen', () => {
+  const row = { bet_id: 42 };
+  assert.strictEqual(operatorActions.matchesClvRecomputeTarget(row, { betId: 42 }), true);
+  assert.strictEqual(operatorActions.matchesClvRecomputeTarget(row, { betId: 41 }), false);
+  assert.strictEqual(operatorActions.matchesClvRecomputeTarget(row, {}), true);
 });
 
 // ── PRICE-MEMORY: line-timeline (v10.10.9, fundament 2 uit Bouwvolgorde) ─────
