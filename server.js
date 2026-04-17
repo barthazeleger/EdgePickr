@@ -249,6 +249,7 @@ const {
   pitcherAdjustment, pitcherReliabilityFactor, goalieAdjustment,
   injurySeverityWeight, nbaAvailabilityAdjustment,
   shotsDifferentialAdjustment, recomputeWl, summarizeSignalMetrics,
+  shrinkFormScore, bayesSmooth,
 } = modelMath;
 
 // ── SUPABASE CONFIG ──────────────────────────────────────────────────────────
@@ -2494,7 +2495,7 @@ async function runBasketball(emit) {
         let formAdj = 0;
         if (hmSt?.form && awSt?.form) {
           const fmScore = s => [...(s.slice(-5)||'')].reduce((a,c)=>a+(c==='W'?3:c==='L'?0:1),0);
-          formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
+          formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form)) - shrinkFormScore(fmScore(awSt.form))) / 15 * 0.04));
         }
 
         // Back-to-back penalty: -4%
@@ -3040,7 +3041,7 @@ async function runHockey(emit) {
         let formAdj = 0;
         if (hmSt?.form && awSt?.form) {
           const fmScore = s => [...(s.slice(-5)||'')].reduce((a,c)=>a+(c==='W'?3:c==='L'?0:1),0);
-          formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
+          formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form)) - shrinkFormScore(fmScore(awSt.form))) / 15 * 0.04));
         }
 
         // Back-to-back penalty: -4%
@@ -3758,7 +3759,7 @@ async function runBaseball(emit) {
         let formAdj = 0;
         if (hmSt?.form && awSt?.form) {
           const fmScore = s => [...(s.slice(-10)||'')].reduce((a,c)=>a+(c==='W'?3:c==='L'?0:1),0);
-          formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 30 * 0.04));
+          formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form), 10) - shrinkFormScore(fmScore(awSt.form), 10)) / 30 * 0.04));
         }
 
         // ── Advanced baseball signals (from standings, 0 extra API calls) ──
@@ -4298,7 +4299,7 @@ async function runFootballUS(emit) {
         let formAdj = 0;
         if (hmSt?.form && awSt?.form) {
           const fmScore = s => [...(s.slice(-5)||'')].reduce((a,c)=>a+(c==='W'?3:c==='L'?0:1),0);
-          formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
+          formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form)) - shrinkFormScore(fmScore(awSt.form))) / 15 * 0.04));
         }
 
         // ── Weather (outdoor NFL stadia) — nudge O/U bij heavy rain/wind ──
@@ -4726,7 +4727,7 @@ async function runHandball(emit) {
         let formAdj = 0;
         if (hmSt?.form && awSt?.form) {
           const fmScore = s => [...(s.slice(-5)||'')].reduce((a,c)=>a+(c==='W'?3:c==='L'?0:1),0);
-          formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
+          formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form)) - shrinkFormScore(fmScore(awSt.form))) / 15 * 0.04));
         }
 
         // ── Advanced handball signals (from standings, 0 extra API calls) ──
@@ -5254,7 +5255,7 @@ async function runPrematch(emit) {
         if (hmSt && awSt) {
           if (hmSt.form && awSt.form) {
             const fmScore = s => [...(s.slice(-5)||'')].reduce((a,c)=>a+(c==='W'?3:c==='D'?1:0),0);
-            formAdj = Math.max(-0.05, Math.min(0.05, (fmScore(hmSt.form) - fmScore(awSt.form)) / 15 * 0.04));
+            formAdj = Math.max(-0.05, Math.min(0.05, (shrinkFormScore(fmScore(hmSt.form)) - shrinkFormScore(fmScore(awSt.form))) / 15 * 0.04));
           }
           const hmGD = hmSt.goalsFor && hmSt.goalsAgainst ? +(hmSt.goalsFor-hmSt.goalsAgainst).toFixed(2) : null;
           const awGD = awSt.goalsFor && awSt.goalsAgainst ? +(awSt.goalsFor-awSt.goalsAgainst).toFixed(2) : null;

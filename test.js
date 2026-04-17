@@ -2302,7 +2302,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.18');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.19');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5466,6 +5466,54 @@ test('operatorDay: converteert kickoff naar Amsterdam kalenderdag', () => {
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T22:00:00Z'), '2026-04-18');
   // 2026-04-17T12:00:00Z = 17 apr 14:00 in CEST
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T12:00:00Z'), '2026-04-17');
+});
+
+// ── BAYESIAN FORM SHRINKAGE (v10.10.19, broad shrinkage roadmap punt 5) ──────
+console.log('\n  Bayesian form shrinkage:');
+
+const { shrinkFormScore, FORM_PRIOR_PTS_PER_GAME, FORM_SHRINKAGE_K } = modelMath;
+
+test('shrinkFormScore: 5W (rawScore=15) wordt gedempt richting prior', () => {
+  const shrunk = shrinkFormScore(15, 5);
+  assert.ok(shrunk < 15 && shrunk > 10, `verwacht ~11.25, kreeg ${shrunk}`);
+});
+
+test('shrinkFormScore: 5L (rawScore=0) wordt opgetrokken richting prior', () => {
+  const shrunk = shrinkFormScore(0, 5);
+  assert.ok(shrunk > 0 && shrunk < 5, `verwacht ~3.75, kreeg ${shrunk}`);
+});
+
+test('shrinkFormScore: neutrale form (7.5) verandert nauwelijks', () => {
+  const shrunk = shrinkFormScore(7.5, 5);
+  assert.ok(Math.abs(shrunk - 7.5) < 0.1, `verwacht ~7.5, kreeg ${shrunk}`);
+});
+
+test('shrinkFormScore: meer games → minder shrinkage (n=20 dicht bij raw)', () => {
+  const shrunk5 = shrinkFormScore(15, 5);
+  const shrunk20 = shrinkFormScore(15 * 4, 20); // 20W = 60 punten
+  // Bij n=20: w = 20/25 = 0.8 → shrunk = 0.8*60 + 0.2*30 = 54
+  // Bij n=5:  w = 5/10 = 0.5 → shrunk = 0.5*15 + 0.5*7.5 = 11.25
+  // Shrinkage ratio: (raw - shrunk) / raw
+  const ratio5 = (15 - shrunk5) / 15;
+  const ratio20 = (60 - shrunk20) / 60;
+  assert.ok(ratio20 < ratio5, 'meer data = minder shrinkage');
+});
+
+test('shrinkFormScore: baseball 10-game window met n=10', () => {
+  const raw10W = 30; // 10 wins × 3 punten
+  const shrunk = shrinkFormScore(raw10W, 10);
+  // w = 10/15 ≈ 0.667 → shrunk = 0.667*30 + 0.333*15 = 25
+  assert.ok(shrunk > 20 && shrunk < 30, `verwacht ~25, kreeg ${shrunk}`);
+});
+
+test('shrinkFormScore: formAdj-verschil wordt kleiner na shrinkage', () => {
+  // Simuleer formAdj berekening: (hmForm - awForm) / 15 * 0.04
+  const hmRaw = 15; // 5W
+  const awRaw = 0;  // 5L
+  const rawDiff = (hmRaw - awRaw) / 15 * 0.04;
+  const shrunkDiff = (shrinkFormScore(hmRaw) - shrinkFormScore(awRaw)) / 15 * 0.04;
+  assert.ok(Math.abs(shrunkDiff) < Math.abs(rawDiff), `shrunk adj ${shrunkDiff} < raw adj ${rawDiff}`);
+  assert.ok(Math.abs(shrunkDiff) > 0, 'niet volledig naar 0 gedempt');
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────

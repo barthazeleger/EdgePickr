@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.19] - 2026-04-17
+
+Broad Bayesian shrinkage op form-streaks (selection edge, roadmap punt 5). Zelfde principe als BTTS-H2H shrinkage (v10.8.23) maar nu op elke sport.
+
+### Added
+- **[claude] `shrinkFormScore(rawScore, nGames, prior, K)` in `lib/model-math.js`**. Bayesian smoothing op form-punten: dempt extreme streaks (5W→15pt of 5L→0pt) richting neutrale prior (1.5 pt/game). Bij 5 games: WWWWW shrunkt van 15→11.25, LLLLL van 0→3.75. Bij 20 games: nauwelijks demping (w=0.8). Hergebruikt bestaande `bayesSmooth` helper.
+- **[claude] Alle 6 sport-flows gebruiken shrinkFormScore** in formAdj-berekening: voetbal, basketball, hockey, baseball (met n=10 voor 10-game window), NFL, handball. Effect: extremere form-streaks wegen minder zwaar, neutrale form nauwelijks veranderd. Max formAdj-verschil daalt van ~4% naar ~2% bij 5 games — precies de zone waar variance het signaal domineert.
+- **[claude] +6 regressietests**: 5W demping, 5L optrekken, neutrale onveranderd, meer data = minder shrinkage, baseball 10-game window, formAdj-verschil verkleint.
+
+### Tests
+- `npm test` groen: `449 passed, 0 failed`.
+
 ## [10.10.18] - 2026-04-17
 
 Correlated-bet Kelly-reductie (discipline edge, roadmap punt 4). Direct EV-impact: voorkomt correlation-blow-ups bij meerdere picks in dezelfde league op dezelfde avond.
