@@ -9276,6 +9276,106 @@ app.delete('/api/bets/:id', async (req, res) => {
   catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
+// v10.12.24: huidige-odds endpoint voor een bet. Handig voor operator om
+// te zien of de markt is bewogen sinds hij heeft gelogd. Returnt ook
+// delta vs de gelogde odds en "move direction".
+app.get('/api/bets/:id/current-odds', async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const id = parseInt(req.params.id);
+    if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'Ongeldig ID' });
+    if (rateLimit('currentodds:' + userId, 30, 60 * 1000)) return res.status(429).json({ error: 'Te veel refreshes · wacht een minuut' });
+    // Haal bet op (scoped per user)
+    let betQuery = supabase.from('bets').select('*').eq('bet_id', id);
+    if (userId) betQuery = betQuery.eq('user_id', userId);
+    const { data: bet, error: betErr } = await betQuery.single();
+    if (betErr || !bet) return res.status(404).json({ error: 'Bet niet gevonden' });
+    if (!bet.fixture_id) return res.json({ note: 'Geen fixture_id gekoppeld aan deze bet; huidige odds niet opvraagbaar.', canRefresh: false });
+    // Skip als uitkomst al bekend — zinloos om odds van afgelopen match te fetchen
+    if (bet.uitkomst === 'W' || bet.uitkomst === 'L') {
+      return res.json({ note: 'Bet is al settled; current-odds refresh wordt overgeslagen.', canRefresh: false });
+    }
+    // Sport-gebaseerde api host
+    const sport = (bet.sport || 'football').toLowerCase();
+    const hostMap = {
+      football: { host: 'v3.football.api-sports.io', path: '/odds' },
+      basketball: { host: 'v1.basketball.api-sports.io', path: '/odds' },
+      hockey: { host: 'v1.hockey.api-sports.io', path: '/odds' },
+      baseball: { host: 'v1.baseball.api-sports.io', path: '/odds' },
+      'american-football': { host: 'v1.american-football.api-sports.io', path: '/odds' },
+      handball: { host: 'v1.handball.api-sports.io', path: '/odds' },
+    };
+    const cfg = hostMap[sport];
+    if (!cfg) return res.status(400).json({ error: `Sport '${sport}' heeft geen odds-endpoint` });
+    // Haal preferred bookie(s)
+    const users = await loadUsers().catch(() => []);
+    const u = users.find(x => x.id === userId);
+    const preferred = Array.isArray(u?.settings?.preferredBookies) && u.settings.preferredBookies.length
+      ? u.settings.preferredBookies.map(x => String(x).toLowerCase())
+      : ['bet365', 'unibet'];
+    // Fetch odds
+    const oddsResp = await afGet(cfg.host, cfg.path, { fixture: bet.fixture_id });
+    if (!oddsResp?.length) return res.json({ note: 'Geen odds beschikbaar bij api-sports', canRefresh: true });
+    const bookmakers = oddsResp[0]?.bookmakers || [];
+    // Filter op preferred bookies eerst, fallback naar alle bookmakers
+    const preferredBks = bookmakers.filter(b => preferred.some(p => String(b.name || '').toLowerCase().includes(p)));
+    const searchBks = preferredBks.length ? preferredBks : bookmakers;
+    // Use resolveOddFromBookie via clv-match voor consistente matching
+    const mapped = marketKeyFromBetMarkt(bet.markt || '');
+    if (!mapped?.market_type || !mapped?.selection_key) {
+      return res.json({ note: 'Markt niet mappable voor odds-refresh', canRefresh: true, marketRaw: bet.markt });
+    }
+    // Zoek beste prijs in preferred bookies voor matching markt
+    let best = { price: 0, bookie: null };
+    for (const bk of searchBks) {
+      for (const betDef of (bk.bets || [])) {
+        for (const val of (betDef.values || [])) {
+          const rawName = String(val.value || '').toLowerCase();
+          const price = parseFloat(val.odd);
+          if (!Number.isFinite(price) || price <= 1.0) continue;
+          // Simpele match op selection_key (home/away/draw/yes/no/over/under)
+          const match = rawName === mapped.selection_key
+            || (mapped.selection_key === 'home' && rawName === 'home')
+            || (mapped.selection_key === 'away' && rawName === 'away')
+            || (mapped.selection_key === 'draw' && rawName === 'draw')
+            || (mapped.selection_key === 'yes' && /^yes/.test(rawName))
+            || (mapped.selection_key === 'no' && /^no/.test(rawName))
+            || (mapped.selection_key === 'over' && /over/.test(rawName))
+            || (mapped.selection_key === 'under' && /under/.test(rawName));
+          if (match && price > best.price) {
+            best = { price: +price.toFixed(3), bookie: bk.name };
+          }
+        }
+      }
+    }
+    if (best.price <= 0) return res.json({ note: 'Markt niet gevonden in huidige odds-response', canRefresh: true });
+    const logged = parseFloat(bet.odds);
+    const deltaAbs = +(best.price - logged).toFixed(3);
+    const deltaPct = logged > 0 ? +((best.price - logged) / logged * 100).toFixed(2) : null;
+    const impliedLogged = logged > 0 ? +(1 / logged).toFixed(4) : null;
+    const impliedCurrent = best.price > 0 ? +(1 / best.price).toFixed(4) : null;
+    const direction = deltaAbs > 0 ? 'lengthened' : deltaAbs < 0 ? 'shortened' : 'flat';
+    const preferredMatch = preferredBks.some(b => String(b.name || '').toLowerCase() === String(best.bookie || '').toLowerCase());
+    res.json({
+      canRefresh: true,
+      fixtureId: bet.fixture_id,
+      loggedOdds: logged,
+      loggedBookie: bet.tip || null,
+      currentOdds: best.price,
+      currentBookie: best.bookie,
+      currentFromPreferred: preferredMatch,
+      deltaAbs,
+      deltaPct,
+      direction,
+      impliedLogged,
+      impliedCurrent,
+    });
+  } catch (e) {
+    console.error('current-odds error:', e.message);
+    res.status(500).json({ error: 'Interne fout · check server logs' });
+  }
+});
+
 // Laatste picks ophalen (voor analyse tab)
 app.get('/api/picks', (req, res) => {
   // SECURITY: same projection als /api/scan-history en /api/analyze.
@@ -9796,6 +9896,12 @@ app.get('/api/status', (req, res) => {
       lastCalibration: c.modelLastUpdated || null,
       marketsTracked: Object.keys(c.markets || {}).filter(k => (c.markets[k]?.n || 0) > 0).length,
     },
+    stakeRegime: _currentStakeRegime ? {
+      regime: _currentStakeRegime.regime,
+      kellyFraction: _currentStakeRegime.kellyFraction,
+      unitMultiplier: _currentStakeRegime.unitMultiplier,
+      reasons: _currentStakeRegime.reasons || [],
+    } : null,
     leagues: {
       football:            AF_FOOTBALL_LEAGUES.map(l => ({ id: l.id, name: l.name, key: l.key, ha: l.ha })),
       basketball:          NBA_LEAGUES.map(l => ({ id: l.id, name: l.name, key: l.key, ha: l.ha })),

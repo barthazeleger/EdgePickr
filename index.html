@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.23</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.24</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -354,6 +354,7 @@
           <th style="cursor:pointer" onclick="sortBets('uitkomst')">Uitkomst</th>
           <th style="cursor:pointer" onclick="sortBets('wl')">W/L</th>
           <th style="cursor:pointer" onclick="sortBets('clvPct')">CLV</th>
+          <th title="Huidige odds vs jouw gelogde odds">🔄 Nu</th>
           <th></th>
         </tr>
       </thead>
@@ -622,7 +623,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.23</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.24</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -2136,7 +2137,7 @@ function renderBetsTable(bets) {
   const tbody = document.getElementById('bets-body');
   tbody.innerHTML = '';
   if (!bets.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="15">Nog geen bets geregistreerd.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="16">Nog geen bets geregistreerd.</td></tr>';
     return;
   }
   // Combineer datum (dd-mm-yyyy) + tijd (HH:MM) tot één timestamp zodat
@@ -2190,6 +2191,9 @@ function renderBetsTable(bets) {
       </td>
       <td class="${wCls}">${b.wl !== 0 ? (b.wl>0?'+':'')+'€'+Number(b.wl).toFixed(2) : b.uitkomst==='Open' ? `<span style="color:var(--muted);font-size:11px" title="Potentiële winst">+€${+((b.odds-1)*b.inzet).toFixed(2)}</span>` : '—'}</td>
       <td>${b.clvPct != null && !isNaN(b.clvPct) ? `<span style="font-size:11px;font-weight:700;color:${b.clvPct>0?'#34d399':b.clvPct<0?'#f87171':'#9ca3af'}">${b.clvPct>0?'+':''}${b.clvPct}%</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+      <td style="min-width:64px">${b.uitkomst === 'Open'
+        ? `<button class="del-btn" onclick="refreshCurrentOdds(${parseInt(b.id)||0}, this)" title="Huidige odds ophalen" style="padding:2px 6px;font-size:14px">🔄</button><span id="cur-${parseInt(b.id)||0}" style="margin-left:4px;font-size:11px;color:var(--muted)"></span>`
+        : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td><button class="del-btn" onclick="removeBet(${parseInt(b.id)||0})" title="Verwijderen">🗑</button></td>`;
     tbody.appendChild(tr);
   });
@@ -2199,6 +2203,41 @@ function setOutcome(id, v) {
   api('/api/bets/' + id, {
     method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ uitkomst: v })
   }).then(r => r?.json()).then(d => { if(d){ betData = d; renderStats(d.stats); refreshBets(d.bets); } });
+}
+
+// v10.12.24: huidige odds ophalen voor open bet en tonen naast de row.
+async function refreshCurrentOdds(id, btn) {
+  const span = document.getElementById('cur-' + id);
+  if (btn) btn.disabled = true;
+  if (span) span.textContent = '…';
+  try {
+    const r = await api('/api/bets/' + id + '/current-odds');
+    const d = await r.json();
+    if (!d || d.error) {
+      if (span) span.textContent = d?.error ? '❌' : '—';
+      return;
+    }
+    if (d.canRefresh === false) {
+      if (span) { span.textContent = ''; span.title = d.note || ''; }
+      return;
+    }
+    if (!Number.isFinite(d.currentOdds)) {
+      if (span) { span.textContent = '—'; span.title = d.note || ''; }
+      return;
+    }
+    const col = d.deltaAbs > 0 ? '#34d399' : d.deltaAbs < 0 ? '#f87171' : 'var(--muted)';
+    const arrow = d.deltaAbs > 0 ? '↑' : d.deltaAbs < 0 ? '↓' : '=';
+    const sign = d.deltaAbs > 0 ? '+' : '';
+    const bookieTag = d.currentFromPreferred ? '' : ' ⚠️';
+    if (span) {
+      span.innerHTML = `<span style="color:${col};font-weight:700">${d.currentOdds}</span> ${arrow} <span style="color:${col}">${sign}${d.deltaPct}%</span>${bookieTag}`;
+      span.title = `Huidig: ${d.currentOdds} (${d.currentBookie})\nGelogd: ${d.loggedOdds} (${d.loggedBookie || '?'})\nDelta: ${sign}${d.deltaAbs} (${sign}${d.deltaPct}%)\n${d.direction}${d.currentFromPreferred ? '' : '\n⚠️ Niet uit preferred bookie'}`;
+    }
+  } catch (e) {
+    if (span) { span.textContent = '❌'; span.title = String(e?.message || e); }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function editBetField(id, field, currentVal) {
@@ -5044,6 +5083,13 @@ async function loadStatus() {
     // Model
     const m = d.model || {};
     const wr = m.totalSettled > 0 ? Math.round(m.totalWins / m.totalSettled * 100) : 0;
+    const reg = d.stakeRegime || null;
+    const regColor = reg
+      ? (reg.regime === 'scale_up' ? '#34d399'
+        : reg.regime === 'drawdown_hard' ? '#f87171'
+        : reg.regime === 'drawdown_soft' || reg.regime === 'regime_shift' || reg.regime === 'consecutive_l' ? '#fbbf24'
+        : 'var(--accent)')
+      : 'var(--muted)';
     document.getElementById('status-model').innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
         <div style="background:var(--surface2);border-radius:10px;padding:10px;text-align:center">
@@ -5059,6 +5105,18 @@ async function loadStatus() {
           <div style="font-size:10px;color:var(--muted)">Markten actief</div>
         </div>
       </div>
+      ${reg ? `
+      <div style="background:var(--surface2);border-radius:10px;padding:10px;margin-bottom:12px;border-left:3px solid ${regColor}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">🎚️ Stake-regime</div>
+          <div style="font-size:13px;font-weight:700;color:${regColor}">${escHtml(reg.regime)}</div>
+        </div>
+        <div style="display:flex;gap:12px;font-size:12px;margin-bottom:6px">
+          <div><span style="color:var(--muted)">Kelly:</span> <strong>${reg.kellyFraction}</strong></div>
+          <div><span style="color:var(--muted)">Unit ×:</span> <strong>${reg.unitMultiplier}</strong></div>
+        </div>
+        ${(reg.reasons || []).length ? `<div style="font-size:11px;color:var(--muted);font-style:italic">${escHtml((reg.reasons || []).join(' · '))}</div>` : ''}
+      </div>` : ''}
       <div style="font-size:12px;color:var(--muted)">
         Laatste calibratie: ${m.lastCalibration ? new Date(m.lastCalibration).toLocaleString('nl-NL', { timeZone:'Europe/Amsterdam' }) : 'nog niet'}
       </div>

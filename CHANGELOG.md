@@ -2,6 +2,37 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.24] - 2026-04-17
+
+UX batch · huidige-odds refresh op bet-tracker + stake-regime visible in Status page.
+
+### Added — "🔄 Nu" kolom op Bet Tracker
+- **[claude] `GET /api/bets/:id/current-odds`** — auth-scoped per user, rate-limited 30/min per user. Leest bet uit supabase (incl. `fixture_id`), fetcht huidige odds via api-sports voor het juiste sport, filtert op user's preferred bookies, zoekt de matchende markt/selectie (via `marketKeyFromBetMarkt`), retourneert `{currentOdds, currentBookie, loggedOdds, loggedBookie, deltaAbs, deltaPct, direction, impliedLogged, impliedCurrent, currentFromPreferred}`. Skipt settled bets (W/L) en bets zonder fixture_id.
+- **[claude] UI-kolom "🔄 Nu"** in bet-tracker tabel. Alleen zichtbaar voor open bets. Klik = fetch huidige odds, toont inline: `1.95 ↑ +2.1%` met kleur-codering (groen = gelengd = jouw gelogde odds waren scherper; rood = verkort = te laat). Hover-tooltip toont volledige details. ⚠️ marker als huidige bookie NIET uit preferred is (bv. sharp-ref biedt betere odds dan Bet365/Unibet op dit moment).
+- **UI colspan + th update** consistent (van 15 → 16 columns).
+
+### Added — Stake-regime zichtbaar in Status page
+- **[claude] `/api/status` returnt nu `stakeRegime`** object: `{regime, kellyFraction, unitMultiplier, reasons}` uit het live `_currentStakeRegime`.
+- **[claude] Status-model card toont regime-panel** met:
+  - Regime-label (kleur: groen=scale_up, geel=drawdown_soft/shift/streak, rood=drawdown_hard, accent=andere)
+  - Kelly-fractie + Unit × multiplier
+  - Reasons-string (waarom dit regime)
+
+### Rationale
+- Operator vroeg om "huidige odds knop — nice-to-have". Implementatie landt in één plek (bet tracker), geen nieuwe flow nodig.
+- Operator ziet in Status welk regime actief is ZONDER admin endpoint te hoeven raadplegen. Ondersteunt "jij scant en logt" doctrine.
+
+### Verwachte bookie-mismatch interpretatie
+De ⚠️ marker op current-odds wanneer bookie niet preferred is betekent: de markt heeft bewogen, en op dit moment heeft een sharp-ref (Pinnacle/William Hill) betere odds. Niets om op te reageren — dit is normaal wanneer odds over tijd bewegen. Info-signaal, geen alert.
+
+### UI audit bevindingen (niet-blokkerend)
+- `index.html:878/881/912` bevatten historische release-notes die Telegram noemen. Laat staan — v10.4.0 / v10.1.3 releases gebruikten inderdaad Telegram, revisionisme is oneerlijk.
+- `index.html:1030` noemt "77 competities" — klopt nog (59 football + 5 basketball + 4 hockey + 3 baseball + 2 NFL + 4 handball = 77).
+- `index.html:4946` — telegram-icoon al verwijderd in v10.12.0 (service-map). Niet-stale.
+
+### Tests
+- `npm test`: 523 passed, 0 failed.
+
 ## [10.12.23] - 2026-04-17
 
 Phase C.10 LIVE-WIRED · Unified stake-regime engine vervangt de aparte `getKellyFraction` + `getDrawdownMultiplier` paden. Volledig automatisch — geen operator-toggle.
