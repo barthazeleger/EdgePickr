@@ -5240,7 +5240,10 @@ async function runPrematch(emit) {
         : ['Bet365', 'Unibet'];
       _scanTimelineMap = await lineTimelineLib.buildScanTimelineMap(supabase, {
         fixtureIds: _scanFixtureIds,
-        marketTypes: ['1x2'], // Phase A.1b: alleen 1X2 (MVP); O/U + BTTS + DNB volgen in vervolg-slice
+        // v10.12.7 Phase A.1b expansion: 1X2 + totals + BTTS + DNB zijn nu
+        // gewired in mkP. Exotische (AH, 1H, correct score) volgen als
+        // odds_snapshots ze consistent loggen.
+        marketTypes: ['1x2', 'totals', 'btts', 'dnb'],
         preferredBookies,
         kickoffByFixtureId: _scanKickoffByFixture,
         scanAnchorMs: Date.now(),
@@ -5787,14 +5790,17 @@ async function runPrematch(emit) {
           if (weatherOUAdj !== 0) ouSignals.push(`weather_ou:${(weatherOUAdj*100).toFixed(1)}%`);
           if (Math.abs(poissonOUAdj) >= 0.005) ouSignals.push(`poisson_ou:${poissonOUAdj>0?'+':''}${(poissonOUAdj*100).toFixed(1)}%`);
           if (aggOUAdj !== 0) ouSignals.push(`aggregate_push_ou:+${(aggOUAdj*100).toFixed(1)}%`);
+          // v10.12.7 Phase A.1b: totals market is 2-way (over/under), line=2.5
+          const fxMetaOver  = { fixtureId: fid, marketType: 'totals', selectionKey: 'over',  line: 2.5 };
+          const fxMetaUnder = { fixtureId: fid, marketType: 'totals', selectionKey: 'under', line: 2.5 };
           if (overEdge >= MIN_EDGE)
             mkP(`${hm} vs ${aw}`, league.name, `⚽ Over 2.5 goals`, over.best.price,
               `O/U consensus: ${(overP*100).toFixed(1)}% over | ${over.best.bookie}: ${over.best.price}${tsNote}${weatherOUNote}${poissonOUNote}${predNote} | ${ko}`,
-              Math.round(overP*100), overEdge * 0.24 * (cm.over?.multiplier ?? 1), kickoffTime, over.best.bookie, ouSignals, refereeName);
+              Math.round(overP*100), overEdge * 0.24 * (cm.over?.multiplier ?? 1), kickoffTime, over.best.bookie, ouSignals, refereeName, fxMetaOver);
           if (underEdge >= MIN_EDGE && under.best.price >= 1.60)
             mkP(`${hm} vs ${aw}`, league.name, `🔒 Under 2.5 goals`, under.best.price,
               `O/U consensus: ${((1-overP)*100).toFixed(1)}% under | ${under.best.bookie}: ${under.best.price}${tsNote}${weatherOUNote}${poissonOUNote} | ${ko}`,
-              Math.round((1-overP)*100), underEdge * 0.22 * (cm.under?.multiplier ?? 1), kickoffTime, under.best.bookie, ouSignals, refereeName);
+              Math.round((1-overP)*100), underEdge * 0.22 * (cm.under?.multiplier ?? 1), kickoffTime, under.best.bookie, ouSignals, refereeName, fxMetaUnder);
         }
 
         // ── BTTS (Both Teams To Score) ────────────────────────────────
@@ -5905,15 +5911,18 @@ async function runPrematch(emit) {
               // worden via BTTS_H2H_PRIOR_K richting neutraal getrokken.
               const sourceTag = h2hSources.length > 1 ? ` [${h2hSources.join('+')}]` : '';
               const h2hStr = h2hN > 0 ? ` | H2H: ${Math.round(h2hBTTS)}/${h2hN} BTTS${h2hN < 5 ? ' (dun)' : ''}${sourceTag}` : ' | H2H: —';
+              // v10.12.7 Phase A.1b: BTTS = 2-way binary market
+              const fxMetaBttsY = { fixtureId: fid, marketType: 'btts', selectionKey: 'yes', line: null };
+              const fxMetaBttsN = { fixtureId: fid, marketType: 'btts', selectionKey: 'no',  line: null };
               if (bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60)
                 mkP(`${hm} vs ${aw}`, league.name, `🔥 BTTS Ja`, bestYes.price,
                   `BTTS: ${(bttsYesP*100).toFixed(1)}% | ${bestYes.bookie}: ${bestYes.price} | GF: ${hmGFAvg}/${awGFAvg}${h2hStr} | ${ko}`,
-                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.over?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName);
+                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.over?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
 
               if (bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60)
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | GF: ${hmGFAvg}/${awGFAvg} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}${h2hStr} | ${ko}`,
-                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.under?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName);
+                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.under?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
             }
           }
         }
@@ -5945,15 +5954,18 @@ async function runPrematch(emit) {
             const dnbHomeEdge = dnbHomeP * bestDnbH.price - 1;
             const dnbAwayEdge = dnbAwayP * bestDnbA.price - 1;
 
+            // v10.12.7 Phase A.1b: DNB = 2-way markt
+            const fxMetaDnbH = { fixtureId: fid, marketType: 'dnb', selectionKey: 'home', line: null };
+            const fxMetaDnbA = { fixtureId: fid, marketType: 'dnb', selectionKey: 'away', line: null };
             if (dnbHomeEdge >= MIN_EDGE && bestDnbH.price >= 1.30 && bestDnbH.price <= 2.50)
               mkP(`${hm} vs ${aw}`, league.name, `🏠 DNB ${hm}`, bestDnbH.price,
                 `Draw No Bet: ${(dnbHomeP*100).toFixed(1)}% | ${bestDnbH.bookie}: ${bestDnbH.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24, kickoffTime, bestDnbH.bookie, matchSignals, refereeName);
+                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24, kickoffTime, bestDnbH.bookie, matchSignals, refereeName, fxMetaDnbH);
 
             if (dnbAwayEdge >= MIN_EDGE && bestDnbA.price >= 1.30 && bestDnbA.price <= 2.50)
               mkP(`${hm} vs ${aw}`, league.name, `✈️ DNB ${aw}`, bestDnbA.price,
                 `Draw No Bet: ${(dnbAwayP*100).toFixed(1)}% | ${bestDnbA.bookie}: ${bestDnbA.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals, refereeName);
+                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals, refereeName, fxMetaDnbA);
           }
         }
 

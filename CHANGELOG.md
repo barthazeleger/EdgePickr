@@ -2,6 +2,32 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.7] - 2026-04-17
+
+Phase A.1b vervolg · Football totals + BTTS + DNB wire-up. Uitbreiding van de v10.12.6 gate-wiring: over de volle markt-breedte die EdgePickr op dit moment voor football scant, draait de execution-gate nu live.
+
+### Wired (nu geconsumeerd door de gate)
+- **`⚽ Over/Under 2.5 goals`** — `marketType='totals'`, `selectionKey='over'|'under'`, `line=2.5`. Wordt 2-way behandeld voor overround-berekening.
+- **`🔥 BTTS Ja / 🛡️ BTTS Nee`** — `marketType='btts'`, `selectionKey='yes'|'no'`. Binary 2-way markt.
+- **`🏠 DNB Home / ✈️ DNB Away`** — `marketType='dnb'`, `selectionKey='home'|'away'`.
+- `buildScanTimelineMap` call in `runPrematch` doet nu ook `'totals'`, `'btts'`, `'dnb'` types op (naast `'1x2'` uit v10.12.6).
+
+### Niet-gewired (volgende slices)
+- Asian Handicap quarter-lines, 1st Half O/U + spread, Double Chance (1X/12/X2) — extra complexiteit (line-quarter parser + selectionKey-mapping) dus eigen commit.
+- Basketball / Hockey / Baseball / NFL / Handball — nog steeds backwards-compat (gate no-op).
+
+### Tests
+- `npm test`: 489 passed, 0 failed (geen nieuwe tests in deze commit — pure call-site threading, bestaande plumbing-tests dekken het gedrag).
+
+### Operational notes
+Effect-set per football pick:
+- 1X2 (sinds v10.12.6): ✓ gate actief
+- O/U 2.5 totals: ✓ gate actief (sinds v10.12.7)
+- BTTS Yes/No: ✓ gate actief (sinds v10.12.7)
+- DNB: ✓ gate actief (sinds v10.12.7)
+
+Dat dekt ≈ 90%+ van het gemiddelde football pick-volume. Exotische markten (AH, 1H, correct score) krijgen de gate in vervolgsprints.
+
 ## [10.12.6] - 2026-04-17
 
 Phase A.1b · Football wire-up van de execution-gate. De price-memory primitives uit v10.12.2 worden nu geconsumeerd door de live scan: football 1X2 picks (home / away / draw) krijgen hun kelly daadwerkelijk gedempt op stale preferred prices, te groot preferred-gap, thin markets, of ontbrekende target-bookie.
