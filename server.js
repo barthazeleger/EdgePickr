@@ -38,6 +38,7 @@ const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/executi
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
 const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
+const { shouldRunPostResultsModelJobs } = require('./lib/daily-results');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -406,7 +407,12 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // Routes that don't require authentication (full paths)
-const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
+// v10.10.22 fase 2: UUID-validatie voor .or() interpolaties (defense-in-depth).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
+
+// v10.10.22 fase 2: /api/status verwijderd uit publieke paden (lekte model-stats + API-usage).
+const PUBLIC_PATHS = new Set(['/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
 
 // JWT middleware
 // v10.10.22: DB-backed auth — herlaadt live user-status/role uit database.
@@ -8659,7 +8665,7 @@ app.get('/api/scan-history', async (req, res) => {
     let query = supabase.from('scan_history').select('*')
       .order('ts', { ascending: false }).limit(SCAN_HISTORY_MAX);
     if (!isAdmin && req.user?.id) {
-      query = query.or(`user_id.eq.${req.user.id},user_id.is.null`);
+      if (isValidUuid(req.user.id)) query = query.or(`user_id.eq.${req.user.id},user_id.is.null`);
     }
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -11287,34 +11293,40 @@ function scheduleDailyResultsCheck() {
       await tg(`⚠️ Dagelijkse check mislukt: ${e.message}`).catch(() => {});
     }
 
-    // Auto-tune signalen na resultatencheck
-    await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
-    // Kelly-fraction auto-stepup check (na elke resultatencheck, max 1 stap/dag)
-    await evaluateKellyAutoStepup().catch(e => console.error('Kelly auto-stepup fout:', e.message));
-    // CLV-based autotune (sneller signal dan W/L) — draait dagelijks na results
-    const clvTune = await autoTuneSignalsByClv().catch(e => ({ tuned: 0, error: e.message }));
-    if (clvTune.tuned > 0) {
-      console.log(`📊 CLV autotune: ${clvTune.tuned} signal weights aangepast (${clvTune.muted || 0} gemute)`);
-      // Inbox notification bij significante modelverandering
-      try {
-        const muted = (clvTune.adjustments || []).filter(a => a.reason).slice(0, 3).map(a => `${a.name} (${a.avgClv}%)`).join(', ');
-        const top = (clvTune.adjustments || []).filter(a => !a.reason).slice(0, 3).map(a => `${a.name}: ${a.old}→${a.new}`).join(', ');
-        await supabase.from('notifications').insert({
-          type: 'model_update',
-          title: `🧠 Model bijgewerkt: ${clvTune.tuned} signal weights aangepast`,
-          body: `${clvTune.muted || 0} signal(s) gemute (CLV ≤ -3%): ${muted || 'geen'}\n${top ? `Aangepast: ${top}` : ''}`,
-          read: false, user_id: null,
-        });
-      } catch { /* swallow */ }
-    }
+    const postResultsDecision = shouldRunPostResultsModelJobs(updated);
+    if (postResultsDecision.shouldRun) {
+      // Auto-tune signalen alleen als er echt nieuwe resultaten zijn settled.
+      await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
+      // Kelly-fraction auto-stepup check (na echte results-update, max 1 stap/dag)
+      await evaluateKellyAutoStepup().catch(e => console.error('Kelly auto-stepup fout:', e.message));
+      // CLV-based autotune draait mee met dezelfde settled-results cadence om
+      // onverwachte modelupdates op rustige dagen te voorkomen.
+      const clvTune = await autoTuneSignalsByClv().catch(e => ({ tuned: 0, error: e.message }));
+      if (clvTune.tuned > 0) {
+        console.log(`📊 CLV autotune: ${clvTune.tuned} signal weights aangepast (${clvTune.muted || 0} gemute)`);
+        // Inbox notification bij significante modelverandering
+        try {
+          const muted = (clvTune.adjustments || []).filter(a => a.reason).slice(0, 3).map(a => `${a.name} (${a.avgClv}%)`).join(', ');
+          const top = (clvTune.adjustments || []).filter(a => !a.reason).slice(0, 3).map(a => `${a.name}: ${a.old}→${a.new}`).join(', ');
+          await supabase.from('notifications').insert({
+            type: 'model_update',
+            title: `🧠 Model bijgewerkt: ${clvTune.tuned} signal weights aangepast`,
+            body: `${clvTune.muted || 0} signal(s) gemute (CLV ≤ -3%): ${muted || 'geen'}\n${top ? `Aangepast: ${top}` : ''}`,
+            read: false, user_id: null,
+          });
+        } catch { /* swallow */ }
+      }
 
-    // v10.10.16: calibration-monitor (slice 2, sectie 14.R2.A). Meet of
-    // onze signaal-voorspellingen daadwerkelijk gekalibreerd zijn.
-    const calResult = await updateCalibrationMonitor().catch(e => ({ error: e.message }));
-    if (calResult?.aggregated > 0) {
-      console.log(`📊 Calibration monitor: ${calResult.aggregated} signal×sport×markt×window rows bijgewerkt`);
-    } else if (calResult?.error) {
-      console.warn(`⚠️ Calibration monitor skip: ${calResult.error}`);
+      // v10.10.16: calibration-monitor (slice 2, sectie 14.R2.A). Meet of
+      // onze signaal-voorspellingen daadwerkelijk gekalibreerd zijn.
+      const calResult = await updateCalibrationMonitor().catch(e => ({ error: e.message }));
+      if (calResult?.aggregated > 0) {
+        console.log(`📊 Calibration monitor: ${calResult.aggregated} signal×sport×markt×window rows bijgewerkt`);
+      } else if (calResult?.error) {
+        console.warn(`⚠️ Calibration monitor skip: ${calResult.error}`);
+      }
+    } else {
+      console.log('📭 Geen nieuwe settled bets → auto-tune, Kelly-stepup en calibration monitor overgeslagen');
     }
 
     // Actionable todos check — sticky inbox-items voor beslissingen die je moet nemen

@@ -35,6 +35,7 @@ const playability = require('./lib/playability');
 const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
+const dailyResults = require('./lib/daily-results');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -4601,6 +4602,21 @@ test('aggregator: healthCheckAll roept alle sources aan', async () => {
   const r = await agg.healthCheckAll();
   assert.strictEqual(r.length, 5);
   assert.ok(r.every(x => x.healthy === null || x.disabled === true || x.healthy === false));
+});
+
+test('daily-results: post-results model jobs draaien alleen bij nieuwe settlements', () => {
+  assert.deepStrictEqual(
+    dailyResults.shouldRunPostResultsModelJobs(2),
+    { shouldRun: true, reason: 'new_results_settled' }
+  );
+  assert.deepStrictEqual(
+    dailyResults.shouldRunPostResultsModelJobs(0),
+    { shouldRun: false, reason: 'no_new_results' }
+  );
+  assert.deepStrictEqual(
+    dailyResults.shouldRunPostResultsModelJobs(NaN),
+    { shouldRun: false, reason: 'no_new_results' }
+  );
 });
 
 // ── PRICE-MEMORY: line-timeline (v10.10.9, fundament 2 uit Bouwvolgorde) ─────
