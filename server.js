@@ -556,7 +556,19 @@ const {
 // `refreshActiveUnitEur()` wordt bij elke scan-start aangeroepen.
 let _activeUnitEur = UNIT_EUR;
 let _activeStartBankroll = START_BANKROLL;
-function getActiveUnitEur() { return _activeUnitEur; }
+// v10.12.23 Phase C.10 live-wiring: stake-regime engine beslist automatisch
+// over Kelly-fractie + unit-multiplier. Computed per scan, cached hier zodat
+// pick-flow synchroon kan lezen. Null tijdens boot = fallback naar defaults.
+let _currentStakeRegime = null;
+let _lastRegimeTransitionName = null;
+function getStakeRegime() { return _currentStakeRegime; }
+function getActiveUnitEur() {
+  const mult = _currentStakeRegime?.unitMultiplier;
+  if (Number.isFinite(mult) && mult > 0 && mult <= 2) {
+    return +(_activeUnitEur * mult).toFixed(2);
+  }
+  return _activeUnitEur;
+}
 function getActiveStartBankroll() { return _activeStartBankroll; }
 async function refreshActiveUnitEur() {
   try {
@@ -567,6 +579,87 @@ async function refreshActiveUnitEur() {
     const sb = parseFloat(admin?.settings?.startBankroll);
     if (isFinite(sb) && sb > 0 && sb < 1000000) _activeStartBankroll = sb;
   } catch { /* keep defaults */ }
+}
+
+// v10.12.23 Phase C.10 live-wiring: bereken regime uit live bets-data.
+// Wordt aangeroepen aan start van elke scan + bij boot. Pure async lezer.
+async function recomputeStakeRegime() {
+  try {
+    const { evaluateStakeRegime } = require('./lib/stake-regime');
+    const { data: bets, error } = await supabase.from('bets')
+      .select('uitkomst, clv_pct, wl, inzet, datum').in('uitkomst', ['W', 'L']);
+    if (error) return;
+    const all = Array.isArray(bets) ? bets : [];
+    const totalSettled = all.length;
+
+    const byMs = all
+      .map(b => {
+        const dm = (b.datum || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        return { ...b, _ms: dm ? Date.parse(`${dm[3]}-${dm[2]}-${dm[1]}T12:00:00Z`) : 0 };
+      })
+      .filter(b => b._ms > 0)
+      .sort((a, b) => a._ms - b._ms);
+
+    const withClv = byMs.filter(b => typeof b.clv_pct === 'number' && Number.isFinite(b.clv_pct));
+    const last200 = withClv.slice(-200);
+    const last30  = withClv.slice(-30);
+    const longTermClvPct = last200.length ? +(last200.reduce((s, b) => s + b.clv_pct, 0) / last200.length).toFixed(3) : null;
+    const recentClvPct   = last30.length  ? +(last30.reduce((s, b) => s + b.clv_pct, 0) / last30.length).toFixed(3)  : null;
+
+    const last200Settled = byMs.slice(-200);
+    const sumWl = last200Settled.reduce((s, b) => s + (Number.isFinite(b.wl) ? b.wl : 0), 0);
+    const sumInzet = last200Settled.reduce((s, b) => s + (Number.isFinite(b.inzet) ? b.inzet : 0), 0);
+    const longTermRoi = sumInzet > 0 ? +(sumWl / sumInzet).toFixed(4) : null;
+
+    let consecutiveLosses = 0;
+    for (let i = byMs.length - 1; i >= 0; i--) {
+      if (byMs[i].uitkomst === 'L') consecutiveLosses++;
+      else break;
+    }
+
+    let balance = 0, peak = 0;
+    for (const b of byMs) {
+      balance += Number.isFinite(b.wl) ? b.wl : 0;
+      if (balance > peak) peak = balance;
+    }
+    const drawdownPct = peak > 0 ? (peak - balance) / peak : 0;
+
+    const decision = evaluateStakeRegime({
+      totalSettled, longTermClvPct, longTermRoi, recentClvPct,
+      drawdownPct, consecutiveLosses,
+      bankrollPeak: +peak.toFixed(2),
+      currentBankroll: +balance.toFixed(2),
+    });
+
+    // Sanity: bounds-check. Als output outside verwacht bereik → fallback naar
+    // conservatief default (kelly 0.35, unit ×1.0), log warning.
+    if (!decision || !Number.isFinite(decision.kellyFraction)
+        || decision.kellyFraction < 0.10 || decision.kellyFraction > 0.80) {
+      console.warn('[stake-regime] decision out of bounds — fallback to conservative default');
+      _currentStakeRegime = { regime: 'fallback', kellyFraction: 0.35, unitMultiplier: 1.0, reasons: ['bounds_check_failed'] };
+      setKellyFraction(0.35);
+      return;
+    }
+
+    // Transition alert
+    if (_lastRegimeTransitionName && decision.regime !== _lastRegimeTransitionName) {
+      notify(
+        `🎚️ STAKE-REGIME TRANSITION\n${_lastRegimeTransitionName} → ${decision.regime}\nKelly ${decision.kellyFraction} · unit ×${decision.unitMultiplier}\n${(decision.reasons || []).join(' · ')}`,
+        'stake_regime_transition'
+      ).catch(() => {});
+    }
+    _lastRegimeTransitionName = decision.regime;
+    _currentStakeRegime = decision;
+    // Sync de globale Kelly-fractie zodat lib/model-math.js:getKellyFraction()
+    // (gebruikt door mkP in lib/picks.js) de regime-waarde teruggeeft.
+    setKellyFraction(decision.kellyFraction);
+  } catch (e) {
+    console.warn('[stake-regime] recompute failed:', e.message);
+    // behoud vorige regime als die er was; anders default
+    if (!_currentStakeRegime) {
+      _currentStakeRegime = { regime: 'fallback', kellyFraction: 0.35, unitMultiplier: 1.0, reasons: ['recompute_failed'] };
+    }
+  }
 }
 
 // v10.9.8: helper voor single-operator scoping. Alle bankroll/ROI-adviezen
@@ -1514,59 +1607,17 @@ const MIN_EP           = 0.52;  // minimale geschatte kans (~52%) · boven 50% =
 
 // ── DRAWDOWN PROTECTION ──────────────────────────────────────────────────────
 // Bij een losing streak: verlaag automatisch stakes om bankroll te beschermen
+// v10.12.23 Phase C.10 live-wiring: drawdown is nu onderdeel van de unified
+// stake-regime engine (`_currentStakeRegime.kellyFraction` bevat al de
+// drawdown-dempt kelly). Deze functie returnt voortaan 1.0 zodat `hkRaw = k
+// * kelly * drawdownMultiplier * auditDampen` geen double-damping geeft.
+//
+// De oude heuristieken (>20% P/L loss, <30% win rate, 5-L streak in 3 days)
+// zijn VERPLAATST naar `lib/stake-regime.js` als `drawdown_hard` /
+// `drawdown_soft` / `consecutive_l` regimes, met strengere thresholds op
+// relative-peak-drawdown ipv absolute-start-loss (eerlijker als bankroll is
+// gegroeid) en incorporerend met CLV/ROI in één besluit.
 function getDrawdownMultiplier() {
-  const c = loadCalib();
-  const losses = c.lossLog || [];
-  // Tel opeenvolgende recente verliezen
-  let streak = 0;
-  for (const l of losses) {
-    streak++;
-    // Check of er een win tussenzit (lossLog bevat alleen losses, dus check via bets)
-  }
-  // Simpeler: kijk naar de laatste 10 bets ratio
-  if (c.totalSettled < 5) return 1.0; // te weinig data
-  const recentN = Math.min(10, c.totalSettled);
-  const recentLossRate = losses.slice(0, recentN).length / recentN;
-
-  // Gebruik de werkelijke streak uit de calibratie data
-  // lossLog is gesorteerd nieuwste eerst · tel aaneengesloten verliezen
-  // Maar we hebben ook wins nodig. Simpelste: check de bets direct.
-  try {
-    // Sync check via calibration data
-    const totalWr = c.totalSettled > 0 ? c.totalWins / c.totalSettled : 0.5;
-    const recentProfit = c.totalProfit || 0;
-
-    // Als we meer dan 20% van startbankroll verloren hebben: halveer stakes
-    if (recentProfit < -(START_BANKROLL * 0.20)) {
-      console.log('⚠️ Drawdown protection: stakes gehalveerd (>20% loss)');
-      notify(`🛡️ DRAWDOWN PROTECTION\nStakes gehalveerd · bankroll >20% onder start.\nHuidige P/L: €${recentProfit.toFixed(2)}`).catch(() => {});
-      return 0.5;
-    }
-    // Als win rate onder 30% na 10+ bets: verlaag stakes met 30%
-    if (c.totalSettled >= 10 && totalWr < 0.30) {
-      console.log('⚠️ Drawdown protection: stakes -30% (win rate < 30%)');
-      return 0.7;
-    }
-    // Na 5+ opeenvolgende verliezen (geschat): verlaag met 40%
-    if (losses.length >= 5 && c.totalSettled >= 8) {
-      const last5 = losses.slice(0, 5);
-      const recentDates = last5.map(l => l.date).filter(Boolean);
-      // Als alle 5 verliezen van de afgelopen 3 dagen zijn = streak
-      if (recentDates.length >= 5) {
-        const threeDaysAgo = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
-        const allRecent = recentDates.every(d => d >= threeDaysAgo);
-        if (allRecent) {
-          console.log('⚠️ Drawdown protection: stakes -40% (5 verliezen in 3 dagen)');
-          return 0.6;
-        }
-      }
-    }
-  } catch (e) {
-    // v10.7.22: fail-safe default 0.6 bij crash ipv 1.0 — als drawdown-logic
-    // stuk is zijn we liever voorzichtiger dan minder.
-    console.error('Drawdown protection crash, fail-safe naar 0.6:', e.message);
-    return 0.6;
-  }
   return 1.0;
 }
 
@@ -8140,6 +8191,14 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
     if (_activeUnitEur !== UNIT_EUR || _activeStartBankroll !== START_BANKROLL) {
       emit({ log: `💰 Actieve unit: €${_activeUnitEur} · bankroll: €${_activeStartBankroll}` });
     }
+    // v10.12.23 Phase C.10 live-wiring: herbereken stake-regime uit live
+    // bets. Kelly-fraction + unit-multiplier worden door deze regime-output
+    // bepaald voor de rest van de scan.
+    await recomputeStakeRegime();
+    if (_currentStakeRegime) {
+      const r = _currentStakeRegime;
+      emit({ log: `🎚️ Stake-regime: ${r.regime} · Kelly ${r.kellyFraction} · unit ×${r.unitMultiplier}` });
+    }
 
     const footballPicks = await runPrematch(emit);
 
@@ -11936,6 +11995,15 @@ app.listen(PORT, () => {
   // eerste scan met admin's actuele settings rekent.
   refreshActiveUnitEur().then(() => {
     if (_activeUnitEur !== UNIT_EUR) console.log(`💰 Active unit overridden via admin settings: €${_activeUnitEur}`);
+  });
+  // v10.12.23 Phase C.10: stake-regime engine bij boot laden zodat de
+  // eerste scan meteen met de correcte regime-output draait (i.p.v. eerst
+  // met `_currentStakeRegime=null` fallback kelly 0.5).
+  recomputeStakeRegime().then(() => {
+    if (_currentStakeRegime) {
+      const r = _currentStakeRegime;
+      console.log(`🎚️ Stake-regime (boot): ${r.regime} · Kelly ${r.kellyFraction} · unit ×${r.unitMultiplier}`);
+    }
   });
 
   // Kill-switch initial load + 30-min refresh

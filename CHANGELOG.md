@@ -2,6 +2,47 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.23] - 2026-04-17
+
+Phase C.10 LIVE-WIRED · Unified stake-regime engine vervangt de aparte `getKellyFraction` + `getDrawdownMultiplier` paden. Volledig automatisch — geen operator-toggle.
+
+### Wat verandert
+Bij elke scan-start + bij boot draait `recomputeStakeRegime()`:
+1. Leest alle `bets` (uitkomst W/L) uit Supabase
+2. Berekent input: `totalSettled`, long-term CLV (200 bet rolling), ROI, recent CLV (30 bet), drawdownPct (peak-based), consecutive L streak, bankroll peak/current
+3. Roept `evaluateStakeRegime(input)` aan (v10.12.21 pure engine)
+4. Cachet output in `_currentStakeRegime`
+5. Sync'd `setKellyFraction(regime.kellyFraction)` zodat `mkP` → `lib/picks.js:125` → `calcKelly()` → `lib/model-math.js:getKellyFraction()` automatisch de regime-waarde gebruikt
+6. `getActiveUnitEur()` past `unitMultiplier` toe — picks schalen automatisch mee (kleinere stakes tijdens drawdown_hard, zelfde tijdens standard/scale_up)
+
+### `getDrawdownMultiplier()` gedeprecateerd
+Retourneert voortaan `1.0` (regime-engine heeft drawdown al ingebakken in kellyFraction). Voorkomt double-damping: als engine al kelly=0.25 zegt tijdens drawdown_hard, vermenigvuldigen met oude multiplier 0.5 = 0.125 Kelly (te conservatief, halveert zichtbare EV).
+
+### Scan-log toont regime
+Elke scan start met: `🎚️ Stake-regime: {regime} · Kelly {x} · unit ×{y}`. Operator ziet direct welk regime actief is zonder admin-endpoint te hoeven raadplegen.
+
+### Safety rails
+- **Bounds-check**: als engine kellyFraction buiten [0.10, 0.80] geeft → fallback `kelly=0.35, unit=1.0` + warning-log. Voorkomt dat een bug in engine-logic de stake exploded of kelderdompelt.
+- **Transition alert**: web-push bij elke regime-change (exploratory → standard → scale_up / → drawdown_soft etc.). Operator ziet shifts real-time.
+- **Recompute-failure tolerantie**: als Supabase query faalt, behoud vorige regime (niet crashen of naar default springen).
+
+### Wat de engine concreet zal doen (voorbeelden)
+- 0-50 settled bets: regime `exploratory`, kelly 0.35 (conservatief tot we signaal hebben)
+- 200+ settled, CLV +2.5%, ROI +8%: regime `scale_up`, kelly 0.65 (volledige Kelly-utility onder bewezen edge)
+- 20% drawdown: regime `drawdown_soft`, kelly 0.40 (bleed stoppen zonder unit te verlagen)
+- 30%+ drawdown: regime `drawdown_hard`, kelly 0.25, unit ×0.5 (preserve dry powder)
+- 7 L in rij: regime `consecutive_l`, kelly 0.35, unit ×0.75
+- Recent CLV -1% + long-term +2% + delta ≥2pp: regime `regime_shift` (edge-regime-shift), kelly 0.40
+
+### Full automation — geen operator knop
+Operator-doctrine: "jij bepaalt alles, ik scan en log". Daarom geen toggle om regime uit te zetten. Een admin endpoint bestaat wel (`/api/admin/v2/stake-regime`) voor inspectie, maar kan het gedrag niet veranderen.
+
+### Tests
+- `npm test`: 523 passed, 0 failed (geen wijzigingen aan test-suite nodig; bestaande tests dekken engine output + integration via indirect Kelly-check).
+
+### Deprecated
+- `evaluateKellyAutoStepup` is nu redundant — engine doet dit via `scale_up` regime. Laat function staan voor backwards-compat (nog bereikbaar via `/api/admin/v2/auto-stepup`) maar operator gebruikt 'm niet meer.
+
 ## [10.12.22] - 2026-04-17
 
 Vervolg preferred-bookie lek audit · DNB + Double Chance + Handicap gefixt. Complementeert v10.12.20.
