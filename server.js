@@ -7076,6 +7076,83 @@ app.get('/api/admin/v2/bookie-concentration', requireAdmin, async (req, res) => 
   }
 });
 
+// ── v2 Admin: stake-regime engine preview (Phase C.10) ──────────────────────
+// GET /api/admin/v2/stake-regime
+// Toont wat de unified stake-regime engine ZOU beslissen op huidige bets.
+// Nog niet verbonden met actuele stake-logic — observability eerst, wiring
+// volgt als operator het vertrouwt via vergelijking met bestaande gedrag.
+app.get('/api/admin/v2/stake-regime', requireAdmin, async (req, res) => {
+  try {
+    const { evaluateStakeRegime } = require('./lib/stake-regime');
+    // Haal alle settled bets op
+    const { data: bets, error } = await supabase.from('bets')
+      .select('uitkomst, clv_pct, wl, inzet, datum').in('uitkomst', ['W', 'L']);
+    if (error) return res.status(500).json({ error: error.message });
+    const all = Array.isArray(bets) ? bets : [];
+    const totalSettled = all.length;
+
+    // Sort chronologisch (datum dd-mm-yyyy)
+    const byMs = all
+      .map(b => {
+        const dm = (b.datum || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        return { ...b, _ms: dm ? Date.parse(`${dm[3]}-${dm[2]}-${dm[1]}T12:00:00Z`) : 0 };
+      })
+      .filter(b => b._ms > 0)
+      .sort((a, b) => a._ms - b._ms);
+
+    const withClv = byMs.filter(b => typeof b.clv_pct === 'number' && Number.isFinite(b.clv_pct));
+    const last200 = withClv.slice(-200);
+    const last30  = withClv.slice(-30);
+    const longTermClvPct = last200.length ? +(last200.reduce((s, b) => s + b.clv_pct, 0) / last200.length).toFixed(3) : null;
+    const recentClvPct   = last30.length  ? +(last30.reduce((s, b) => s + b.clv_pct, 0) / last30.length).toFixed(3)  : null;
+
+    const last200Settled = byMs.slice(-200);
+    const sumWl = last200Settled.reduce((s, b) => s + (Number.isFinite(b.wl) ? b.wl : 0), 0);
+    const sumInzet = last200Settled.reduce((s, b) => s + (Number.isFinite(b.inzet) ? b.inzet : 0), 0);
+    const longTermRoi = sumInzet > 0 ? +(sumWl / sumInzet).toFixed(4) : null;
+
+    // Consecutive losses at tail
+    let consecutiveLosses = 0;
+    for (let i = byMs.length - 1; i >= 0; i--) {
+      if (byMs[i].uitkomst === 'L') consecutiveLosses++;
+      else break;
+    }
+
+    // Bankroll peak + current (rolling balance)
+    let balance = 0, peak = 0;
+    for (const b of byMs) {
+      balance += Number.isFinite(b.wl) ? b.wl : 0;
+      if (balance > peak) peak = balance;
+    }
+    const drawdownPct = peak > 0 ? (peak - balance) / peak : 0;
+
+    const decision = evaluateStakeRegime({
+      totalSettled,
+      longTermClvPct,
+      longTermRoi,
+      recentClvPct,
+      drawdownPct,
+      consecutiveLosses,
+      bankrollPeak: +peak.toFixed(2),
+      currentBankroll: +balance.toFixed(2),
+    });
+
+    res.json({
+      input: {
+        totalSettled, longTermClvPct, longTermRoi, recentClvPct,
+        drawdownPct: +(drawdownPct * 100).toFixed(2) + '%',
+        consecutiveLosses,
+        bankrollPeak: +peak.toFixed(2), currentBankroll: +balance.toFixed(2),
+      },
+      decision,
+      note: 'Engine is v10.12.21 preview. Nog NIET verbonden met live stake-logic — observability eerst.',
+    });
+  } catch (e) {
+    console.error('stake-regime error:', e.message);
+    res.status(500).json({ error: 'Interne fout · check server logs' });
+  }
+});
+
 // ── v2 Admin: pick_candidates analytics ─────────────────────────────────────
 // GET /api/admin/v2/pick-candidates-summary?hours=24
 // Toont aggregaties: totaal kandidaten, accepted ratio, top reject reasons,

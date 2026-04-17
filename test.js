@@ -36,6 +36,7 @@ const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
 const walkForward = require('./lib/walk-forward');
 const scanGate = require('./lib/runtime/scan-gate');
+const { evaluateStakeRegime } = require('./lib/stake-regime');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const dailyResults = require('./lib/runtime/daily-results');
 const liveBoard = require('./lib/runtime/live-board');
@@ -2340,7 +2341,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.20');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.21');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5738,6 +5739,101 @@ test('benjaminiHochbergFDR: strengere q blokkeert meer', () => {
 });
 
 // ── WALK-FORWARD VALIDATOR (v10.12.4, Phase B.4, doctrine §14.R2.A) ──────────
+// ── UNIFIED STAKE-REGIME ENGINE (v10.12.21 Phase C.10) ────────────────────
+console.log('\n  Unified stake-regime engine:');
+
+test('evaluateStakeRegime: lege input → exploratory', () => {
+  const r = evaluateStakeRegime({});
+  assert.strictEqual(r.regime, 'exploratory');
+  assert.strictEqual(r.kellyFraction, 0.35);
+  assert.strictEqual(r.unitMultiplier, 1.0);
+});
+
+test('evaluateStakeRegime: drawdown 35% → drawdown_hard (kelly 0.25, unit ×0.5)', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 100, longTermClvPct: 2.0, longTermRoi: 0.05,
+    drawdownPct: 0.35, bankrollPeak: 1000, currentBankroll: 650,
+  });
+  assert.strictEqual(r.regime, 'drawdown_hard');
+  assert.strictEqual(r.kellyFraction, 0.25);
+  assert.strictEqual(r.unitMultiplier, 0.5);
+});
+
+test('evaluateStakeRegime: drawdown 22% → drawdown_soft (kelly 0.40)', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 100, longTermClvPct: 1.5,
+    drawdownPct: 0.22, bankrollPeak: 1000, currentBankroll: 780,
+  });
+  assert.strictEqual(r.regime, 'drawdown_soft');
+  assert.strictEqual(r.kellyFraction, 0.40);
+});
+
+test('evaluateStakeRegime: 7 consecutive L → consecutive_l regime', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 100, longTermClvPct: 1.5,
+    consecutiveLosses: 7, drawdownPct: 0.15,
+  });
+  assert.strictEqual(r.regime, 'consecutive_l');
+  assert.strictEqual(r.unitMultiplier, 0.75);
+});
+
+test('evaluateStakeRegime: regime shift — long-term +2%, recent -1.5% → regime_shift', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 150,
+    longTermClvPct: 2.0, recentClvPct: -1.5,
+    drawdownPct: 0.05,
+  });
+  assert.strictEqual(r.regime, 'regime_shift');
+  assert.strictEqual(r.kellyFraction, 0.40);
+});
+
+test('evaluateStakeRegime: exploratory — totalSettled < 50', () => {
+  const r = evaluateStakeRegime({ totalSettled: 30, longTermClvPct: 5.0, longTermRoi: 0.10 });
+  assert.strictEqual(r.regime, 'exploratory');
+});
+
+test('evaluateStakeRegime: scale_up — 200+ settled + CLV ≥ 2% + ROI ≥ 5%', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 250, longTermClvPct: 2.5, longTermRoi: 0.08,
+    drawdownPct: 0.05,
+  });
+  assert.strictEqual(r.regime, 'scale_up');
+  assert.strictEqual(r.kellyFraction, 0.65);
+});
+
+test('evaluateStakeRegime: standard — 100+ settled + positive CLV', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 120, longTermClvPct: 0.8, longTermRoi: 0.02,
+    drawdownPct: 0.03,
+  });
+  assert.strictEqual(r.regime, 'standard');
+  assert.strictEqual(r.kellyFraction, 0.50);
+});
+
+test('evaluateStakeRegime: scale_up overruled door drawdown_hard (priority)', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 300, longTermClvPct: 3.0, longTermRoi: 0.10,
+    drawdownPct: 0.35, bankrollPeak: 1500, currentBankroll: 975,
+  });
+  assert.strictEqual(r.regime, 'drawdown_hard', 'hard-drawdown beats scale_up');
+});
+
+test('evaluateStakeRegime: negative long-term CLV maar geen drawdown → fallback exploratory', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 120, longTermClvPct: -0.5, longTermRoi: -0.01,
+    drawdownPct: 0.05,
+  });
+  assert.strictEqual(r.regime, 'exploratory');
+});
+
+test('evaluateStakeRegime: reasons array bevat regime + details', () => {
+  const r = evaluateStakeRegime({
+    totalSettled: 250, longTermClvPct: 2.5, longTermRoi: 0.08,
+  });
+  assert.ok(Array.isArray(r.reasons));
+  assert.ok(r.reasons.some(rs => rs.startsWith('scale_up:')), 'reasons bevat scale_up: prefix');
+});
+
 // ── BOOKIE CONCENTRATION (v10.12.16 Phase C.9) ────────────────────────────
 console.log('\n  Bookie concentration (operator survivability):');
 

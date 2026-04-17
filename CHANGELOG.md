@@ -2,6 +2,42 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.21] - 2026-04-17
+
+Phase C.10 · Unified stake-regime engine (observability-mode). Grootste stake-logica update sinds `unit_at_time`, maar nog NIET verbonden met live stake-flow — eerst valideren via admin endpoint.
+
+### Added
+- **[claude] `lib/stake-regime.js`** — pure function `evaluateStakeRegime(input)`. Input: `{totalSettled, longTermClvPct, longTermRoi, recentClvPct, drawdownPct, consecutiveLosses, bankrollPeak, currentBankroll}`. Output: `{regime, kellyFraction, unitMultiplier, reasons[]}`.
+- **7 regimes** met priority order:
+  1. `drawdown_hard` (≥30% drawdown) → kelly 0.25, unit ×0.5
+  2. `drawdown_soft` (≥20% drawdown) → kelly 0.40, unit ×1.0
+  3. `consecutive_l` (≥7 L in a row) → kelly 0.35, unit ×0.75
+  4. `regime_shift` (long-term +, recent - ≥ 2pp delta) → kelly 0.40, unit ×1.0
+  5. `exploratory` (<50 settled) → kelly 0.35, unit ×1.0
+  6. `scale_up` (200+ settled, CLV ≥2%, ROI ≥5%) → kelly 0.65, unit ×1.0
+  7. `standard` (100+ settled, CLV > 0%) → kelly 0.50, unit ×1.0
+- **[claude] `GET /api/admin/v2/stake-regime`** — observability endpoint. Berekent huidige input uit live `bets` tabel en toont wat de engine ZOU beslissen. Returnt input + decision + reasons. Nog niet verbonden met runtime.
+- **11 unit tests** voor transitie-boundaries + priority-order.
+
+### Waarom nog niet live-wired
+De huidige `getKellyFraction()` + `getDrawdownMultiplier()` + manual unitEur gedragen zich gecalibreerd over tijd. Directe replace = stake-schok. Doctrine §5 "kleine production-safe diffs": eerst 1-2 weken vergelijken "huidige kelly × drawdown" vs "stake-regime engine output" via admin endpoint. Als output matcht binnen tolerantie, migreren. Als output afwijkt, debug + tune.
+
+Het engine is ontworpen om de bestaande layers te VERVANGEN, niet aan te vullen — dat voorkomt double-dampening (drawdown layer × engine = overkill).
+
+### Doctrine-commitments in deze engine
+- **Conservatief bias**: step-ups vereisen SAMEN bewijs (CLV ≥2% AND ROI ≥5% AND ≥200 samples). Step-downs fireren op één sterk signaal (één van drawdown / L-streak / regime-shift).
+- **Unit-multiplier is runtime-transient**, niet config. Voorkomt "stap-down wist config, step-up onthoudt config" valkuil.
+- **Priority order is expliciet**: scale_up wint NOOIT van drawdown_hard. Drawdown komt eerst.
+
+### Follow-up (next sprints)
+- Historical-replay validatie: run engine tegen alle oude bets, vergelijk met werkelijk gebruikte kelly × drawdown-mult. Als delta klein → wiring safe.
+- Live-wiring achter operator toggle (opt-in).
+- Alert op regime transitions (web-push when regime changes).
+- Per-sport regime (momenteel global).
+
+### Tests
+- `npm test`: 523 passed, 0 failed (11 nieuwe + bestaande).
+
 ## [10.12.20] - 2026-04-17
 
 Fix · Preferred-bookie lek in football pick-odds voor BTTS + O/U totals. Verklaart waarom operator's pick-cards occasioneel "William Hill" of "Pinnacle" toonden terwijl `preferredBookies = [Bet365, Unibet]`.
