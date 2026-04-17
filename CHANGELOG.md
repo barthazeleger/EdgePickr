@@ -2,6 +2,31 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.11] - 2026-04-17
+
+Phase B.5 · Benjamini-Hochberg FDR correctie in `autoTuneSignalsByClv`. Voorkomt dat multiple-comparisons ruis (14+ signalen × meerdere sporten) als "edge" wordt geïnterpreteerd en signal-gewichten onterecht omhoog worden gescaled.
+
+### Added
+- **[claude] `modelMath.binomialPvalueTwoTailed(k, n)`** — normale-approximatie (Abramowitz & Stegun 26.2.17, erf-free) voor 2-tailed binomial p-value vs H0=0.5. Pure functie, null-safe.
+- **[claude] `modelMath.benjaminiHochbergFDR(items, q=0.10)`** — klassieke BH-procedure: sorteer p opsomend, vind grootste i waarvoor `p_i ≤ (i/m)*q`, alle `p_j ≤ p_i` passeren. Pure functie, 6 unit tests.
+
+### Integrated
+- **[claude] FDR-dampening in `autoTuneSignalsByClv`**:
+  1. Voor elk signaal met n ≥ 20: p = binomialPvalueTwoTailed(posExcessClvCount, n) — test of posExcessClvRate meaningfully > 0.5
+  2. Apply BH-FDR (q=0.10) op alle kandidaten
+  3. Signalen die **niet** passeren EN een weight-change zouden krijgen (anders dan mute of kill-switch) → delta wordt gehalveerd richting 1.0. Reden gelogd als `fdr_soft`.
+  4. Adjustments-array heeft nu een `fdr_passed` veld per entry.
+  5. Return object bevat `fdrDampened` counter.
+
+### Waarom dit belangrijk is
+Doctrine §14.R2.A spelled it out: "bij 14 signalen × 6 sporten × 59 competities is multiple-comparisons risico hoog — P-hacking risk hoort expliciet in autotune." Zonder FDR werd elke run eigenlijk 50+ afzonderlijke hypothese-tests als "heeft dit signal edge?" — dan vind je per definitie meerdere false-positives per run. Met BH-FDR krijgen alleen signalen die de gezamenlijke FDR-grens doorstaan de volle weight-adjustment. Rest krijgt een halve-step richting neutraal (kan later alsnog promoveren als bewijs stabiel blijft).
+
+Kill-switch (mute bij zeer negatieve CLV op grote sample) en brier_drift_mute blijven onverkort werken — die hebben ander bewijs dan een enkele-run z-score.
+
+### Tests
+- 6 nieuwe tests voor `binomialPvalueTwoTailed` en `benjaminiHochbergFDR`.
+- `npm test`: 501 passed, 0 failed.
+
 ## [10.12.10] - 2026-04-17
 
 Phase A.2 · `assessPlayability` wired als pre-score filter. Picks met `playable=false` worden gedropt vóór de execution-gate, zodat dunne markten / zonder target-bookie / lage lineQuality geen stake meer krijgen.

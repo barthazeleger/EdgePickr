@@ -2340,7 +2340,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.12.10');
+  assert.strictEqual(appMeta.APP_VERSION, '10.12.11');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5671,6 +5671,70 @@ test('operatorDay: converteert kickoff naar Amsterdam kalenderdag', () => {
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T22:00:00Z'), '2026-04-18');
   // 2026-04-17T12:00:00Z = 17 apr 14:00 in CEST
   assert.strictEqual(corrDamp.operatorDay('2026-04-17T12:00:00Z'), '2026-04-17');
+});
+
+// ── BENJAMINI-HOCHBERG FDR + BINOMIAL P-VALUE (v10.12.11 Phase B.5) ─────────
+console.log('\n  Binomial p-value + BH FDR:');
+
+test('binomialPvalueTwoTailed: observed = expected (k=n/2) → p near 1', () => {
+  const p = modelMath.binomialPvalueTwoTailed(50, 100);
+  assert.ok(p > 0.95, `verwacht ~1, kreeg ${p}`);
+});
+
+test('binomialPvalueTwoTailed: extreme observation → small p', () => {
+  // 80/100 successes vs null=0.5 is highly significant
+  const p = modelMath.binomialPvalueTwoTailed(80, 100);
+  assert.ok(p < 0.001, `verwacht <0.001, kreeg ${p}`);
+});
+
+test('binomialPvalueTwoTailed: n=0 → p=1 (geen data)', () => {
+  assert.strictEqual(modelMath.binomialPvalueTwoTailed(0, 0), 1);
+});
+
+test('benjaminiHochbergFDR: alle p-values hoog → geen signal passeert', () => {
+  const items = [
+    { name: 'A', p: 0.4 },
+    { name: 'B', p: 0.5 },
+    { name: 'C', p: 0.8 },
+  ];
+  const pass = modelMath.benjaminiHochbergFDR(items, 0.10);
+  assert.strictEqual(pass.size, 0);
+});
+
+test('benjaminiHochbergFDR: significantste signalen passeren', () => {
+  const items = [
+    { name: 'A', p: 0.01 },
+    { name: 'B', p: 0.05 },
+    { name: 'C', p: 0.50 },
+  ];
+  const pass = modelMath.benjaminiHochbergFDR(items, 0.10);
+  assert.ok(pass.has('A'));
+  assert.ok(pass.has('B'));
+  assert.ok(!pass.has('C'));
+});
+
+test('benjaminiHochbergFDR: lege input → lege set', () => {
+  assert.strictEqual(modelMath.benjaminiHochbergFDR([], 0.10).size, 0);
+  assert.strictEqual(modelMath.benjaminiHochbergFDR(null, 0.10).size, 0);
+});
+
+test('benjaminiHochbergFDR: strengere q blokkeert meer', () => {
+  // Met m=3 bij q=0.10 zijn de critical values (1/3)*q, (2/3)*q, (3/3)*q
+  // = 0.0333, 0.0667, 0.10. A(p=0.005)+B(p=0.05) passeren (B ≤ 0.067).
+  // Bij q=0.01 zijn critvals 0.0033, 0.0067, 0.01 — ALLEEN een zeer kleine p
+  // passeert. Hier is p=0.001 < 0.0033 ✓, dus A passeert alleen bij strict
+  // als we een extremer p-value gebruiken.
+  const loose = [
+    { name: 'A', p: 0.005 }, { name: 'B', p: 0.05 }, { name: 'C', p: 0.50 },
+  ];
+  const strictItems = [
+    { name: 'A', p: 0.001 }, { name: 'B', p: 0.05 }, { name: 'C', p: 0.50 },
+  ];
+  const passLoose = modelMath.benjaminiHochbergFDR(loose, 0.10);
+  const passStrict = modelMath.benjaminiHochbergFDR(strictItems, 0.01);
+  assert.ok(passLoose.has('A') && passLoose.has('B'), 'q=0.10 laat A en B door');
+  assert.ok(passStrict.has('A'), 'q=0.01 laat alleen A (p=0.001 < 0.0033) door');
+  assert.ok(!passStrict.has('B'));
 });
 
 // ── WALK-FORWARD VALIDATOR (v10.12.4, Phase B.4, doctrine §14.R2.A) ──────────

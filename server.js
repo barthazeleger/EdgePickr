@@ -955,15 +955,32 @@ async function autoTuneSignalsByClv() {
     // de bestaande gate.
     const brierDrift = await loadSignalBrierDrift();
 
+    // v10.12.11 Phase B.5: Benjamini-Hochberg FDR correctie.
+    // Met 14+ signalen × meerdere sporten is multiple-comparisons risico hoog —
+    // iedere monkey vindt een "edge" door toeval. Voor elk signaal dat nu in
+    // aanmerking komt voor tuning (n ≥ 20), berekenen we een 2-tailed binomial
+    // p-value op posExcessClvRate vs null=0.5. Signalen die BH-FDR (q=0.10)
+    // NIET passeren, krijgen alleen een soft nudge richting 1.0 i.p.v. grote
+    // weight-stap. Doctrine §14.R2.A eiste deze correctie expliciet.
+    const fdrCandidates = Object.entries(signalStats)
+      .filter(([, s]) => s.n >= 20)
+      .map(([name, s]) => {
+        // posExcessClvRate: fractie bets waar signaal boven markt-baseline zat.
+        const k = Math.round(s.posExcessClvRate * s.n);
+        return { name, p: modelMath.binomialPvalueTwoTailed(k, s.n) };
+      });
+    const fdrPass = modelMath.benjaminiHochbergFDR(fdrCandidates, 0.10);
+
     const weights = loadSignalWeights();
     const adjustments = [];
-    let tuned = 0, muted = 0, drifted = 0;
+    let tuned = 0, muted = 0, drifted = 0, fdrDampened = 0;
     for (const [name, s] of Object.entries(signalStats)) {
       if (s.n < 20) continue;
       const avgClv = s.avgClv;
       const edgeClv = s.shrunkExcessClv;
       const old = weights[name] !== undefined ? weights[name] : 1.0;
       const drift = brierDrift.get(name) || null;
+      const clearsFDR = fdrPass.has(name);
       let newW = old;
       let reason = null;
 
@@ -1004,6 +1021,18 @@ async function autoTuneSignalsByClv() {
         drifted++;
       }
 
+      // v10.12.11 Phase B.5: FDR-dampen. Als signaal NIET door BH-FDR komt
+      // en we wilden de weight aanpassen (andere dan ×1.0), schaal terug
+      // naar een halve-step richting 1.0. Mutes door drift/CLV-kill blijven
+      // staan — die hebben ander bewijs (negatieve CLV + grote sample).
+      if (newW > 0 && !clearsFDR && newW !== old && reason !== null && !/auto_disabled|brier_drift_mute/.test(reason || '')) {
+        // Schaal de delta met 0.5
+        const half = old + (newW - old) * 0.5;
+        newW = +half.toFixed(3);
+        reason = (reason ? reason + ' + ' : '') + `fdr_soft (geen significantie bij q=0.10 · tuning gehalveerd)`;
+        fdrDampened++;
+      }
+
       if (Math.abs(newW - old) >= 0.02 || reason) {
         weights[name] = +newW.toFixed(3);
         adjustments.push({
@@ -1011,6 +1040,7 @@ async function autoTuneSignalsByClv() {
           avgClv: +avgClv.toFixed(2), edgeClv: +edgeClv.toFixed(2), n: s.n,
           brier_drift: drift ? drift.drift : null,
           brier_n90: drift ? drift.n90 : null,
+          fdr_passed: clearsFDR,
           reason
         });
         tuned++;
@@ -1029,7 +1059,7 @@ async function autoTuneSignalsByClv() {
       notify(`📉 SIGNAL BRIER DRIFT\n${drifted} signaal(en) kalibratie-gedrift gedetecteerd:\n${driftList}`, 'brier_drift').catch(() => {});
     }
 
-    return { tuned, muted, drifted, adjustments };
+    return { tuned, muted, drifted, fdrDampened, adjustments };
   } catch (e) {
     return { tuned: 0, adjustments: [], error: e.message };
   }
