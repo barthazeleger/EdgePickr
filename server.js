@@ -10964,6 +10964,60 @@ function scheduleScanHeartbeatWatcher() {
   }, 30 * 60 * 1000);
 }
 
+// v10.12.15 Phase B.8: scheduled autotune. Voorheen was `autoTuneSignalsByClv`
+// alleen handmatig via /api/admin/v2/autotune-clv. Nu: boot → eerste run na
+// 4h (geef settled-bets tijd), daarna elke 6 uur. Gate: alleen runnen als
+// ≥ 20 nieuwe settled bets sinds laatste run (anders zelfde data, ruis-tuning).
+// Sanity-rail: als een signaal zijn weight met ≥10% wijzigt → web-push alert
+// met top 3 grote changes.
+let _lastAutotuneAt = 0;
+let _lastAutotuneSettledCount = null;
+async function runScheduledAutotune() {
+  try {
+    // Count total settled bets (W/L) right now
+    const { count, error } = await supabase.from('bets')
+      .select('bet_id', { count: 'exact', head: true })
+      .in('uitkomst', ['W', 'L']);
+    if (error) return;
+    const currentSettled = Number.isFinite(count) ? count : 0;
+    // Eerste run: altijd fire. Daarna: alleen als >= 20 nieuwe settled sinds laatste.
+    if (_lastAutotuneSettledCount !== null) {
+      const newSinceLast = currentSettled - _lastAutotuneSettledCount;
+      if (newSinceLast < 20) return;
+    }
+    const result = await autoTuneSignalsByClv();
+    _lastAutotuneAt = Date.now();
+    _lastAutotuneSettledCount = currentSettled;
+    if (!result || result.error) return;
+    // Sanity-rail: grote weight-changes waarschuwen operator
+    const big = (result.adjustments || []).filter(a => Math.abs(a.new - a.old) >= 0.10);
+    if (big.length) {
+      const top = big.slice(0, 3).map(a => `${a.name}: ${a.old}→${a.new} (${a.reason || 'delta'})`).join('\n• ');
+      notify(
+        `🧠 AUTOTUNE LARGE CHANGE\n${big.length} signaal(en) met ≥10% weight-shift:\n• ${top}`,
+        'autotune_large_change'
+      ).catch(() => {});
+    }
+    // Light-weight info-log ook als er niets groot is — operator kan in inbox zien dat autotune heeft gedraaid.
+    if (result.tuned) {
+      await supabase.from('notifications').insert({
+        type: 'autotune_run', title: `🧠 Autotune gedraaid`,
+        body: `${result.tuned} signaal(en) geadjusteerd · ${result.muted || 0} gemute · ${result.drifted || 0} drift-flagged · ${result.fdrDampened || 0} FDR-soft · cur settled ${currentSettled}`,
+        read: false, user_id: null,
+      }).then(() => {}, () => {});
+    }
+  } catch (e) {
+    console.warn('[scheduled-autotune] failed:', e.message);
+  }
+}
+function scheduleAutotune() {
+  // Eerste run: 4u na boot. Daarna elke 6u.
+  setTimeout(() => {
+    runScheduledAutotune();
+    setInterval(runScheduledAutotune, 6 * 60 * 60 * 1000);
+  }, 4 * 60 * 60 * 1000);
+}
+
 function scheduleHealthAlerts() {
   const INTERVAL_MS = 60 * 60 * 1000; // hourly check
 
@@ -11629,6 +11683,7 @@ app.listen(PORT, () => {
   scheduleHealthAlerts();
   scheduleRetentionCleanup();
   scheduleScanHeartbeatWatcher();
+  scheduleAutotune();
 
   // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
   // reset elke deploy alle sources naar default off — operationeel irritant.

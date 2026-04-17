@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.15] - 2026-04-17
+
+Phase B.8 · Scheduled autotune. `autoTuneSignalsByClv` was manual-only; nu draait het autonoom elke 6 uur met een sample-size gate + sanity-rail alert.
+
+### Added
+- **[claude] `scheduleAutotune()`** — setTimeout 4h na boot, daarna `setInterval` elke 6u. Roept `runScheduledAutotune()` aan.
+- **[claude] `runScheduledAutotune()`** logic:
+  1. Query actuele settled-bet count (W/L).
+  2. Eerste run: altijd door. Daarna: alleen als `currentSettled - lastSettled >= 20`. Voorkomt dat tuning op identieke data draait en ruis creëert.
+  3. Draait `autoTuneSignalsByClv()` (die zelf al FDR + Brier-drift gates toepast uit v10.12.3/v10.12.11).
+  4. **Sanity-rail**: als ≥1 signaal zijn weight met **≥10% absolute** wijzigt → web-push alert `🧠 AUTOTUNE LARGE CHANGE` met top 3 changes.
+  5. **Info-log**: elke succesvolle run schrijft een `type='autotune_run'` rij in `notifications` (voor audit-trail: wanneer gedraaid, wat geadjusteerd, welke muted/drift/fdr counts).
+- **`scheduleAutotune()` opgenomen in de boot-sequence** naast `scheduleAutoRetraining`, `scheduleHealthAlerts`, etc.
+
+### Safe-ups
+- Failure-mode: in-memory tracking van `_lastAutotuneSettledCount`. Bij app-restart verliezen we de vorige count → eerste run na restart fireert sowieso. Geen disaster, want `autoTuneSignalsByClv` heeft eigen minimum-N gates (30 CLV-bets, 20 per signal).
+- Alert-spam: alleen als verandering ≥10% absolute. Typische adjustments zijn 2-5% → geen alert. Drift-mute + auto-promote zijn per definitie groot → wel alert, correct.
+
+### Rationale
+Met v10.12.11 FDR-correctie is autotune defensief genoeg om zelf te draaien zonder operator-bewakingswerk. De learn-lus is nu gesloten: settled bets → CLV + Brier → autotune → weight updates → volgende scan gebruikt nieuwe weights. Doctrine §3 Learn + §5 Fase 5 ("minder handwerk").
+
+### Tests
+- `npm test`: 507 passed, 0 failed. (Pure-interval logica; integration via live scan valideert.)
+
 ## [10.12.14] - 2026-04-17
 
 Phase D.13 · Fixture-congestion signal voor football (shadow-mode). Eerste nieuwe signal die via de signal-promotion doctrine (shadow → active bij walk-forward bewijs) binnenkomt.
