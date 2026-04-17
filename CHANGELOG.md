@@ -2,6 +2,27 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.13] - 2026-04-17
+
+Hotfix · `f5Diag is not defined` in MLB + KBO scans. Bug zichtbaar als `⚠️ ⚾ MLB: f5Diag is not defined` + `⚠️ ⚾ KBO (Korea): f5Diag is not defined` in de eerste live scan-log na v10.12.12 merge.
+
+### Fixed
+- **[claude] MLB scan `f5Diag` scope bug** (`server.js:4389`). De per-match F5 diagnostiek-log `if (f5Diag.length) emit({log: …})` stond BUITEN de `for (const g of games)` game-loop, maar `f5Diag` wordt INSIDE de loop declared (line 4320). Resultaat: elke iteratie van de league-loop crashte bij het raken van die regel met `ReferenceError: f5Diag is not defined`, de try-catch ving het op en logde de error. MLB + KBO (die de MLB scan-functie delen) logden allebei de error en stopten hun F5-diagnostiek output — maar de ML-scoring eerder in de loop draaide wel door (vandaar de 1 MLB baseball pick in de scan, met correct functionerende execution-gate).
+
+### Root cause
+Pre-existing bug ingevoerd bij v10.10.17 (F5-diagnostiek feature). De `if (f5Diag.length)` regel werd foutief op 6-space indent geplaatst (na de `}` van de game-loop) i.p.v. op 8-space (binnen het game-loop-body). Mijn Phase A.1b commits (v10.12.9) raakten die regel niet aan — de bug was al v10.10.17+ latent. Pas zichtbaar vanaf v10.12.12 omdat het error-log pas opviel toen Bart actief keek bij de eerste post-merge scan.
+
+### Fix
+`if (f5Diag.length) emit(...)` verplaatst naar voor de game-loop closing `}`, correct op 8-space indent. Header-comment uitgebreid met v10.12.13 fix-note.
+
+### Operational impact
+- Voor v10.12.13: elke MLB-league had per-game een stille exception-log maar scoring werkte. F5-picks waren nog steeds niet surface-baar door bestaande pitcher-data condities, maar je zag niet WAAROM omdat de diag-emit nooit uitgevoerd werd.
+- Na v10.12.13: F5-diagnostiek fireert zoals bedoeld; per-game regel "`  └─ F5 {team} vs {team}: reason1 · reason2 · reason3`" als F5 geskipt wordt.
+
+### Tests
+- `npm test`: 501 passed, 0 failed.
+- `node -c server.js`: syntax OK.
+
 ## [10.12.12] - 2026-04-17
 
 Phase C.12 · Scan-heartbeat watcher. Sluit de silent-fail failure-mode waarbij de scheduler stilletjes stopt en operator het pas dagen later merkt.

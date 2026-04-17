@@ -4384,9 +4384,13 @@ async function runBaseball(emit) {
             }
           }
         }
+
+        // v10.10.17 / v10.12.13 fix: per-match F5 diagnostiek in scan-output.
+        // Voorheen stond dit BUITEN de game-loop → f5Diag out-of-scope →
+        // runtime `ReferenceError: f5Diag is not defined` die MLB + KBO
+        // scans afbrak. Nu correct binnen de game-loop body.
+        if (f5Diag.length) emit({ log: `  └─ F5 ${hm} vs ${aw}: ${f5Diag.slice(0, 3).join(' · ')}` });
       }
-      // v10.10.17: per-match F5 diagnostiek in scan-output
-      if (f5Diag.length) emit({ log: `  └─ F5 ${hm} vs ${aw}: ${f5Diag.slice(0, 3).join(' · ')}` });
       await sleep(200);
     } catch (err) {
       emit({ log: `⚠️ ⚾ ${league.name}: ${err.message}` });
