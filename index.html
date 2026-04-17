@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.0</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">10.12.1</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -622,7 +622,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.0</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 10.12.1</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -4114,11 +4114,11 @@ async function checkResults() {
       <div class="results-list">
         ${d.results.map(r => `
           <div class="result-row">
-            <div class="result-score">${r.score || '?'}</div>
+            <div class="result-score">${escHtml(String(r.score || '?'))}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.wedstrijd}">${r.wedstrijd}</div>
-              <div style="font-size:11.5px;color:var(--muted)">${r.markt}</div>
-              ${r.note ? `<div class="result-note">⚠️ ${r.note}</div>` : ''}
+              <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(String(r.wedstrijd || ''))}">${escHtml(String(r.wedstrijd || ''))}</div>
+              <div style="font-size:11.5px;color:var(--muted)">${escHtml(String(r.markt || ''))}</div>
+              ${r.note ? `<div class="result-note">⚠️ ${escHtml(String(r.note))}</div>` : ''}
             </div>
             <div style="flex-shrink:0">
               ${r.uitkomst === 'W' ? '<span class="badge badge-w">W</span>'
@@ -4470,7 +4470,7 @@ async function loadSupabaseUsage() {
     const sizeStr = d.dbMB != null ? `<strong>${d.dbMB} MB</strong> / ${d.freeMB} MB free tier` : '<em>DB-grootte onbekend</em>';
     const pctBar = d.usedPct != null ? `<div style="background:var(--surface2);border-radius:8px;height:18px;position:relative;overflow:hidden;margin-bottom:12px"><div style="width:${Math.max(d.usedPct,1)}%;background:${barCol}55;height:100%;border-radius:8px"></div><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${d.usedPct}%</div></div>` : '';
     const rows = Object.entries(d.rowCounts || {}).filter(([_,c]) => c != null && c > 0).sort((a,b) => b[1]-a[1]).map(([t,c]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="font-weight:600;font-variant-numeric:tabular-nums">${c.toLocaleString()}</span></div>`).join('');
-    el.innerHTML = `<div style="font-size:13px;margin-bottom:8px">${sizeStr}</div>${pctBar}${d.note ? `<div style="font-size:11px;color:var(--muted);margin-bottom:10px;font-style:italic">${d.note}</div>` : ''}<div style="font-size:11px;font-weight:600;color:var(--muted);margin:12px 0 6px">Row counts per tabel:</div>${rows}${d.dashboardUrl ? `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Voor exacte usage + egress: <a href="${d.dashboardUrl}" target="_blank" style="color:var(--accent)">Supabase dashboard</a></div>` : ''}`;
+    el.innerHTML = `<div style="font-size:13px;margin-bottom:8px">${sizeStr}</div>${pctBar}${d.note ? `<div style="font-size:11px;color:var(--muted);margin-bottom:10px;font-style:italic">${escHtml(String(d.note))}</div>` : ''}<div style="font-size:11px;font-weight:600;color:var(--muted);margin:12px 0 6px">Row counts per tabel:</div>${rows}${d.dashboardUrl ? `<div style="margin-top:10px;font-size:11px;color:var(--muted)">Voor exacte usage + egress: <a href="${escHtml(String(d.dashboardUrl))}" target="_blank" style="color:var(--accent)">Supabase dashboard</a></div>` : ''}`;
   } catch (e) {
     el.innerHTML = `<div style="color:var(--red)">${t('err_prefix')}${e.message}</div>`;
   }

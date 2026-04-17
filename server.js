@@ -275,6 +275,11 @@ if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('FATAL: SUPABASE_URL and SUP
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const app = express();
+// v10.12.1 (security): trust the first proxy hop (Render's edge). Zonder dit
+// is `req.ip` altijd het proxy-loopback en delen alle auth'd users één
+// rate-limit-bucket — één attacker DoS't iedereen. Met trust=1 gebruikt Express
+// x-forwarded-for[0] als req.ip, wat op Render de werkelijke client IP is.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '50kb' }));
 
 // ── SECURITY HEADERS ──────────────────────────────────────────────────────────
@@ -359,8 +364,45 @@ async function loadPushSubs() {
 // wordt meegestuurd bij subscribe en opgeslagen in de subscription-row.
 // sendPushToUser filtert op userId. Fallback sendPushToAll alleen voor
 // operator-brede alerts (scan-klaar, model-updates).
+//
+// v10.12.1 (security): endpoint-validatie bij save. Voorheen kon een auth'd
+// user een willekeurige URL als endpoint registreren — webpush.sendNotification
+// zou dan blind HTTP POSTen naar interne services (169.254.169.254, localhost,
+// :6379, …) = blind SSRF. Nu: alleen HTTPS + hostname uit bekende push-service
+// allowlist (FCM, Mozilla autopush, Apple, WNS). Extra: size-cap op subscription
+// payload tegen memory-DoS.
+const ALLOWED_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  'updates.push.services.mozilla.com',
+  'web.push.apple.com',
+  'api.push.apple.com',
+];
+const ALLOWED_PUSH_HOST_SUFFIXES = [
+  '.notify.windows.com', // *.notify.windows.com (WNS regional endpoints)
+  '.push.apple.com',     // forward-compat Apple endpoints
+];
+
+function isAllowedPushEndpoint(endpoint) {
+  if (typeof endpoint !== 'string' || endpoint.length === 0 || endpoint.length > 2000) return false;
+  let u;
+  try { u = new URL(endpoint); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  if (ALLOWED_PUSH_HOSTS.includes(host)) return true;
+  return ALLOWED_PUSH_HOST_SUFFIXES.some(suffix => host.endsWith(suffix));
+}
+
 async function savePushSub(sub, userId = null) {
   if (!sub?.endpoint) return;
+  if (!isAllowedPushEndpoint(sub.endpoint)) {
+    console.warn(`[push] Rejected non-allowlisted endpoint: ${String(sub.endpoint).slice(0, 120)}`);
+    return;
+  }
+  const serialized = JSON.stringify(sub);
+  if (serialized.length > 4000) {
+    console.warn(`[push] Rejected oversized subscription payload (${serialized.length} bytes)`);
+    return;
+  }
   const row = { endpoint: sub.endpoint, subscription: sub, created_at: new Date().toISOString() };
   if (userId) row.user_id = userId;
   await supabase.from('push_subscriptions').upsert(row, { onConflict: 'endpoint' });
@@ -1289,7 +1331,6 @@ async function saveScanEntry(picks, type = 'prematch', totalEvents = 0, userId =
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────────────────
-const get    = (url) => fetch(url, { headers: H }).then(r => r.json()).catch(() => ({}));
 const toD    = f => { if (!f || !f.includes('/')) return null; const [n,d] = f.split('/').map(Number); return +(1 + n/d).toFixed(2); };
 const clamp  = (v, lo, hi) => Math.round(Math.min(hi, Math.max(lo, v)));
 const sleep  = ms => new Promise(r => setTimeout(r, ms));
@@ -6326,9 +6367,13 @@ async function deleteBet(id, userId = null) {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    if (rateLimit('login:' + ip, 10, 15 * 60 * 1000)) return res.status(429).json({ error: 'Te veel pogingen · probeer over 15 minuten opnieuw' });
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'E-mail en wachtwoord verplicht' });
+    // v10.12.1 (security): composite IP+email key. Voorkomt dat één attacker-IP
+    // alle login-buckets uitput + zorgt dat shared-NAT users (kantoor) niet
+    // elkaar DoS'en.
+    const emailKey = String(email).toLowerCase();
+    if (rateLimit('login:' + ip + ':' + emailKey, 10, 15 * 60 * 1000)) return res.status(429).json({ error: 'Te veel pogingen · probeer over 15 minuten opnieuw' });
     const users = await loadUsers();
     const user  = users.find(u => u.email === email.toLowerCase());
     if (!user)                        return res.status(401).json({ error: 'E-mail of wachtwoord onjuist' });
@@ -6356,11 +6401,22 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/verify-code', async (req, res) => {
   try {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    if (rateLimit('verify2fa:' + ip, 5, 15 * 60 * 1000)) return res.status(429).json({ error: 'Te veel pogingen · probeer over 15 minuten opnieuw' });
     const { email, code } = req.body || {};
     if (!email || !code) return res.status(400).json({ error: 'E-mail en code verplicht' });
-    const entry = loginCodes.get(email.toLowerCase());
-    if (!entry || entry.code !== code || Date.now() > entry.expiresAt) {
+    const emailKey = String(email).toLowerCase();
+    if (rateLimit('verify2fa:' + ip + ':' + emailKey, 5, 15 * 60 * 1000)) return res.status(429).json({ error: 'Te veel pogingen · probeer over 15 minuten opnieuw' });
+    const entry = loginCodes.get(emailKey);
+    // v10.12.1 (security): constant-time compare op 2FA code. Voorheen `!==`
+    // = niet-constant-time, marginaal timing-side-channel op lage-entropie
+    // 6-digit code. Over WAN onrealistisch maar hardening is gratis.
+    const codeMatch = (() => {
+      if (!entry) return false;
+      const a = Buffer.from(String(entry.code));
+      const b = Buffer.from(String(code));
+      if (a.length !== b.length) return false;
+      try { return require('crypto').timingSafeEqual(a, b); } catch { return false; }
+    })();
+    if (!entry || !codeMatch || Date.now() > entry.expiresAt) {
       return res.status(401).json({ error: 'Ongeldige of verlopen code' });
     }
     loginCodes.delete(email.toLowerCase());
@@ -6378,7 +6434,9 @@ app.post('/api/auth/verify-code', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    if (rateLimit('register:' + ip, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Te veel registraties · probeer over een uur' });
+    // v10.12.1 (security): composite key tegen shared-NAT uitputting.
+    const emailKey = req.body?.email ? String(req.body.email).toLowerCase() : 'unknown';
+    if (rateLimit('register:' + ip + ':' + emailKey, 5, 60 * 60 * 1000)) return res.status(429).json({ error: 'Te veel registraties · probeer over een uur' });
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'E-mail en wachtwoord verplicht' });
     if (password.length < 8)  return res.status(400).json({ error: 'Wachtwoord minimaal 8 tekens' });
@@ -6430,6 +6488,9 @@ app.put('/api/user/settings', async (req, res) => {
 
 app.put('/api/auth/password', async (req, res) => {
   try {
+    // v10.12.1 (security): rate-limit per user-id. Bcrypt-10 hash is ~100ms;
+    // zonder limit kan een auth'd client de CPU verzadigen met loop-change.
+    if (rateLimit('passwd:' + req.user?.id, 5, 60 * 1000)) return res.status(429).json({ error: 'Te veel pogingen · wacht een minuut' });
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Huidig en nieuw wachtwoord verplicht' });
     if (newPassword.length < 8) return res.status(400).json({ error: 'Nieuw wachtwoord minimaal 8 tekens' });
@@ -7608,6 +7669,10 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
 // user_id=null. Voor een private bankroll-tool moet alleen admin de
 // canonieke scan-state voeden.
 app.post('/api/prematch', requireAdmin, (req, res) => {
+  // v10.12.1 (security): 5 scan-triggers per minuut, ook voor admin. Voorkomt
+  // denial-of-wallet op api-football (7500 calls/dag/sport) bij gecompromitteerd
+  // admin-token of gewoon per ongeluk dubbelklikken in de UI.
+  if (rateLimit('prematch:' + (req.user?.id || 'admin'), 5, 60 * 1000)) return res.status(429).json({ error: 'Te veel scan-triggers · wacht een minuut' });
   if (!OPERATOR.master_scan_enabled) return res.status(503).json({ error: 'Scans uitgeschakeld via operator failsafe' });
   if (scanRunning) return res.status(429).json({ error: 'Scan al bezig · wacht tot de huidige scan klaar is' });
   scanRunning = true;
@@ -8022,6 +8087,9 @@ async function scheduleCLVCheck(bet) {
 app.post('/api/bets', async (req, res) => {
   try {
     const userId = req.user?.id;
+    // v10.12.1 (security): 60 writes/min per user. Voorkomt spam-fill van bets
+    // tabel + aanloop-kosten op writeBet → getUserUnitEur DB lookups.
+    if (rateLimit('betwrite:' + userId, 60, 60 * 1000)) return res.status(429).json({ error: 'Te veel bet-writes · wacht een minuut' });
     const body = req.body || {};
     // Input validation
     if (!body.wedstrijd || typeof body.wedstrijd !== 'string') return res.status(400).json({ error: 'Wedstrijd is verplicht' });
@@ -8085,10 +8153,15 @@ app.post('/api/bets', async (req, res) => {
 app.put('/api/bets/:id', async (req, res) => {
   try {
     const userId = req.user?.id;
+    if (rateLimit('betwrite:' + userId, 60, 60 * 1000)) return res.status(429).json({ error: 'Te veel bet-writes · wacht een minuut' });
     const { uitkomst, odds, units, tip, sport } = req.body || {};
     const id = parseInt(req.params.id);
     if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'Ongeldig ID' });
     if (uitkomst && !['Open', 'W', 'L'].includes(uitkomst)) return res.status(400).json({ error: 'Uitkomst moet Open, W of L zijn' });
+    // v10.12.1 (security): sport-whitelist. Voorheen accepteerde dit arbitraire
+    // strings → vervuilde normalizeSport() buckets + calibration.
+    const ALLOWED_SPORTS = new Set(['football','basketball','hockey','baseball','american-football','handball']);
+    if (sport != null && !ALLOWED_SPORTS.has(String(sport))) return res.status(400).json({ error: 'Ongeldige sport' });
     const updates = {};
     const userUe = await getUserUnitEur(userId);
     if (odds != null) updates.odds = parseFloat(odds);
@@ -8451,7 +8524,8 @@ app.get('/api/debug/odds', requireAdmin, async (req, res) => {
     res.json({ sport, datesSearched: datesFromParam, fetchedPerDate, matchesFound: matches.length, matches: out });
   } catch (e) {
     console.error('debug/odds fout:', e);
-    res.status(500).json({ error: (e && e.message) || 'Interne fout', stack: (e && e.stack) || null });
+    // v10.12.1 (security): stack trace niet meer in response, alleen in server logs.
+    res.status(500).json({ error: 'Interne fout · check server logs' });
   }
 });
 
@@ -8505,6 +8579,7 @@ app.get('/api/debug/wl', requireAdmin, async (req, res) => {
 app.delete('/api/bets/:id', async (req, res) => {
   try {
     const userId = req.user?.id;
+    if (rateLimit('betwrite:' + userId, 60, 60 * 1000)) return res.status(429).json({ error: 'Te veel bet-writes · wacht een minuut' });
     const id = parseInt(req.params.id);
     if (isNaN(id) || id <= 0) return res.status(400).json({ error: 'Ongeldig ID' });
     await deleteBet(id, userId);
@@ -8665,8 +8740,12 @@ app.get('/api/scan-history', async (req, res) => {
 // ── MATCH ANALYSER ENDPOINT ──────────────────────────────────────────────────
 app.post('/api/analyze', async (req, res) => {
   try {
+    // v10.12.1 (security): rate-limit per user. Endpoint laadt full scan history
+    // in memory + regex-matcht per query. Zonder limit is memory/CPU-DoS via
+    // spam-loop triviaal op Render free tier.
+    if (rateLimit('analyze:' + req.user?.id, 10, 60 * 1000)) return res.status(429).json({ error: 'Te veel analyse-requests · wacht een minuut' });
     const query = (req.body?.query || '').trim();
-    if (!query) return res.status(400).json({ error: 'Voer een wedstrijd in' });
+    if (!query.length || query.length > 500) return res.status(400).json({ error: 'Query ongeldig of te lang (max 500 chars)' });
 
     // Parse the query to extract teams and market
     let teamA = null, teamB = null, market = null;
