@@ -36,6 +36,7 @@ const {
 } = require('./lib/picks');
 const { summarizeExecutionQuality, normalizeBookmaker } = require('./lib/execution-quality');
 const { fetchNhlGoaliePreview } = require('./lib/nhl-goalie-preview');
+const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
@@ -7450,6 +7451,13 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
         });
       } catch { /* swallow */ }
     }
+
+    // v10.10.18: correlatie-demping op league-day clusters + same-fixture.
+    // Sterkste pick in elk cluster behoudt volle kelly, rest wordt gedempt.
+    const preDampCount = allPicks.filter(p => p.correlationAudit).length;
+    applyCorrelationDamp(allPicks);
+    const dampedCount = allPicks.filter(p => p.correlationAudit && p.correlationAudit.dampFactor < 1.0).length;
+    if (dampedCount > 0) emit({ log: `📉 Correlatie-demping: ${dampedCount} pick(s) gedempt (zelfde league/dag of wedstrijd)` });
 
     allPicks.sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0));
 

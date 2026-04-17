@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.10.18] - 2026-04-17
+
+Correlated-bet Kelly-reductie (discipline edge, roadmap punt 4). Direct EV-impact: voorkomt correlation-blow-ups bij meerdere picks in dezelfde league op dezelfde avond.
+
+### Added
+- **[claude] `lib/correlation-damp.js` discipline-module.** Twee correlatie-klassen:
+  - `same_league + same_day`: tweede+ pick in cluster krijgt kelly × 0.5
+  - `same_fixture`: tweede+ pick op dezelfde wedstrijd krijgt kelly × 0.25 (zwaardere demping)
+  - Sterkste pick (hoogste expectedEur) in elk cluster behoudt volle kelly (Codex-nuance: "quarter-Kelly alleen op extra blootstelling")
+  - Per pick audit-trail: `correlationAudit` met reason, clusterKey, dampFactor, positionInCluster, originalKelly/originalUnits
+- **[claude] Correlatie-demping ingehaakt in scan-coordinator** (`server.js`, vóór ranking-sort). `applyCorrelationDamp(allPicks)` draait op de gecombineerde multi-sport picks-array. Log-regel: `📉 Correlatie-demping: N pick(s) gedempt`. Kelly/units/expectedEur/strength proportioneel aangepast.
+- **[claude] +9 regressietests**: solo pick (geen demping), same-league-day clustering, same-fixture zwaardere demping, cross-league geen demping, operatorDay timezone-conversie.
+
+### Note
+- v1-definitie (Codex-keuze): `(a) zelfde league + zelfde operator-dag`. Later verfijnbaar naar (b) markt-richting of (c) team-involvement. Module is bewust niet "correlation engine" genoemd — twee pure functies die discipline doen.
+
+### Tests
+- `npm test` groen: `442 passed, 0 failed`.
+
 ## [10.10.17] - 2026-04-17
 
 MLB F5 hardening/visibility (slice 3, rescoped na Codex-review: geen greenfield maar diagnose waarom bestaande F5-flow niet surfacet).

@@ -33,6 +33,7 @@ const lineTimeline = require('./lib/line-timeline');
 const execGate = require('./lib/execution-gate');
 const playability = require('./lib/playability');
 const calMonitor = require('./lib/calibration-monitor');
+const corrDamp = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/api-sports-capabilities');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
@@ -2301,7 +2302,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '10.10.17');
+  assert.strictEqual(appMeta.APP_VERSION, '10.10.18');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -5365,6 +5366,97 @@ test('buildCalibrationRows: schrijft probability_source=ep_proxy en expliciete w
   assert.strictEqual(rows[0].probability_source, 'ep_proxy');
   assert.ok(rows[0].window_start, '30d krijgt expliciete start');
   assert.ok(rows[0].window_end);
+});
+
+// ── CORRELATION DAMPING (v10.10.18, discipline edge) ──────────────────────────
+console.log('\n  Correlation damping:');
+
+test('groupCorrelatedPicks: solo pick → cluster met 1 entry, geen same-fixture', () => {
+  const picks = [{ match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z' }];
+  const clusters = corrDamp.groupCorrelatedPicks(picks);
+  assert.strictEqual(clusters.size, 1);
+  const c = [...clusters.values()][0];
+  assert.strictEqual(c.picks.length, 1);
+  assert.strictEqual(c.hasSameFixture, false);
+});
+
+test('groupCorrelatedPicks: twee picks zelfde league + dag = 1 cluster', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T18:00:00Z' },
+    { match: 'Feyenoord vs AZ', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z' },
+  ];
+  const clusters = corrDamp.groupCorrelatedPicks(picks);
+  assert.strictEqual(clusters.size, 1);
+  assert.strictEqual([...clusters.values()][0].picks.length, 2);
+  assert.strictEqual([...clusters.values()][0].hasSameFixture, false);
+});
+
+test('groupCorrelatedPicks: zelfde wedstrijd = hasSameFixture=true', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', label: 'Over 2.5' },
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', label: 'BTTS Ja' },
+  ];
+  const clusters = corrDamp.groupCorrelatedPicks(picks);
+  assert.strictEqual([...clusters.values()][0].hasSameFixture, true);
+});
+
+test('groupCorrelatedPicks: verschillende leagues = aparte clusters', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z' },
+    { match: 'Liverpool vs Chelsea', league: 'Premier League', kickoff: '2026-04-17T20:00:00Z' },
+  ];
+  const clusters = corrDamp.groupCorrelatedPicks(picks);
+  assert.strictEqual(clusters.size, 2);
+});
+
+test('applyCorrelationDamp: solo pick → geen demping', () => {
+  const picks = [{ match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.05, units: '1.0U', expectedEur: 5, strength: 0.1 }];
+  corrDamp.applyCorrelationDamp(picks);
+  assert.strictEqual(picks[0].kelly, 0.05, 'onveranderd');
+  assert.strictEqual(picks[0].correlationAudit, undefined, 'geen audit');
+});
+
+test('applyCorrelationDamp: same-league-day → tweede pick gets × 0.5', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T18:00:00Z', kelly: 0.04, units: '0.75U', expectedEur: 4, strength: 0.08 },
+    { match: 'Feyenoord vs AZ', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.05, units: '1.0U', expectedEur: 5, strength: 0.10 },
+  ];
+  corrDamp.applyCorrelationDamp(picks);
+  // Feyenoord (expectedEur 5) is cluster_leader → onveranderd
+  const leader = picks.find(p => p.correlationAudit?.reason === 'cluster_leader');
+  const damped = picks.find(p => p.correlationAudit?.reason === 'same_league_same_day');
+  assert.ok(leader);
+  assert.ok(damped);
+  assert.strictEqual(damped.correlationAudit.dampFactor, 0.5);
+  assert.ok(damped.kelly < 0.04, 'kelly gedempt');
+});
+
+test('applyCorrelationDamp: same-fixture → × 0.25 (zwaardere demping)', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.04, units: '0.75U', expectedEur: 3, strength: 0.06, label: 'Over 2.5' },
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.05, units: '1.0U', expectedEur: 5, strength: 0.10, label: 'BTTS Ja' },
+  ];
+  corrDamp.applyCorrelationDamp(picks);
+  const damped = picks.find(p => p.correlationAudit?.reason === 'same_fixture');
+  assert.ok(damped, 'same_fixture demping toegepast');
+  assert.strictEqual(damped.correlationAudit.dampFactor, 0.25);
+});
+
+test('applyCorrelationDamp: cross-league picks → geen demping op beide', () => {
+  const picks = [
+    { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.05, units: '1.0U', expectedEur: 5, strength: 0.10 },
+    { match: 'Liverpool vs Chelsea', league: 'Premier League', kickoff: '2026-04-17T20:00:00Z', kelly: 0.04, units: '0.75U', expectedEur: 4, strength: 0.08 },
+  ];
+  corrDamp.applyCorrelationDamp(picks);
+  // Geen picks gedempt (verschillende leagues)
+  assert.ok(picks.every(p => !p.correlationAudit || p.correlationAudit.dampFactor === 1.0 || p.correlationAudit === undefined));
+});
+
+test('operatorDay: converteert kickoff naar Amsterdam kalenderdag', () => {
+  // 2026-04-17T22:00:00Z = 18 apr 00:00 in CEST (+2)
+  assert.strictEqual(corrDamp.operatorDay('2026-04-17T22:00:00Z'), '2026-04-18');
+  // 2026-04-17T12:00:00Z = 17 apr 14:00 in CEST
+  assert.strictEqual(corrDamp.operatorDay('2026-04-17T12:00:00Z'), '2026-04-17');
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────
