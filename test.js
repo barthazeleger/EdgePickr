@@ -5442,6 +5442,15 @@ test('applyCorrelationDamp: same-fixture → × 0.25 (zwaardere demping)', () =>
   assert.strictEqual(damped.correlationAudit.dampFactor, 0.25);
 });
 
+test('groupCorrelatedPicks: zelfde league maar andere sport = aparte clusters (Codex-review fix)', () => {
+  const picks = [
+    { match: 'Team A vs Team B', league: 'Premier League', sport: 'football', kickoff: '2026-04-17T20:00:00Z' },
+    { match: 'Team C vs Team D', league: 'Premier League', sport: 'handball', kickoff: '2026-04-17T20:00:00Z' },
+  ];
+  const clusters = corrDamp.groupCorrelatedPicks(picks);
+  assert.strictEqual(clusters.size, 2, 'zelfde league-naam maar andere sport = 2 clusters');
+});
+
 test('applyCorrelationDamp: cross-league picks → geen demping op beide', () => {
   const picks = [
     { match: 'Ajax vs PSV', league: 'Eredivisie', kickoff: '2026-04-17T20:00:00Z', kelly: 0.05, units: '1.0U', expectedEur: 5, strength: 0.10 },
