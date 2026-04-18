@@ -2,6 +2,32 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.20] - 2026-04-18
+
+**Phase 6.2c · scan schedulers (cron)**
+
+### Added
+
+- **[claude] `lib/runtime/scan-schedulers.js`** — 3 scan-scheduling helpers via factory:
+  - `scheduleScanAtHour(timeInput)` — één scan per Amsterdam-HH:MM, self-re-arming, mutex-aware (scanRunning), heartbeat-write naar notifications.
+  - `scheduleDailyScan()` — loadUsers → admin.settings.scanTimes → array van scheduleScanAtHour handles, gearchiveerd in `userScanTimers[admin.id]` zodat rescheduleUserScans ze kan opruimen.
+  - `scheduleDailyResultsCheck()` — 10:00 Amsterdam: checkOpenBetResults + 24h-overzicht + push + cascade naar autoTuneSignals + evaluateKellyAutoStepup + autoTuneSignalsByClv + updateCalibrationMonitor + evaluateActionableTodos (alleen als settled-bets aanwezig).
+- `_globalScanTimers` state nu module-scoped in closure.
+- `userScanTimers` blijft shared met rescheduleUserScans in server.js (pass by reference).
+- `shouldRunPostResultsModelJobs` via direct require uit `lib/runtime/daily-results`.
+- Scan-running mutex via getter/setter (scanRunning blijft module-level flag in server.js want ook /api/prematch route gebruikt hem).
+- Factory met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-195 regels** (8335 → 8140).
+- Totaal shrinkage sinds v11.0.0 baseline: **-4397 regels**.
+- **Mijlpaal**: ALLE schedulers zijn uit server.js. `grep "^function schedule" server.js` → 0 hits.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde 10:00 Amsterdam trigger, zelfde cron-tick heartbeat-write, zelfde daily-push body, zelfde cascade-order (autoTune → Kelly → CLV-tune → calibration-monitor → todos).
+
 ## [11.3.19] - 2026-04-18
 
 **Phase 6.2b · maintenance + health schedulers**

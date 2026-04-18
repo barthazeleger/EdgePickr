@@ -7929,223 +7929,6 @@ app.listen(PORT, () => {
 // ── DAGELIJKSE PRE-MATCH SCAN (10:00 AM) ─────────────────────────────────────
 // Plan een scan op een bepaald uur (0-23); geeft de timeout handle terug
 // Accepteert zowel number (legacy: uur) als "HH:MM" string.
-function scheduleScanAtHour(timeInput) {
-  let hour, minute;
-  if (typeof timeInput === 'number') { hour = timeInput; minute = 0; }
-  else {
-    const m = String(timeInput).match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return;
-    hour = parseInt(m[1]); minute = parseInt(m[2]);
-  }
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return;
-  const label = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-
-  const now    = new Date();
-  const amsNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Amsterdam' }));
-  const offsetMs = amsNow.getTime() - now.getTime();
-  const target = new Date(now);
-  target.setHours(hour, minute, 0, 0);
-  target.setTime(target.getTime() - offsetMs);
-  if (target <= now) target.setDate(target.getDate() + 1);
-  const delay = target - now;
-  const hm    = target.toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
-  console.log(`📡 Scan gepland om ${hm} (over ${Math.round(delay/60000)} min)`);
-  return setTimeout(async () => {
-    console.log(`📡 Scan om ${label} gestart...`);
-    // v10.8.13: cron-scan draait nu de VOLLE pipeline (multi-sport +
-    // notificatie) ipv alleen football via runPrematch. Verklaart waarom
-    // je voorheen geen push op scheduled scans kreeg.
-    // v10.8.15: altijd een start-heartbeat naar notifications tabel, zodat
-    // user achteraf kan zien of de cron-tik überhaupt vuurde (onderscheidt
-    // "scheduler stilstand" vs "scan draait maar push faalt").
-    try {
-      await supabase.from('notifications').insert({
-        type: 'cron_tick',
-        title: `⏱️ Cron scan ${label} gestart`,
-        body: `Scheduler triggered at ${new Date().toISOString()}`,
-        read: false, user_id: null,
-      });
-    } catch {}
-    try {
-      if (scanRunning) {
-        console.log(`⚠️ Scan ${label}: al een scan bezig, skip cron-tik`);
-      } else {
-        scanRunning = true;
-        try {
-          // Laad admin prefs zodat cron dezelfde bookie-filter gebruikt als UI.
-          let prefs = null;
-          try {
-            const users = await loadUsers().catch(() => []);
-            const admin = users.find(u => u.role === 'admin');
-            prefs = admin?.settings?.preferredBookies || null;
-          } catch {}
-          await runFullScan({
-            emit: (d) => { if (d.log) console.log(`[${label}] ${d.log}`); },
-            prefs,
-            isAdmin: true,
-            triggerLabel: `cron-${label}`,
-          });
-          console.log(`📡 Scan om ${label} klaar`);
-        } finally {
-          scanRunning = false;
-        }
-      }
-    } catch (e) {
-      console.error(`Scan om ${label} fout:`, e.message);
-      await notify(`⚠️ Scan om ${label} mislukt: ${e.message}`).catch(() => {});
-    }
-    scheduleScanAtHour(timeInput);
-  }, delay);
-}
-
-function scheduleDailyScan() {
-  // Laad admin settings; plan scans en bewaar handles in userScanTimers[admin.id]
-  // zodat rescheduleUserScans(admin) ze netjes kan opruimen en voorkomen dubbele scans.
-  loadUsers().then(users => {
-    const admin = users.find(u => u.role === 'admin');
-    if (!admin) {
-      // Geen admin-user bekend; plan een losse default-scan. Handle bewaren in _globalScanTimers.
-      console.log('⚠️ scheduleDailyScan: geen admin-user, default-scan op 07:30');
-      _globalScanTimers.push(scheduleScanAtHour('07:30'));
-      return;
-    }
-    // Clear eventuele bestaande admin-timers voor we nieuwe plannen
-    if (userScanTimers[admin.id]) {
-      userScanTimers[admin.id].forEach(h => clearTimeout(h));
-    }
-    const times = admin.settings?.scanTimes?.length ? admin.settings.scanTimes : ['07:30'];
-    console.log(`📅 Admin scan-scheduler: ${times.join(', ')} (scanEnabled=${admin.settings?.scanEnabled !== false})`);
-    userScanTimers[admin.id] = times.map(t => scheduleScanAtHour(t));
-  }).catch((e) => {
-    console.log('⚠️ scheduleDailyScan: loadUsers faalde, default op 07:30:', e.message);
-    _globalScanTimers.push(scheduleScanAtHour('07:30'));
-  });
-}
-
-// v10.8.15: diagnostic endpoint. Vertelt welke scan-tijden gepland staan voor
-// admin en wanneer de volgende cron-tik valt. Bedoeld om te onderscheiden
-// tussen "scheduler heeft 21:00 niet gepland" vs "scheduler vuurde maar scan
-// faalde". Geen auth buiten requireAdmin.
-const _globalScanTimers = []; // fallback-handles als geen admin-user bekend is
-
-// ── DAGELIJKSE UITSLAG CHECK (10:00 Amsterdam) ───────────────────────────────
-// v10.7.21: verschoven van 06:00 → 10:00 ivm late US/MLB wedstrijden die
-// pas in de nacht eindigen. 06:00 miste vaak nog de nachtelijke uitslagen.
-// Ook: overzicht bevat nu settled bets van LAATSTE 24H, niet alleen huidige
-// open bets. Voorheen zag je vaak maar 1 wedstrijd (de enige nog open).
-function scheduleDailyResultsCheck() {
-  const now    = new Date();
-  const amsNow = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Amsterdam' }));
-  const offsetMs = amsNow.getTime() - now.getTime();
-  const target = new Date(now);
-  const amsTarget = new Date(now);
-  amsTarget.setHours(10, 0, 0, 0); // 10:00 Amsterdam
-  target.setTime(amsTarget.getTime() - offsetMs);
-  if (target <= now) target.setDate(target.getDate() + 1);
-  const delay = target - now;
-  const hm    = target.toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
-  console.log(`⏰ Dagelijkse check gepland om ${hm} (over ${Math.round(delay/60000)} min)`);
-
-  setTimeout(async () => {
-    console.log('⏰ Dagelijkse uitslag check gestart...');
-    try {
-      const { checked, updated, results } = await checkOpenBetResults();
-      const { bets, stats } = await readBets(await getAdminUserId());
-
-      // Overzicht ook settled bets van afgelopen 24h meenemen (niet alleen
-      // wat nu nog open was). Hierdoor zie je de volledige nacht + gister.
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-      const recent = (bets || []).filter(b => {
-        if (!['W','L'].includes(b.uitkomst)) return false;
-        // Parse datum (DD-MM-YYYY) + tijd (HH:MM)
-        const dm = (b.datum || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
-        if (!dm) return false;
-        const iso = `${dm[3]}-${dm[2]}-${dm[1]}T${b.tijd || '12:00'}:00`;
-        const ms = Date.parse(iso);
-        return isFinite(ms) && ms >= cutoff;
-      });
-      const recentById = new Set(results.map(r => r.id));
-      const recentExtra = recent.filter(b => !recentById.has(b.id));
-
-      const lines = [`📋 DAGELIJKSE CHECK · ${new Date().toLocaleDateString('nl-NL', { weekday:'long', day:'numeric', month:'long' })}`];
-      lines.push(`${checked} open bet${checked !== 1 ? 's' : ''} gecontroleerd | ${updated} auto-bijgewerkt`);
-      lines.push(`📊 Laatste 24h: ${recent.length} settled bets (inclusief reeds vastgelegde)\n`);
-
-      // Eerst: vers gecheckt in deze run
-      for (const r of results) {
-        const ico = r.uitkomst === 'W' ? '✅' : r.uitkomst === 'L' ? '❌' : '⚠️';
-        lines.push(`${ico} ${r.wedstrijd}\n   ${r.markt} | ${r.score} → ${r.uitkomst || 'handmatig'}`);
-      }
-      // Daarna: al eerder settled in de laatste 24h
-      for (const b of recentExtra) {
-        const ico = b.uitkomst === 'W' ? '✅' : '❌';
-        const scoreStr = b.score || '';
-        lines.push(`${ico} ${b.wedstrijd}\n   ${b.markt} | ${scoreStr} → ${b.uitkomst}`);
-      }
-      if (!results.length && !recentExtra.length) lines.push('Geen afgeronde wedstrijden in laatste 24h.');
-
-      lines.push(`\n💰 Bankroll: €${stats.bankroll} | ROI: ${(stats.roi*100).toFixed(1)}%`);
-      await notify(lines.join('\n')).catch(() => {});
-
-      // Push notificatie met dagelijks overzicht (volledige 24h)
-      const wCount = recent.filter(r => r.uitkomst === 'W').length;
-      const lCount = recent.filter(r => r.uitkomst === 'L').length;
-      const pushBody = recent.length
-        ? `${wCount}W / ${lCount}L · Bankroll: €${stats.bankroll} · ROI: ${(stats.roi*100).toFixed(1)}%`
-        : `Geen afgeronde wedstrijden · Bankroll: €${stats.bankroll}`;
-      await sendPushToAll({
-        title: `📋 Dagelijks overzicht`,
-        body: pushBody,
-        tag: 'daily-results',
-        url: '/',
-      }).catch(() => {});
-    } catch (e) {
-      console.error('Daily check fout:', e);
-      await notify(`⚠️ Dagelijkse check mislukt: ${e.message}`).catch(() => {});
-    }
-
-    const postResultsDecision = shouldRunPostResultsModelJobs(updated);
-    if (postResultsDecision.shouldRun) {
-      // Auto-tune signalen alleen als er echt nieuwe resultaten zijn settled.
-      await autoTuneSignals().catch(e => console.error('Auto-tune fout:', e.message));
-      // Kelly-fraction auto-stepup check (na echte results-update, max 1 stap/dag)
-      await evaluateKellyAutoStepup().catch(e => console.error('Kelly auto-stepup fout:', e.message));
-      // CLV-based autotune draait mee met dezelfde settled-results cadence om
-      // onverwachte modelupdates op rustige dagen te voorkomen.
-      const clvTune = await autoTuneSignalsByClv().catch(e => ({ tuned: 0, error: e.message }));
-      if (clvTune.tuned > 0) {
-        console.log(`📊 CLV autotune: ${clvTune.tuned} signal weights aangepast (${clvTune.muted || 0} gemute)`);
-        // Inbox notification bij significante modelverandering
-        try {
-          const muted = (clvTune.adjustments || []).filter(a => a.reason).slice(0, 3).map(a => `${a.name} (${a.avgClv}%)`).join(', ');
-          const top = (clvTune.adjustments || []).filter(a => !a.reason).slice(0, 3).map(a => `${a.name}: ${a.old}→${a.new}`).join(', ');
-          await supabase.from('notifications').insert({
-            type: 'model_update',
-            title: `🧠 Model bijgewerkt: ${clvTune.tuned} signal weights aangepast`,
-            body: `${clvTune.muted || 0} signal(s) gemute (CLV ≤ -3%): ${muted || 'geen'}\n${top ? `Aangepast: ${top}` : ''}`,
-            read: false, user_id: null,
-          });
-        } catch { /* swallow */ }
-      }
-
-      // v10.10.16: calibration-monitor (slice 2, sectie 14.R2.A). Meet of
-      // onze signaal-voorspellingen daadwerkelijk gekalibreerd zijn.
-      const calResult = await updateCalibrationMonitor().catch(e => ({ error: e.message }));
-      if (calResult?.aggregated > 0) {
-        console.log(`📊 Calibration monitor: ${calResult.aggregated} signal×sport×markt×window rows bijgewerkt`);
-      } else if (calResult?.error) {
-        console.warn(`⚠️ Calibration monitor skip: ${calResult.error}`);
-      }
-    } else {
-      console.log('📭 Geen nieuwe settled bets → auto-tune, Kelly-stepup en calibration monitor overgeslagen');
-    }
-
-    // Actionable todos check — sticky inbox-items voor beslissingen die je moet nemen
-    await evaluateActionableTodos().catch(e => console.error('Todo-check fout:', e.message));
-
-    scheduleDailyResultsCheck(); // plan volgende dag
-  }, delay);
-}
 
 // ── CALIBRATION MONITOR · slice 2 (v10.10.16) ───────────────────────────────
 // Per-window Brier/log-loss per (signal, sport, market_type). Daily job
@@ -8333,3 +8116,25 @@ async function evaluateActionableTodos() {
     } catch (e) { console.error('Todo insert fout:', e.message); }
   }
 }
+
+// v11.3.20 Phase 6.2c: scheduleScanAtHour + scheduleDailyScan +
+// scheduleDailyResultsCheck verhuisd naar lib/runtime/scan-schedulers.js.
+// Mount aan het einde van server.js zodat updateCalibrationMonitor en
+// evaluateActionableTodos (function-decls hierboven) bij factory-call tijd
+// bestaan. App.listen-callback draait async ná module-load, dus deze const
+// references resolven correct.
+const createScanSchedulers = require('./lib/runtime/scan-schedulers');
+const scanSchedulers = createScanSchedulers({
+  supabase, loadUsers, notify,
+  runFullScan, checkOpenBetResults,
+  readBets, getAdminUserId,
+  sendPushToAll,
+  autoTuneSignals, evaluateKellyAutoStepup, autoTuneSignalsByClv,
+  updateCalibrationMonitor, evaluateActionableTodos,
+  getScanRunning: () => scanRunning,
+  setScanRunning: (v) => { scanRunning = v; },
+  userScanTimers,
+});
+const scheduleScanAtHour = scanSchedulers.scheduleScanAtHour;
+const scheduleDailyScan = scanSchedulers.scheduleDailyScan;
+const scheduleDailyResultsCheck = scanSchedulers.scheduleDailyResultsCheck;
