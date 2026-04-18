@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.8] - 2026-04-18
+
+**Phase 5.4p · admin-timeline cluster (calibration-monitor + line-timeline-preview)**
+
+### Added
+
+- **[claude] `lib/routes/admin-timeline.js`** — 2 admin line-timeline/calibration observability endpoints:
+  - `GET /api/admin/v2/calibration-monitor?window=90d&sport=X&market_type=Y` — signal_calibration Brier/log-loss/bins per window; graceful degrade als tabel niet gemigreerd.
+  - `GET /api/admin/v2/line-timeline-preview?fixture_id=X&market_type=Y&selection_key=Z&line=2.5&two_way=1` — timeline + derived execution-gate metrics + what applyExecutionGate zou doen met hk=0.05 (observability voor price-memory pipeline).
+- Deps inject: supabase, requireAdmin, loadUsers, lineTimelineLib. execution-gate lazy-required binnen handler.
+
+### Changed
+
+- server.js netto **-117 regels** (11161 → 11044).
+- Totaal shrinkage sinds v11.0.0 baseline: **-1493 regels** via 18 extracted route modules.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging.
+
 ## [11.3.7] - 2026-04-18
 
 **Phase 5.4o · admin-quality cluster (execution/data quality + odds-drift + per-bookie + market-thresholds)**
