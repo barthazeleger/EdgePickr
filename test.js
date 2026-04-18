@@ -46,6 +46,7 @@ const scanLogger = require('./lib/runtime/scan-logger');
 const clvBackfill = require('./lib/clv-backfill');
 const earlyPayout = require('./lib/signals/early-payout');
 const earlyPayoutRules = require('./lib/signals/early-payout-rules');
+const createNotificationsRouter = require('./lib/routes/notifications');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2396,7 +2397,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.1.2');
+  assert.strictEqual(appMeta.APP_VERSION, '11.2.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4929,6 +4930,32 @@ test('results-checker: zonder event → null met uitleg', () => {
 });
 
 // ── SCAN-LOGGER (v11.0.0): heartbeat moet scan_end tellen ───────────────────
+// ── NOTIFICATIONS ROUTER (v11.2.0 Phase 5.1 extraction) ─────────────────────
+console.log('\n  Notifications router (factory extraction):');
+
+test('notifications router: throws bij missing deps', () => {
+  assert.throws(() => createNotificationsRouter({}), /missing required deps/);
+});
+
+test('notifications router: construct met valid deps returnt Express router', () => {
+  const router = createNotificationsRouter({
+    supabase: { from: () => ({ select: () => ({ order: () => ({ limit: () => ({ or: () => ({ then: () => {} }) }) }) }) }) },
+    isValidUuid: () => true,
+    rateLimit: () => false,
+    savePushSub: async () => {},
+    deletePushSub: async () => {},
+    vapidPublicKey: 'test-key',
+  });
+  assert.ok(router);
+  assert.strictEqual(typeof router.use, 'function', 'Express router heeft .use method');
+  // Router moet de 6 routes gemount hebben (3 push + 3 inbox)
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/push/vapid-key'));
+  assert.ok(routes.includes('/push/subscribe'));
+  assert.ok(routes.includes('/inbox-notifications'));
+  assert.ok(routes.includes('/inbox-notifications/read'));
+});
+
 console.log('\n  Scan-logger (heartbeat notification writer):');
 
 test('scan-logger: hasRecentScanActivity matcht cron_tick en scan_end', () => {

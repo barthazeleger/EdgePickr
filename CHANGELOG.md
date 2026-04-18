@@ -2,6 +2,48 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.2.0] - 2026-04-18
+
+**Phase 5.1 · server.js route-extraction start** (first cluster: notifications + push).
+
+### Added
+
+- **[claude] `lib/routes/notifications.js`** — factory-pattern Express router extracted uit server.js. 6 routes: `/push/vapid-key`, `/push/subscribe` (POST/DELETE), `/inbox-notifications` (GET/PUT/DELETE). Deps expliciet inject: `{ supabase, isValidUuid, rateLimit, savePushSub, deletePushSub, vapidPublicKey }`. Defensive check throws bij missing deps.
+- Mount in server.js: `app.use('/api', createNotificationsRouter({...}))` vervangt 6 inline handlers + 2 comment-blocks.
+- 2 nieuwe tests: missing-deps throws, construct-returns-Express-router met 6 routes wire-check.
+
+### Changed
+
+- `server.js` netto -52 regels (67 verwijderd, 15 toegevoegd). Eerste concrete shrink van de monoliet onder de modular-from-start doctrine.
+- De aggregate alert-feed `/api/notifications` blijft in server.js (veel cross-system deps: loadCalib, getAdminUserId, stats aggregatie); extractie na bredere helper-cleanup.
+
+### Why
+
+Doctrine-shift v11.0.0 "modular-from-start" vereist dat server.js vanaf nu monotonisch shrinkt. Notifications routes = kleinste zelfstandige cluster (6 endpoints, narrow deps, volledig getest) = ideaal als proof-of-concept voor het factory-pattern dat de rest van Phase 5 volgt.
+
+Patroon voor volgende extracties:
+1. `module.exports = function createXxxRouter(deps) { /* router.get/post(...) */ return router; }`
+2. Throw bij missing required deps (fail-fast).
+3. In server.js: `app.use('/api', createXxxRouter({...}))` vervangt inline handlers.
+4. Tests verifiëren router-construction + route-mounting.
+
+### Roadmap Phase 5 (volgende extracties)
+
+- `lib/routes/clv.js` — `/api/clv/backfill`, `/api/clv/backfill/probe`, `/api/clv/recompute` (~400 regels)
+- `lib/routes/auth.js` — login, register, 2FA, me (~300 regels)
+- `lib/routes/bets.js` — bets CRUD + current-odds (~500 regels)
+- `lib/routes/admin.js` — alle `/api/admin/v2/*` (~2000 regels)
+- `lib/routes/tracker.js` — check-results, backfill-times (~400 regels)
+- `lib/routes/scan.js` — /api/prematch SSE stream wrapper (~200 regels)
+- `lib/runtime/results-checker.js` extended — full checkOpenBetResults body
+- `lib/scan/` — per-sport scan modules
+
+Target: server.js < 1500 regels.
+
+### Tests
+
+581 passed · 0 failed (+2 nieuwe notifications-router tests).
+
 ## [11.1.2] - 2026-04-18
 
 **P0 comprehensive sanity-gate coverage · 11 markten** (vervolg-fix op operator-report "veel 2+ odds picks").

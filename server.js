@@ -8240,26 +8240,18 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
-// ── PUSH NOTIFICATIONS ─────────────────────────────────────────────────────
-app.get('/api/push/vapid-key', (req, res) => {
-  res.json({ publicKey: VAPID_PUBLIC });
-});
-
-app.post('/api/push/subscribe', async (req, res) => {
-  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-  if (rateLimit('push:' + ip, 10, 60 * 60 * 1000)) return res.status(429).json({ error: 'Te veel verzoeken' });
-  const sub = req.body;
-  if (!sub?.endpoint) return res.status(400).json({ error: 'Geen subscription' });
-  await savePushSub(sub, req.user?.id || null);
-  res.json({ ok: true });
-});
-
-app.delete('/api/push/subscribe', async (req, res) => {
-  const endpoint = req.body?.endpoint;
-  if (!endpoint) return res.status(400).json({ error: 'Geen endpoint' });
-  await deletePushSub(endpoint);
-  res.json({ ok: true });
-});
+// ── PUSH + INBOX NOTIFICATIONS ─────────────────────────────────────────────
+// v11.2.0 Phase 5.1: handlers verhuisd naar lib/routes/notifications.js via
+// factory-pattern. Eén mount hier, geen per-route boilerplate meer.
+const createNotificationsRouter = require('./lib/routes/notifications');
+app.use('/api', createNotificationsRouter({
+  supabase,
+  isValidUuid,
+  rateLimit,
+  savePushSub,
+  deletePushSub,
+  vapidPublicKey: VAPID_PUBLIC,
+}));
 
 // Prematch scan · SSE streaming (inclusief live check op moment van draaien)
 // ── v10.8.13: shared multi-sport scan pipeline ──────────────────────────────
@@ -10348,53 +10340,9 @@ app.get('/api/model-feed', requireAdmin, (req, res) => {
 });
 
 // Notifications · API alerts + calibratie inzichten
-// In-app notifications (opgeslagen in Supabase)
-app.get('/api/inbox-notifications', async (req, res) => {
-  try {
-    if (!isValidUuid(req.user?.id)) {
-      return res.status(401).json({ error: 'Invalid user context' });
-    }
-    let query = supabase.from('notifications')
-      .select('*').order('created_at', { ascending: false }).limit(50);
-    // Filter: user's own notifications + global (null user_id)
-    query = query.or(`user_id.eq.${req.user.id},user_id.is.null`);
-    const { data, error } = await query;
-    if (error) throw error;
-    const unread = (data || []).filter(n => !n.read).length;
-    res.json({ notifications: data || [], unread });
-  } catch { res.status(500).json({ error: 'Interne fout' }); }
-});
-
-// v10.9.8: mark-as-read werkte ook op global rows (user_id=null) vanuit
-// iedere user → iemand kon "Overweeg API-upgrade" weg-marken voor iedereen.
-// Nu: global rows alleen door admin muteerbaar; users markeren alleen hun eigen.
-app.put('/api/inbox-notifications/read', async (req, res) => {
-  try {
-    if (!isValidUuid(req.user?.id)) return res.status(401).json({ error: 'Invalid user context' });
-    const isAdmin = req.user?.role === 'admin';
-    const scope = isAdmin
-      ? `user_id.eq.${req.user.id},user_id.is.null`
-      : `user_id.eq.${req.user.id}`;
-    await supabase.from('notifications').update({ read: true })
-      .eq('read', false).or(scope);
-    res.json({ ok: true });
-  } catch { res.status(500).json({ error: 'Interne fout' }); }
-});
-
-// v10.9.8: delete-all global rows alleen door admin — voorheen kon elke user
-// global notifications verwijderen voor iedereen.
-app.delete('/api/inbox-notifications', async (req, res) => {
-  try {
-    if (!isValidUuid(req.user?.id)) return res.status(401).json({ error: 'Invalid user context' });
-    const isAdmin = req.user?.role === 'admin';
-    const scope = isAdmin
-      ? `user_id.eq.${req.user.id},user_id.is.null`
-      : `user_id.eq.${req.user.id}`;
-    await supabase.from('notifications').delete().or(scope);
-    res.json({ ok: true });
-  } catch { res.status(500).json({ error: 'Interne fout' }); }
-});
-
+// Inbox routes verhuisd naar lib/routes/notifications.js (v11.2.0). De
+// aggregate alert-feed `/api/notifications` blijft in server.js tot bredere
+// refactor (veel cross-system deps zoals loadCalib, getAdminUserId, stats).
 app.get('/api/notifications', async (req, res) => {
   try {
     const alerts = [];
