@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.12] - 2026-04-18
+
+**Phase 5.4t · live scoreboard cluster**
+
+### Added
+
+- **[claude] `lib/routes/live.js`** — 3 live scoreboard endpoints extracted uit server.js:
+  - `GET /api/live-poll` — ESPN scoreboard-poll over 13 football leagues (gratis, snelle refresh).
+  - `GET /api/live-scores` — api-football + api-basketball + api-hockey + api-baseball + api-american-football + api-handball live/today met dedup, per-sport mappers, v1 live-status normalisatie.
+  - `GET /api/live-events/:id` — fixture events (goal/card/sub) + stats + xG-schatting uit Shots on Goal indien api expected_goals ontbreekt.
+- Deps: afGet + `leagues` object (football/basketball/hockey/baseball/american-football/handball).
+- `isV1LiveStatus` + `shouldIncludeDatedV1Game` direct geimporteerd uit `lib/runtime/live-board` (zelfde bron als server.js).
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-294 regels** (10203 → 9909).
+- Totaal shrinkage sinds v11.0.0 baseline: **-2624 regels** via 22 extracted route modules.
+- **Symbolische mijlpaal**: server.js nu onder 10k regels (was 12537 regels bij v11.0.0 start).
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde ESPN responses, zelfde api-football dedup, zelfde xG-fallback.
+
 ## [11.3.11] - 2026-04-18
 
 **Phase 5.4s · analyze + POTD cluster**
