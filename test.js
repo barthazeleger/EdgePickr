@@ -56,6 +56,7 @@ const createBetsRouter = require('./lib/routes/bets');
 const createInfoRouter = require('./lib/routes/info');
 const createPicksRouter = require('./lib/routes/picks');
 const createAnalyticsRouter = require('./lib/routes/analytics');
+const createAdminObservabilityRouter = require('./lib/routes/admin-observability');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2406,7 +2407,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.0');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4985,6 +4986,22 @@ test('user router: construct met valid deps + 2 routes', () => {
   });
   const routes = router.stack.filter(l => l.route).map(l => l.route.path);
   assert.ok(routes.includes('/user/settings'));
+});
+
+test('admin-observability router: throws bij missing deps', () => {
+  assert.throws(() => createAdminObservabilityRouter({}), /missing required dep/);
+});
+
+test('admin-observability router: construct met valid deps + 2 routes', () => {
+  const router = createAdminObservabilityRouter({
+    supabase: { from: () => ({ select: () => ({}) }), rpc: async () => ({ data: null }) },
+    requireAdmin: (req, res, next) => next(),
+    loadUsers: async () => [],
+    getUserScanTimers: () => [],
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/admin/supabase-usage'));
+  assert.ok(routes.includes('/admin/scheduler-status'));
 });
 
 test('analytics router: throws bij missing deps', () => {

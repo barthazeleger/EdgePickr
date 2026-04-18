@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.1] - 2026-04-18
+
+**Phase 5.4i · server.js extraction · admin-observability routes**
+
+### Added
+
+- **[claude] `lib/routes/admin-observability.js`** — 2 admin-only endpoints:
+  - `GET /api/admin/supabase-usage` — pg_database_size_bytes + row counts per tabel, % free-tier gebruik.
+  - `GET /api/admin/scheduler-status` — admin scanTimes + nextFire per slot + activeTimers count. Gebruikt getUserScanTimers getter (ipv directe module-state access).
+- 2 nieuwe tests.
+
+### Changed
+
+- server.js netto **-68 regels** (11981 → 11913).
+- Totaal shrinkage sinds v11.0.0 (12537 baseline): **-624 regels** via 11 extracted route modules.
+
+### Tests
+
+603 passed · 0 failed.
+
 ## [11.3.0] - 2026-04-18
 
 **Phase 5.4h · server.js extraction · analytics routes + server.js onder 12k**
