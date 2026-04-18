@@ -2,6 +2,29 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.0] - 2026-04-18
+
+**Phase 5.4h · server.js extraction · analytics routes + server.js onder 12k**
+
+Minor-bump (11.2.x → 11.3.0) voor cumulatieve Phase 5 milestone: server.js nu onder 12k regels voor het eerst sinds baseline.
+
+### Added
+
+- **[claude] `lib/routes/analytics.js`** — 2 admin-only endpoints:
+  - `GET /api/signal-analysis` — per-signaal hit-rate + avg CLV edge over settled bets met signals. Parseert `signal_name:+1.2%` format.
+  - `GET /api/timing-analysis` — CLV per timing bucket (Vroeg >12h, Medium 3-12h, Laat <3h voor kickoff). Berekent bet logging-tijd vs kickoff (fallback 20:45 default).
+- Deps: requireAdmin, readBets. Clean isolatie.
+- 2 nieuwe tests: missing-deps + route-mount wire-check.
+
+### Changed
+
+- server.js netto **-79 regels** (12060 → **11981** — eerste keer onder 12k sinds baseline).
+- Totaal shrinkage sinds v11.0.0 (12537 baseline): **-556 regels** via 10 extracted route modules (notifications, clv, auth, user, tracker, admin-users, bets, info+status, picks, analytics).
+
+### Tests
+
+601 passed · 0 failed.
+
 ## [11.2.9] - 2026-04-18
 
 **Phase 5.4g · server.js extraction · /api/status naar info-router**

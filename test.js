@@ -55,6 +55,7 @@ const createAdminUsersRouter = require('./lib/routes/admin-users');
 const createBetsRouter = require('./lib/routes/bets');
 const createInfoRouter = require('./lib/routes/info');
 const createPicksRouter = require('./lib/routes/picks');
+const createAnalyticsRouter = require('./lib/routes/analytics');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2405,7 +2406,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.2.9');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4984,6 +4985,20 @@ test('user router: construct met valid deps + 2 routes', () => {
   });
   const routes = router.stack.filter(l => l.route).map(l => l.route.path);
   assert.ok(routes.includes('/user/settings'));
+});
+
+test('analytics router: throws bij missing deps', () => {
+  assert.throws(() => createAnalyticsRouter({}), /missing required dep/);
+});
+
+test('analytics router: construct met valid deps + 2 routes', () => {
+  const router = createAnalyticsRouter({
+    requireAdmin: (req, res, next) => next(),
+    readBets: async () => ({ bets: [] }),
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/signal-analysis'));
+  assert.ok(routes.includes('/timing-analysis'));
 });
 
 test('picks router: throws bij missing deps', () => {
