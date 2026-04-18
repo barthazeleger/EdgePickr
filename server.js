@@ -6660,6 +6660,7 @@ app.use('/api', createAdminInspectRouter({
   supabase, requireAdmin, computeBookieConcentration,
   getActiveStartBankroll, aggregateEarlyPayoutStats,
   normalizeSport, detectMarket,
+  loadUsers,
 }));
 
 // GET /api/admin/v2/kill-switch — huidige status + actieve killed markten

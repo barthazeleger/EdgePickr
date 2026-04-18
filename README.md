@@ -1,4 +1,4 @@
-# EdgePickr v11.3.26
+# EdgePickr v11.3.27
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
@@ -109,7 +109,7 @@ Rate-limited op 200ms per bet. Return `{ scanned, filled, failed, details }`.
 ## Testsuite
 
 ```bash
-npm test     # 624 tests · scanlogica, signals, CLV, security, scrapers, snapshots, regressies, reviewer-bugs
+npm test     # 634 tests · scanlogica, signals, CLV, security, scrapers, snapshots, regressies, reviewer-bugs, route-integration
 ```
 
 ### Test-categorieën

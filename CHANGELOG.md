@@ -2,6 +2,39 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.27] - 2026-04-18
+
+**Phase 10 · reviewer follow-up fixes (second-pass closure)**
+
+Concrete follow-up op de tweede reviewer-pass die 5 issues vond na v11.3.26:
+
+### Fixed
+
+- **[HIGH]** `/api/admin/v2/bookie-concentration` en `runBookieConcentrationCheck` lazen `bets.bookie` terwijl de canonical column `tip` heet. Endpoint gaf `500 "column bets.bookie does not exist"`, watcher was blind. Fix: beide paden lezen nu `tip` en mappen naar `bookie` vóór `computeBookieConcentration` (pure helper ongewijzigd). Tevens: endpoint lekt geen raw DB-error meer.
+- **[MED]** `bet_id` race: nieuwe migratie `docs/migrations-archive/v11.3.27_bets_bet_id_sequence.sql` koppelt `bet_id` aan Postgres sequence via `nextval`. `writeBet` probeert nu eerst tier-1 (DB-sequence, true atomic) via insert-zonder-bet_id + `.select('bet_id')`; alleen als de sequence ontbreekt (pre-migrate schema) valt het terug op tier-2 retry-loop met 10 attempts + exponential backoff (10ms → 5s cap). Eerdere 5-attempt MAX+1 faalde onder reviewer's 6-concurrent repro.
+- **[MED]** Resterende raw `error.message` leaks in admin/observability paden gefixt: `admin-backfill.js`, `admin-inspect.js`, `admin-model-eval.js`, `admin-quality.js`, `admin-signals.js`, `admin-timeline.js`, `clv.js`. Alle `if (error) return res.status(500).json({ error: error.message })` vervangen door log + generic `Interne fout · check server logs`.
+- **[LOW]** `pick-distribution` endpoint implementeert nu daadwerkelijk `?preferredOnly=1`: leest `req.user`'s `preferredBookies` via `loadUsers` (fallback: admin) en filtert candidates op case-insensitive substring-match — consistent met `lib/odds-parser.js bestOdds` filter. Response bevat nu `preferredOnly` + `preferredBookies` velden zodat client-side duidelijk is welk filter actief is.
+- **[LOW]** `test.js` PUBLIC_PATHS-test gebruikt nu parse-from-server.js i.p.v. hardcoded kopie met stale `/api/status`. Asserts ook dat `/api/health` wél public is. Security-drift detecteert nu de echte runtime-constante.
+
+### Changed
+
+- README tests-count `624` → `634`.
+- 2 nieuwe integration tests: `bookie-concentration uses tip column` + `pick-distribution preferredOnly filters on user prefs`.
+
+### Migration required
+
+`docs/migrations-archive/v11.3.27_bets_bet_id_sequence.sql` moet op Supabase worden toegepast voor de sequence-based allocator actief wordt. Commando:
+
+```
+node scripts/migrate.js docs/migrations-archive/v11.3.27_bets_bet_id_sequence.sql
+```
+
+Idempotent (`CREATE SEQUENCE IF NOT EXISTS` + `setval(... MAX+1)`). Tot die tijd gebruikt `writeBet` de tier-2 retry-loop met 10 attempts en exponential backoff — gemitigeerd maar niet race-proof onder extreme concurrency.
+
+### Tests
+
+634 passed · 0 failed (was 632). Server boot groen.
+
 ## [11.3.26] - 2026-04-18
 
 **Phase 9.1 + 9.2 · frontend DOM hardening + scan-orchestrator extractie**

@@ -1057,10 +1057,15 @@ test('admin-only endpoints require admin role', () => {
     '/api/debug/odds',
   ];
   assert.strictEqual(adminEndpoints.length, 16, 'Should have 16 admin endpoints listed');
-  // None of these should be in PUBLIC_PATHS
-  const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
+  // v11.3.27 reviewer-fix: parse de echte PUBLIC_PATHS uit server.js i.p.v.
+  // een hardcoded kopie. Eerder: hardcoded set met /api/status erin terwijl
+  // productiecode dat pad bewust heeft verwijderd — test was drift-blind.
+  const serverSrcForPublic = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const pubMatch = serverSrcForPublic.match(/const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\);/);
+  assert(pubMatch, 'PUBLIC_PATHS declaration not found in server.js');
+  const liveSet = new Set((pubMatch[1].match(/['"][^'"]+['"]/g) || []).map(s => s.replace(/['"]/g, '')));
   for (const ep of adminEndpoints) {
-    assert.ok(!PUBLIC_PATHS.has(ep), `${ep} should NOT be in public paths`);
+    assert.ok(!liveSet.has(ep), `${ep} should NOT be in live PUBLIC_PATHS`);
   }
 });
 
@@ -1086,13 +1091,20 @@ test('v2 endpoints valideren input ranges (hours/days)', () => {
   assert.strictEqual(clamp('-5', 24, 168), 1, 'negatief → min');
 });
 
-test('PUBLIC_PATHS only contains safe endpoints', () => {
-  const PUBLIC_PATHS = new Set(['/api/status', '/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
-  assert.strictEqual(PUBLIC_PATHS.size, 4, 'Should have exactly 4 public endpoints');
-  assert.ok(!PUBLIC_PATHS.has('/api/bets'), '/api/bets should not be public');
-  assert.ok(!PUBLIC_PATHS.has('/api/prematch'), '/api/prematch should not be public');
-  assert.ok(!PUBLIC_PATHS.has('/api/admin/users'), '/api/admin/users should not be public');
-  assert.ok(!PUBLIC_PATHS.has('/api/model-feed'), '/api/model-feed should not be public');
+test('PUBLIC_PATHS only contains safe endpoints (live parse from server.js)', () => {
+  // v11.3.27 reviewer-fix: test de echte runtime-constante i.p.v. een hardcoded
+  // kopie met /api/status erin. Eerder ging deze test groen terwijl prod al
+  // was bijgewerkt.
+  const serverSrc = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const match = serverSrc.match(/const PUBLIC_PATHS = new Set\(\[([\s\S]*?)\]\);/);
+  assert(match, 'PUBLIC_PATHS not found in server.js');
+  const live = new Set((match[1].match(/['"][^'"]+['"]/g) || []).map(s => s.replace(/['"]/g, '')));
+  assert.ok(!live.has('/api/bets'), '/api/bets should not be public');
+  assert.ok(!live.has('/api/prematch'), '/api/prematch should not be public');
+  assert.ok(!live.has('/api/admin/users'), '/api/admin/users should not be public');
+  assert.ok(!live.has('/api/model-feed'), '/api/model-feed should not be public');
+  assert.ok(!live.has('/api/status'), '/api/status must NOT be public (removed v10.10.22)');
+  assert.ok(live.has('/api/health'), '/api/health MUST be public for keep-alive');
 });
 
 test('settings whitelist blocks dangerous keys', () => {
@@ -2410,7 +2422,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.26');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.27');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7589,6 +7601,7 @@ test('integration: GET /admin/v2/pick-distribution aggregates by market × booki
     aggregateEarlyPayoutStats: async () => [],
     normalizeSport: (s) => s,
     detectMarket: () => 'other',
+    loadUsers: async () => [{ id: 'admin-1', role: 'admin', settings: { preferredBookies: ['Unibet'] } }],
   });
   const res = await callRoute(router, {
     method: 'GET', path: '/admin/v2/pick-distribution',
@@ -7605,6 +7618,100 @@ test('integration: GET /admin/v2/pick-distribution aggregates by market × booki
   assert(res.body.bookieSummary.bet365, 'bookieSummary should aggregate bet365');
   assert.strictEqual(res.body.bookieSummary.bet365.accepted, 2);
   assert.strictEqual(res.body.bookieSummary.bet365.total, 3);
+});
+
+// v11.3.27 reviewer-fix: pick-distribution ?preferredOnly=1 filtert echt.
+test('integration: GET /admin/v2/pick-distribution?preferredOnly=1 filters on user prefs', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const mockCandidates = [
+    { bookmaker: 'Bet365', passed_filters: true, rejected_reason: null, model_run_id: 'r1', selection_key: 'over', created_at: new Date().toISOString() },
+    { bookmaker: 'Unibet', passed_filters: true, rejected_reason: null, model_run_id: 'r1', selection_key: 'over', created_at: new Date().toISOString() },
+    { bookmaker: 'Pinnacle', passed_filters: true, rejected_reason: null, model_run_id: 'r1', selection_key: 'over', created_at: new Date().toISOString() },
+    { bookmaker: 'William Hill', passed_filters: false, rejected_reason: 'edge_below_min', model_run_id: 'r1', selection_key: 'over', created_at: new Date().toISOString() },
+  ];
+  const mockRuns = [{ id: 'r1', market_type: 'totals' }];
+  const mockSupabase = {
+    from: (table) => ({
+      select: () => ({
+        gte: () => ({
+          order: () => ({
+            limit: () => Promise.resolve({ data: table === 'pick_candidates' ? mockCandidates : [], error: null }),
+          }),
+        }),
+        in: () => Promise.resolve({ data: table === 'model_runs' ? mockRuns : [], error: null }),
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}),
+    getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [],
+    normalizeSport: (s) => s,
+    detectMarket: () => 'other',
+    loadUsers: async () => [{ id: 'admin-1', role: 'admin', settings: { preferredBookies: ['Bet365', 'Unibet'] } }],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/pick-distribution',
+    query: { preferredOnly: '1' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.preferredOnly, true);
+  assert.deepStrictEqual(res.body.preferredBookies, ['bet365', 'unibet']);
+  // Na filter blijven alleen Bet365 + Unibet over (2 van de 4).
+  assert.strictEqual(res.body.total, 2, `expected 2 after preferred filter, got ${res.body.total}`);
+  assert(!res.body.bookieSummary['william hill'], 'william hill should be filtered out');
+  assert(!res.body.bookieSummary.pinnacle, 'pinnacle should be filtered out');
+});
+
+// v11.3.27 reviewer-fix: bookie-concentration reads `tip`, not `bookie`.
+test('integration: GET /admin/v2/bookie-concentration uses `tip` column', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  let selectedColumn = null;
+  let notNullCol = null;
+  const mockSupabase = {
+    from: () => ({
+      select: (cols) => {
+        selectedColumn = cols;
+        return {
+          not: (col) => {
+            notNullCol = col;
+            return Promise.resolve({
+              data: [
+                { tip: 'Bet365', inzet: 50, datum: '15-04-2026' },
+                { tip: 'Unibet', inzet: 30, datum: '15-04-2026' },
+              ],
+              error: null,
+            });
+          },
+        };
+      },
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: (bets) => ({
+      total: bets.reduce((s, b) => s + b.inzet, 0),
+      perBookie: bets.map(b => ({ bookie: b.bookie, stake: b.inzet, share: 0.5 })),
+      maxShare: 0.5, maxBookie: bets[0]?.bookie || null,
+    }),
+    getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [],
+    normalizeSport: (s) => s,
+    detectMarket: () => 'other',
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/bookie-concentration',
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(selectedColumn, 'tip, inzet, datum', 'must select `tip` not `bookie`');
+  assert.strictEqual(notNullCol, 'tip', 'must filter not-null on `tip`');
+  assert.strictEqual(res.body.total, 80);
+  assert.strictEqual(res.body.perBookie[0].bookie, 'Bet365');
 });
 
 // Info route: GET /version returns app version (geen auth nodig — mounted elsewhere).
