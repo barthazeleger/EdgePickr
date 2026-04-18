@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.17] - 2026-04-18
+
+**Phase 6.1 · runtime helpers (checkOpenBetResults + live-scan)**
+
+### Added
+
+- **[claude] `lib/runtime/check-open-bets.js`** — `checkOpenBetResults` factory extracted uit server.js (~268 regels). Pipeline: fetch finished+live fixtures over 6 sporten (today+yesterday), match op open bets, roep `resolveBetOutcome` aan, schrijf settled uitkomst, stuur web-push, log moneyline-settles naar early-payout shadow. Deps inject: supabase, readBets, updateBetOutcome, afGet, sendPushToUser.
+- **[claude] `lib/scan/run-live.js`** — `runLive` + `getLivePicks` factory extracted (~143 regels). 4 live-scan scenario's (xG-dominantie, Over 2.5 bij hoge xG + weinig goals, Under 2.5 bij lage xG + 0-0 voor rust, ML bij extreme druk). Deps inject: afGet, loadCalib, sleep, notify, buildPickFactory, setLastLivePicks (atomic setter), leagues.
+- Beide modules fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-399 regels** (9522 → 9123).
+- Totaal shrinkage sinds v11.0.0 baseline: **-3414 regels**.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde settle-pipeline, zelfde live-scan scenario's, zelfde notify-flow, zelfde push-payloads.
+
 ## [11.3.16] - 2026-04-18
 
 **Phase 5.4x · scan SSE streaming routes**
