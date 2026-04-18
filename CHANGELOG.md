@@ -2,6 +2,36 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [10.12.26] - 2026-04-17
+
+Codex final-review response · eerlijke erkenning + dial-back overclaims + review bewaard in repo.
+
+### Added
+- **[claude] `docs/CODE_REVIEW_CODEX_FINAL_2026-04-17.md`** — het Codex-rapport (review-target v10.11.0) in de repo opgeslagen voor auditability.
+- **[claude] `docs/CODE_REVIEW_CODEX_FINAL_RESPONSE.md`** — per-finding response in 3 categorieën:
+  - (A) Strengths Codex terecht identificeerde · no-action
+  - (B) Findings legitiem open op v10.11.0, inmiddels gefixt in v10.12.0–v10.12.25 · incl. mapping-tabel commit-per-commit
+  - (C) Doctrinaire correcties die blijven gelden · geaccepteerd en gedial-backt
+
+### Changed — language dial-back
+- **v10.12.23 CHANGELOG entry** herschreven: "Full automation — geen operator knop" → "Stake-decision volledig geautomatiseerd — operator blijft buiten deze loop" + expliciete opsomming van operator-verantwoordelijkheden (bet-outcomes loggen, preferredBookies, scan-schedule, 2FA, manual scan trigger).
+- **Memory file `project_flexibility_constraints.md`**: "best betting tool known to mankind" framing expliciet als *operator aspiration*, niet engineering-claim. Codex referentie toegevoegd.
+
+### Verified at head (b8ad070 / v10.12.25 → nu v10.12.26)
+- `.github/workflows/ci.yml` aanwezig (toegevoegd v10.12.5) — niet aanwezig in Codex review-target v10.11.0
+- `package.json` exposeert `start`, `test`, `test:coverage`, `audit:high` — 2 extra scripts sinds v10.11.0
+- 523 tests groen, 0 npm audit vulnerabilities
+- `migrate-to-supabase.js` gearchiveerd in `docs/_archive/` — niet langer op runnable path
+- `checkOpenBetResults` passeert `userId` naar `updateBetOutcome` (server.js:10694)
+
+### Acknowledged tech debt — niet gefixt, bewust
+- `server.js` ~12.5k regels monoliet (Codex "main structural weakness") — gedocumenteerd in `docs/CODE_REVIEW_PREP.md` §6 als known tech debt. Splitsing is Fase 1 roadmap item, dedicated sprint.
+- `index.html` ~5.7k regels inline JS/CSS — zelfde status.
+- Globale `user_id = null` semantiek voor operator-alerts in notifications tabel. Werkt voor single-operator, faalt bij multi-user reintroduction. Schema-migratie wanneer relevant.
+
+### Note
+De review claim "EdgePickr is now a serious private betting system with a much stronger engineering and product foundation" is accuraat voor v10.11.0 en blijft waar op v10.12.26. De correcties ("niet operatorless", "CI niet zichtbaar in review-target state", "claims moeten eerlijker") zijn allemaal geadresseerd — respectievelijk via language-update, CI pipeline toegevoegd in v10.12.5, en dial-backs deze commit.
+
 ## [10.12.25] - 2026-04-17
 
 Code-review prep · P0 race-condition fix + 4 dead-code files deleted + dead-path opgeschoond + reviewer-onboarding doc geschreven. Gedreven door een pre-review audit-agent die concrete findings opleverde.
@@ -105,8 +135,8 @@ Elke scan start met: `🎚️ Stake-regime: {regime} · Kelly {x} · unit ×{y}`
 - 7 L in rij: regime `consecutive_l`, kelly 0.35, unit ×0.75
 - Recent CLV -1% + long-term +2% + delta ≥2pp: regime `regime_shift` (edge-regime-shift), kelly 0.40
 
-### Full automation — geen operator knop
-Operator-doctrine: "jij bepaalt alles, ik scan en log". Daarom geen toggle om regime uit te zetten. Een admin endpoint bestaat wel (`/api/admin/v2/stake-regime`) voor inspectie, maar kan het gedrag niet veranderen.
+### Stake-decision volledig geautomatiseerd — operator blijft buiten deze loop
+Stake-sizing (Kelly-fraction + unit-multiplier) is nu algoritmisch bepaald; er is geen operator-toggle om per scan te tunen. Andere operator-verantwoordelijkheden blijven bestaan (bet-outcomes loggen, preferredBookies kiezen, scan-schedule, 2FA, manual scan-trigger). Admin endpoint `/api/admin/v2/stake-regime` is inspection-only — toont decision maar kan het niet override. (Eerlijke framing: EdgePickr is een *highly automated operator-driven* systeem, niet operatorless — zie Codex review 2026-04-17.)
 
 ### Tests
 - `npm test`: 523 passed, 0 failed (geen wijzigingen aan test-suite nodig; bestaande tests dekken engine output + integration via indirect Kelly-check).
