@@ -2,6 +2,33 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.15] - 2026-04-18
+
+**Phase 5.4w · notifications aggregate alert-feed**
+
+### Added
+
+- **[claude] `lib/routes/notifications-feed.js`** — `GET /api/notifications` extracted:
+  - Bankroll +50%/+100% unit-advice alerts.
+  - All Sports ($99/mnd) ROI-triggered upgrade aanbeveling.
+  - Loss-log pattern-warning (≥3x same market in last 20 bets).
+  - Per-market multiplier signals (filter-strenger/vertrouw-meer).
+  - Model-update feed (14d window, laatste 3 entries).
+  - Tijdgebonden Bet365-limit reminder (19-26 apr window).
+  - Supabase free-tier capacity (>250MB warn, >400MB error).
+- Deps: supabase, loadCalib, getAdminUserId, getUserMoneySettings, readBets, loadUsers.
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-96 regels** (9674 → 9578).
+- Totaal shrinkage sinds v11.0.0 baseline: **-2955 regels** via 25 extracted route modules.
+- Naming disambiguation: `lib/routes/notifications.js` blijft voor inbox CRUD, nieuwe `notifications-feed.js` voor aggregate-feed.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde thresholds, zelfde alert-structuur, zelfde error-response.
+
 ## [11.3.14] - 2026-04-18
 
 **Phase 5.4v · debug diagnostic routes**
