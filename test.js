@@ -48,6 +48,7 @@ const earlyPayout = require('./lib/signals/early-payout');
 const earlyPayoutRules = require('./lib/signals/early-payout-rules');
 const createNotificationsRouter = require('./lib/routes/notifications');
 const createClvRouter = require('./lib/routes/clv');
+const createAuthRouter = require('./lib/routes/auth');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2398,7 +2399,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.2.2');
+  assert.strictEqual(appMeta.APP_VERSION, '11.2.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4962,6 +4963,32 @@ console.log('\n  CLV router (factory extraction):');
 
 test('clv router: throws bij missing deps', () => {
   assert.throws(() => createClvRouter({}), /missing required dep/);
+});
+
+test('auth router: throws bij missing deps', () => {
+  assert.throws(() => createAuthRouter({}), /missing required dep/);
+});
+
+test('auth router: construct met valid deps + 5 routes', () => {
+  const router = createAuthRouter({
+    rateLimit: () => false,
+    loadUsers: async () => [],
+    saveUser: async () => {},
+    bcrypt: { compare: async () => true, hash: async () => 'h' },
+    jwt: { sign: () => 'token' },
+    jwtSecret: 'test-secret',
+    loginCodes: new Map(),
+    sendEmail: async () => true,
+    notify: async () => {},
+    defaultSettings: () => ({}),
+  });
+  assert.ok(router);
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/auth/login'));
+  assert.ok(routes.includes('/auth/verify-code'));
+  assert.ok(routes.includes('/auth/register'));
+  assert.ok(routes.includes('/auth/me'));
+  assert.ok(routes.includes('/auth/password'));
 });
 
 test('clv router: construct met valid deps + 3 routes', () => {

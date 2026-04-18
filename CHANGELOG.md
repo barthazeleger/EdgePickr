@@ -2,6 +2,39 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.2.3] - 2026-04-18
+
+**Phase 5.3 · server.js extraction · Auth routes** (5 endpoints, security-sensitive).
+
+### Added
+
+- **[claude] `lib/routes/auth.js`** — factory-pattern Express router. 5 endpoints:
+  - `POST /api/auth/login` — email+password → JWT (of 2FA challenge)
+  - `POST /api/auth/verify-code` — 2FA email-code → JWT
+  - `POST /api/auth/register` — nieuwe user (status=pending admin-approve)
+  - `GET /api/auth/me` — huidige user uit req.user.id
+  - `PUT /api/auth/password` — change password (bcrypt)
+- Deps expliciet inject (10 stuks): rateLimit, loadUsers, saveUser, bcrypt, jwt, jwtSecret, loginCodes (Map), sendEmail, notify, defaultSettings.
+- Security-relevante patronen behouden: composite IP+email rate-limit key, constant-time 2FA compare (`crypto.timingSafeEqual`), email enumeration prevention op register, per-user bcrypt-hash rate-limit op password-change.
+- 2 nieuwe tests: missing-deps throws, construct returnt router met 5 routes wire-check.
+
+### Changed
+
+- server.js netto **-116 regels** (12434 → 12318).
+- Totaal server.js shrinkage sinds v11.0.0: **-272 regels**. Monotone shrink-directive blijft aangehouden.
+
+### Why
+
+Phase 5.3 — derde cluster onder modular-from-start doctrine. Auth is security-critical code; isolatie in eigen module maakt het makkelijker apart te reviewen + testen zonder de 12k monoliet in te hoeven lezen.
+
+### Roadmap resterend
+
+5.4: admin/v2 cluster (grootste) · 5.5: bets + tracker · 5.6: per-sport scan modules.
+
+### Tests
+
+585 passed · 0 failed · server.js syntax valid.
+
 ## [11.2.2] - 2026-04-18
 
 **Phase 5.2 · server.js extraction · CLV routes** (3 endpoints, ~280 regels uit server.js).
