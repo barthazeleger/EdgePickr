@@ -7358,73 +7358,17 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
   }
 }
 
-// v10.9.8: scan-triggering is single-operator. Niet-admin kan geen scan
-// starten want dat vervuilt lastPrematchPicks + scan_history met globale
-// user_id=null. Voor een private bankroll-tool moet alleen admin de
-// canonieke scan-state voeden.
-app.post('/api/prematch', requireAdmin, (req, res) => {
-  // v10.12.1 (security): 5 scan-triggers per minuut, ook voor admin. Voorkomt
-  // denial-of-wallet op api-football (7500 calls/dag/sport) bij gecompromitteerd
-  // admin-token of gewoon per ongeluk dubbelklikken in de UI.
-  if (rateLimit('prematch:' + (req.user?.id || 'admin'), 5, 60 * 1000)) return res.status(429).json({ error: 'Te veel scan-triggers · wacht een minuut' });
-  if (!OPERATOR.master_scan_enabled) return res.status(503).json({ error: 'Scans uitgeschakeld via operator failsafe' });
-  if (scanRunning) return res.status(429).json({ error: 'Scan al bezig · wacht tot de huidige scan klaar is' });
-  scanRunning = true;
-  const isAdmin = true;  // route is admin-only sinds v10.9.8
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  let stepCount = 0;
-  const emit = (data) => {
-    if (!isAdmin && data.log) {
-      stepCount++;
-      const pct = Math.min(95, Math.round(stepCount * 1.5));
-      res.write(`data: ${JSON.stringify({ progress: pct })}\n\n`);
-      return;
-    }
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  (async () => {
-    let prefs = null;
-    try {
-      const users = await loadUsers().catch(() => []);
-      const me = users.find(u => u.id === req.user?.id) || users.find(u => u.role === 'admin');
-      prefs = me?.settings?.preferredBookies || null;
-    } catch (e) {
-      console.warn('Scan: user prefs load failed, scan loopt zonder filter:', e.message);
-    }
-    const { safePicks, safeCombis } = await runFullScan({ emit, prefs, isAdmin, triggerLabel: 'manual' });
-    emit({ done: true, picks: safePicks, combis: safeCombis || [] });
-    res.end();
-    scanRunning = false;
-  })().catch(err => {
-    const detail = (err && (err.message || err.toString())) || 'unknown';
-    console.error('🔴 runFullScan crashed:', detail);
-    if (err?.stack) console.error(err.stack);
-    emit({ error: 'Scan mislukt', detail });
-    res.end();
-    scanRunning = false;
-  });
-});
-
-// v10.9.8: live scan admin-only. Route streamde picks met `reason` veld (model-
-// IP / rationale) naar elke ingelogde user. Voor private tool + model-IP
-// bescherming: alleen admin.
-// Live scan · SSE streaming
-app.post('/api/live', requireAdmin, (req, res) => {
-  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-  if (rateLimit('live:' + ip, 5, 10 * 60 * 1000)) return res.status(429).json({ error: 'Te veel live scans · wacht even' });
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  const emit = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-  runLive(emit)
-    .then(picks => { emit({ done: true, picks: picks.map(p => ({ match: p.match, league: p.league, label: p.label, odd: p.odds||p.odd, prob: p.prob, units: p.units, reason: p.reason })) }); res.end(); })
-    .catch(err  => { console.error('Live scan fout:', err.message); emit({ error: 'Live scan mislukt' }); res.end(); });
-});
+// v11.3.16 Phase 5.4x: POST /api/prematch + POST /api/live (SSE scan streams)
+// verhuisd naar lib/routes/scan-stream.js via factory-pattern. scanRunning
+// blijft module-level flag in server.js want cron scheduler deelt hem.
+const createScanStreamRouter = require('./lib/routes/scan-stream');
+app.use('/api', createScanStreamRouter({
+  requireAdmin, rateLimit,
+  operator: OPERATOR,
+  getScanRunning: () => scanRunning,
+  setScanRunning: (v) => { scanRunning = v; },
+  loadUsers, runFullScan, runLive,
+}));
 
 // Bets ophalen
 // v11.2.6 Phase 5.4d: GET /api/bets + correlations + DELETE verhuisd naar

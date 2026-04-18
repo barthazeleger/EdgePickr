@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.16] - 2026-04-18
+
+**Phase 5.4x · scan SSE streaming routes**
+
+### Added
+
+- **[claude] `lib/routes/scan-stream.js`** — 2 admin-only SSE scan endpoints extracted:
+  - `POST /api/prematch` — pre-match scan SSE stream met progress/log-events, runFullScan wrapper, scanRunning mutex, OPERATOR.master_scan_enabled failsafe, preferred-bookies inject via loadUsers.
+  - `POST /api/live` — live scan SSE stream, pick-projectie minimal voor UI (match/league/label/odd/prob/units/reason).
+- Deps inject via getter/setter voor `scanRunning` (gedeeld met cron scheduler, blijft module-level flag in server.js).
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-56 regels** (9578 → 9522).
+- Totaal shrinkage sinds v11.0.0 baseline: **-3015 regels** via 26 extracted route modules.
+- **Mijlpaal**: alle route-handlers zijn nu uit server.js verhuisd. server.js bevat nog alleen app-setup, middleware, helpers (runFullScan/runLive/checkOpenBetResults/...), scheduler/cron en boot-sequence.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde SSE headers, zelfde rate-limits (5/min prematch, 5/10min live), zelfde failsafe-gates.
+
 ## [11.3.15] - 2026-04-18
 
 **Phase 5.4w · notifications aggregate alert-feed**
