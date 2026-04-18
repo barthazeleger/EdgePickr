@@ -1,8 +1,17 @@
-# Code Review Summary · v11.0.0 → v11.1.0
+# Code Review Summary · v11.0.0 → v11.2.0
 
-Entry-document voor externe reviewer. v10.12.26 was het vorige review-target; deze release-bundel antwoordt op 10 operator-bevindingen uit de in-use-test sessie 2026-04-18 en introduceert een architectuur-shift ("modular-from-start") waarmee server.js vanaf v11 monotonisch shrinkt.
+Entry-document voor externe reviewer. v10.12.26 was het vorige review-target; deze release-bundel antwoordt op 10 operator-bevindingen uit de in-use-test sessie 2026-04-18, plus twee concrete model-integrity bugs die tijdens dezelfde sessie werden ontdekt (1H spread fake edges, BTTS divergence lek), en introduceert een architectuur-shift ("modular-from-start") waarmee server.js vanaf v11 monotonisch shrinkt.
 
-**Scope:** 8 commits, 9 nieuwe files, 570 tests groen, 0 npm-audit vulnerabilities. Alle pushes op `origin/master`.
+**Scope:** 12 commits, 12 nieuwe files, 581 tests groen, 0 npm-audit vulnerabilities. Alle pushes op `origin/master`.
+
+**Release-log 2026-04-18**:
+- v11.0.0 (daff2d4): P0 bugfixes · BTTS auto-close, scan-heartbeat, drawdown anchor
+- v11.0.1 (3842449): UX · odds-nu button + CLV backfill UI/fallback
+- v11.0.2 (9f1ce6e): ChatGPT subscription + near-miss picks
+- v11.1.0 (6f592d5): Early-payout shadow + referee-reds research
+- v11.1.1 (53535c8): P0 · NBA/NFL 1H spread fake-edges weg (hasDevig + bookie-count + sanity)
+- v11.1.2 (1938700): P0 · Comprehensive sanity coverage · 11 markten (BTTS/ML/NRFI/Run Line/etc.)
+- v11.2.0 (c31f04a): Phase 5.1 server.js extraction start · notifications router
 
 ## Per operator-bevinding → commit + testbestand
 
@@ -105,9 +114,54 @@ npm audit --audit-level=high: 0 vulnerabilities.
 - `bet_id` blijft integer (UUID migratie open).
 - Calibration-monitor schrijft `probability_source='ep_proxy'` tot bet↔pick_candidate join landt.
 
+## v11.1.x follow-up — model-integrity bugs gevonden tijdens use-testing
+
+Na v11.1.0 meldde operator twee symptomen in zijn scan-output:
+1. **NBA 1H spread @ 3.45 odds met 158% "pure edge"** (Denver -9.5, Cleveland -10.5 on Bet365) — statistisch onmogelijk.
+2. **"Veel 2+ odds picks"** — pattern dat vóór v11 niet bestond.
+
+Root-cause investigation leidde tot 2 commits:
+
+### v11.1.1 (53535c8) — NBA/NFL 1H spread fake edges
+`lib/odds-parser.js:buildSpreadFairProbFns` exposeert nu ook `hasDevig(pt)` + `bookieCountAt(pt)`. Alle spread-picks (NBA full-game, NBA 1H, NFL 1H) vereisen nu:
+- Paired cross-bookie devig bij het exacte punt (`hasDevig=true`)
+- Minstens 3 bookies met die line (`bookieCountAt >= 3`)
+- Model-prob binnen 4pp van market-implied (`modelMarketSanityCheck`)
+- `_fixtureMeta` voor scan-gate playability-filter
+
+Voorheen werd de fallback `fpHome × 0.50` (= 69% voor Denver) DIRECT als 1H cover-prob gebruikt → 3.45 odds impliceert 29%, model zegt 69%, edge = 158%. Fake.
+
+### v11.1.2 (1938700) — Comprehensive sanity gate coverage · 11 markten
+Agent-audit van alle pick-creatie sites toonde 11 markten zonder `modelMarketSanityCheck` gate. Nieuwe helper `passesDivergence2Way(modelA, modelB, priceA, priceB, threshold=0.04)` in `lib/model-math.js`. Gewired in:
+- Football BTTS Yes/Nee (operator's directe klacht)
+- Football 1X2 ML 3-way
+- Football DNB
+- Basketball ML
+- Baseball ML, NRFI/YRFI, F5 ML, Run Line (min-3-bookies + sanity)
+- NHL Puck Line (min-3-bookies + sanity + typo fix)
+- NFL ML
+- Handball ML
+
+Doctrine-hook §3 R2 "market = baseline truth, model = residual overlay" — model mag residual zijn, geen 30pp afwijking zoals de BTTS Nee @ 2.40 (74% model vs 42% market) die operator vond.
+
+### "Veel 2+ odds" verklaring voor reviewer
+Hoge odds × overconfident model = grote fake edges → top van ranking via `expectedEur` sort. Bart's observation was een symptoom van de integrity bugs, niet een tactiek. Met 11 gates actief valt dit patroon structureel weg voor signal-pushed markten. O/U line-shopping edges blijven intact (markt-devigged = geen fake-edge pad).
+
+## v11.2.0 (c31f04a) — Phase 5.1: server.js extraction start
+
+Eerste concrete cluster-extractie onder "modular-from-start" doctrine.
+
+`lib/routes/notifications.js` — factory-pattern Express router met 6 endpoints (push CRUD + inbox CRUD). Deps expliciet inject. Throws bij missing deps. Mount via `app.use('/api', createNotificationsRouter({...}))`.
+
+server.js: **net -52 regels**. Eerste concrete shrink van de 12.5k monoliet. Pattern bewezen voor volgende extracties (clv, auth, bets, admin, tracker, scan).
+
 ## Git-log van deze batch
 
 ```
+c31f04a [claude][v11.2.0] Phase 5.1 · server.js extraction start · lib/routes/notifications.js
+1938700 [claude][v11.1.2] Comprehensive sanity-gate coverage · 11 markten zonder divergence-check
+53535c8 [claude][v11.1.1] P0 · NBA/NFL 1H spread fake-edges weg · devig + bookie-count + sanity gates
+b3babaf [claude] Reviewer summary doc · v11.0.0→v11.1.0 mapping per operator-report item
 6f592d5 [claude][v11.1.0] Phase 4 · early-payout shadow signal + referee-reds research entry
 9f1ce6e [claude][v11.0.2] Phase 3 · ChatGPT subscription entry + near-miss picks UI
 3842449 [claude][v11.0.1] Phase 2 · odds-nu UX fix + CLV backfill UI + snapshot fallback
