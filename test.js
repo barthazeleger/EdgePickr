@@ -42,6 +42,7 @@ const dailyResults = require('./lib/runtime/daily-results');
 const liveBoard = require('./lib/runtime/live-board');
 const operatorActions = require('./lib/runtime/operator-actions');
 const resultsChecker = require('./lib/runtime/results-checker');
+const scanLogger = require('./lib/runtime/scan-logger');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -4839,6 +4840,79 @@ test('results-checker: zonder event → null met uitleg', () => {
   const r = resultsChecker.resolveBetOutcome('⚽ BTTS Ja', null, { isLive: false });
   assert.strictEqual(r.uitkomst, null);
   assert.ok(r.note);
+});
+
+// ── SCAN-LOGGER (v11.0.0): heartbeat moet scan_end tellen ───────────────────
+console.log('\n  Scan-logger (heartbeat notification writer):');
+
+test('scan-logger: hasRecentScanActivity matcht cron_tick en scan_end', () => {
+  assert.strictEqual(scanLogger.hasRecentScanActivity([{ type: 'cron_tick' }]), true);
+  assert.strictEqual(scanLogger.hasRecentScanActivity([{ type: 'scan_end' }]), true);
+  assert.strictEqual(scanLogger.hasRecentScanActivity([{ type: 'unit_change' }]), true);
+  assert.strictEqual(scanLogger.hasRecentScanActivity([]), false);
+  assert.strictEqual(scanLogger.hasRecentScanActivity([{ type: 'heartbeat_miss' }]), false);
+  assert.strictEqual(scanLogger.hasRecentScanActivity(null), false);
+});
+
+test('scan-logger: legacy scan_final_selection alleen matcht als operator opt-in (default nee)', () => {
+  // Guard regression: oude heartbeat-query keek naar scan_final_selection dat
+  // nooit bestond. Ensure we're not still matching it by default.
+  assert.strictEqual(
+    scanLogger.hasRecentScanActivity([{ type: 'scan_final_selection' }]),
+    false,
+    'scan_final_selection mag niet meer tellen als heartbeat signal'
+  );
+});
+
+test('scan-logger: logScanEnd schrijft scan_end met juiste velden', async () => {
+  let captured = null;
+  const fakeSupabase = {
+    from(table) {
+      assert.strictEqual(table, 'notifications');
+      return {
+        async insert(payload) {
+          captured = payload;
+          return { data: [payload], error: null };
+        },
+      };
+    },
+  };
+  const ok = await scanLogger.logScanEnd(fakeSupabase, {
+    triggerLabel: 'cron-1400',
+    picksCount: 3,
+    candidatesCount: 142,
+    durationMs: 18_500,
+    sports: ['football', 'basketball'],
+  });
+  assert.strictEqual(ok, true, 'logScanEnd returnt true bij succes');
+  assert.strictEqual(captured.type, 'scan_end');
+  assert.ok(captured.title.includes('cron-1400'));
+  assert.ok(captured.body.includes('3 picks'));
+  assert.ok(captured.body.includes('142 kandidaten'));
+  assert.ok(captured.body.includes('19s') || captured.body.includes('18s'));
+  assert.strictEqual(captured.user_id, null);
+  assert.strictEqual(captured.read, false);
+});
+
+test('scan-logger: insert-error path returnt false', async () => {
+  const fakeSupabase = {
+    from: () => ({ async insert() { return { data: null, error: { message: 'network' } }; } }),
+  };
+  const ok = await scanLogger.logScanEnd(fakeSupabase, { triggerLabel: 'manual' });
+  assert.strictEqual(ok, false);
+});
+
+test('scan-logger: supabase=null → no-op false', async () => {
+  const ok = await scanLogger.logScanEnd(null, { triggerLabel: 'manual' });
+  assert.strictEqual(ok, false);
+});
+
+test('scan-logger: insert throw → caught als false', async () => {
+  const fakeSupabase = {
+    from: () => ({ async insert() { throw new Error('boom'); } }),
+  };
+  const ok = await scanLogger.logScanEnd(fakeSupabase, { triggerLabel: 'manual' });
+  assert.strictEqual(ok, false);
 });
 
 // ── PRICE-MEMORY: line-timeline (v10.10.9, fundament 2 uit Bouwvolgorde) ─────

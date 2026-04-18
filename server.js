@@ -42,6 +42,7 @@ const { shouldRunPostResultsModelJobs } = require('./lib/runtime/daily-results')
 const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/runtime/live-board');
 const { matchesClvRecomputeTarget } = require('./lib/runtime/operator-actions');
 const { resolveBetOutcome } = require('./lib/runtime/results-checker');
+const { logScanEnd } = require('./lib/runtime/scan-logger');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -8200,6 +8201,7 @@ app.delete('/api/push/subscribe', async (req, res) => {
 // cron alleen runPrematch() (football, geen notificatie) — verklaarde de
 // missende 14:00 push.
 async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, triggerLabel = 'manual' } = {}) {
+  const scanStartedAt = Date.now();
   try {
     setPreferredBookies(prefs);
     if (prefs?.length) emit({ log: `🏦 Edge-evaluatie op jouw bookies: ${prefs.join(', ')}` });
@@ -8364,6 +8366,17 @@ async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, trig
     const safePicks = topPicks.map(toSafe);
     // v10.9.7: combi-alternatieven meegeven zodat UI een apart paneel rendert.
     const safeCombis = topCombis.map(toSafe);
+
+    // v11.0.0: altijd scan_end notifie schrijven zodat heartbeat-watcher weet
+    // dat de scheduler leeft, ook bij 0 picks of manual scans.
+    await logScanEnd(supabase, {
+      triggerLabel,
+      picksCount: topPicks.length,
+      candidatesCount: beforeKill,
+      durationMs: Date.now() - scanStartedAt,
+      sports: ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'],
+    });
+
     return { safePicks, safeCombis, topPicks, topCombis, allPicks, beforeKill };
   } finally {
     setPreferredBookies(null);
@@ -11143,10 +11156,14 @@ let _lastHeartbeatAlertAt = 0;
 async function runScanHeartbeatCheck() {
   try {
     const since = new Date(Date.now() - 14 * 60 * 60 * 1000).toISOString();
+    // v11.0.0: query op {cron_tick, scan_end, unit_change}. Vroeger stond hier
+    // `scan_final_selection` wat nooit ergens werd geschreven — false-positive
+    // trigger bij scans die wél liepen maar geen cron_tick produceerden
+    // (manual scans, of cron-tick insert die silent failed).
     const { data, error } = await supabase
       .from('notifications')
-      .select('created_at')
-      .in('type', ['cron_tick', 'scan_final_selection', 'unit_change'])
+      .select('created_at, type')
+      .in('type', ['cron_tick', 'scan_end', 'unit_change'])
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(1);
