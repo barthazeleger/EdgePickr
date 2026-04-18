@@ -2,6 +2,92 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.2.1] - 2026-04-18
+
+**P0 volledige sanity-coverage · pre-operator-bets safety audit**
+
+Op expliciet verzoek van operator ("ga inzetten, moet goed werken") is een
+3-agent audit gedaan van ÉLKE mkP-callsite in elk van de 6 sporten. Audit
+identificeerde 10 nog-kwetsbare pick-paden. Dit release dicht ze allemaal.
+
+### Kritieke bug-fixes
+
+1. **NFL Spread full-game** (server.js:4916-4946) — zelfde klasse als NBA 1H spread, NIET gefixt in v11.1.1. Nu: hasDevig + ≥3 bookies + sanity + fxMeta.
+2. **Football Handicap** (server.js:6400-6452) — gebruikte fp.home/fp.away (full-game ML 3-way) DIRECT als cover-prob voor handicap. Zelfde structurele fout als 1H spread: -1.5 cover ≠ wins. Volledig herschreven met buildSpreadFairProbFns pattern.
+3. **Handball Handicap** (server.js:5422-5451) — zelfde klasse. Nu paired devig + ≥3 bookies + sanity + fxMeta.
+4. **Football Double Chance** 1X/12/X2 (server.js:6390-6410) — voorheen ZERO gates op 3 DC-varianten. Nu: sanity-check vs devigged 3-way consensus (fp.home+fp.draw etc.) + fxMeta per variant.
+5. **Hockey Team Totals** (server.js:3719-3786) — Poisson λ zonder market-anchor per team. Nu: vereist paired over/under op zelfde line, Poisson-prob binnen 4pp van devigged consensus, anders skip.
+6. **Baseball F5 ML pitcher-push cap** (server.js:4482) — f5PitcherAdj cap verlaagd van ±0.12 naar ±0.06. Pitcher × 3 kon voorheen 8pp buiten sanity-threshold drijven. Nu blijft binnen threshold.
+7. **Baseball NRFI** (server.js:4409-4412) — vereist nu pitcherSig.valid + ≥3 paired bookies. Team-runs-per-game is te zwakke proxy voor pitcher-dominated market.
+
+### Comprehensive sanity-gate coverage — alle O/U markten + Odd/Even
+
+Nieuwe `passesDivergence2Way` + fxMeta + `≥2 paired bookies` toegevoegd aan:
+
+- Football O/U 2.5 (tsAdj + weather + poisson + agg-push kunnen overP ~15% drijven)
+- Basketball O/U full-game + 1H O/U
+- Baseball O/U runs (mlbWeatherAdj)
+- Baseball F5 O/U (pitcherUnderBias)
+- NFL O/U full-game (weatherAdj) + 1H O/U
+- Hockey O/U goals + 1st Period O/U
+- Hockey Odd/Even (nu ≥3 paired bookies)
+- Handball O/U
+
+Voor pure-devig sites (model=market by construction) is de gate effectief een no-op, maar de `≥2 paired bookies` minimum beschermt tegen outlier-pool skew wanneer slechts 1 bookie de line aanbiedt.
+
+### Combi-level sanity (via per-leg gates)
+
+`lib/picks.js:mkP()` pushed naar combiPool EN picks. Mijn gate-checks wrappen de mkP call (`if (gate.pass) mkP(...)`). Een leg die sanity faalt komt daarom NIET in combiPool. Combi-prob (ep × ep × ep) is product van gevalideerde legs. Geen extra combi-gate nodig.
+
+### `lib/odds-parser.js` kleine refinement
+
+Baseball Run Line + NHL Puck Line vereisen nu ≥3 bookies paired per zijde (was ≥2 in v11.1.2). Consistent met de overall "≥3 voor variable-spread" standaard.
+
+### Risk-matrix post-fix
+
+| Sport × Markt | Voor v11.2.1 | Na v11.2.1 |
+|---|---|---|
+| Football ML 3-way | ✅ (v11.1.2) | ✅ |
+| Football DNB | ✅ (v11.1.2) | ✅ |
+| Football BTTS | ✅ (v11.1.2) | ✅ |
+| Football DC (3 varianten) | ❌ geen gates | ✅ sanity + fxMeta |
+| Football Handicap | ❌ verkeerd prob-model | ✅ paired devig + sanity |
+| Football O/U 2.5 | ❌ signal-adj, geen gate | ✅ gate + fxMeta |
+| Basketball ML | ✅ (v11.1.2) | ✅ |
+| Basketball O/U (full + 1H) | ❌ geen gate | ✅ gate + fxMeta |
+| Basketball Spread (full + 1H) | ✅ (v11.1.1) | ✅ |
+| Hockey ML + 3-way | ✅ (bestaand) | ✅ |
+| Hockey Team Totals | ❌ Poisson-only | ✅ paired + gate |
+| Hockey Puck Line | ✅ (v11.1.2) | ✅ (≥3 bookies) |
+| Hockey O/U + P1 + Odd/Even | ❌ geen gate | ✅ gate + fxMeta |
+| Baseball ML | ✅ (v11.1.2) | ✅ |
+| Baseball NRFI | ❌ zwakke proxy | ✅ pitcher-required + ≥3 |
+| Baseball Run Line | ✅ (v11.1.2) | ✅ (≥3 bookies) |
+| Baseball O/U + F5 O/U | ❌ signal-adj, geen gate | ✅ gate + fxMeta |
+| Baseball F5 ML | ⚠️ 8pp unguarded | ✅ cap verlaagd |
+| NFL ML | ✅ (v11.1.2) | ✅ |
+| NFL Spread full-game | ❌ UNCHECKED | ✅ gate + ≥3 bookies |
+| NFL 1H Spread | ✅ (v11.1.1) | ✅ |
+| NFL O/U (full + 1H) | ❌ signal-adj, geen gate | ✅ gate + fxMeta |
+| Handball ML + 3-way | ✅ (v11.1.2) | ✅ |
+| Handball Handicap | ❌ UNCHECKED | ✅ gate + ≥3 bookies |
+| Handball O/U | ❌ geen gate | ✅ gate + fxMeta |
+
+### Tests
+
+581 passed · 0 failed · syntax valid. Bestaande passesDivergence2Way tests (+6 in v11.1.2) dekken alle gebruikte scenarios.
+
+### IMPACT voor operator
+
+Operator-directive: "Dat wat erin zit moet goed werken" boven functionaliteit.
+Met v11.2.1 zijn ALLE 6 sporten × alle hoofdmarkten afgedicht tegen:
+- Signal-adj die model-prob > 4pp van markt drijft
+- Eenzame bookie extreme spread/handicap lijnen zonder paired devig
+- Poisson-only probs zonder market-anchor
+- Dubbele signal-push uit combi-pad
+
+Volgende scan: **verwacht minder picks dan voorheen**. Dat is correct. Elke pick die overleeft heeft nu 4 onafhankelijke quality-checks doorlopen. "Liever 0 picks dan 1 valse edge" doctrine.
+
 ## [11.2.0] - 2026-04-18
 
 **Phase 5.1 · server.js route-extraction start** (first cluster: notifications + push).

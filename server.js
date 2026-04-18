@@ -3019,7 +3019,7 @@ async function runBasketball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -3028,15 +3028,20 @@ async function runBasketball(emit) {
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
+              // v11.2.1: safety-gate ook op pure devig O/U (model=market by construction
+              // maar guard beschermt tegen outlier-pool skew bij ≥2 bookies). fxMeta added.
+              const ouGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const fxMetaOvBb = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
+              const fxMetaUnBb = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
-              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60)
+              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60 && ouGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏀 Over ${line} pts`, bestOv.price,
                   `O/U: ${(overP*100).toFixed(1)}% over | ${bestOv.bookie}: ${bestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals);
-              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60)
+                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals, null, fxMetaOvBb);
+              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60 && ouGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 Under ${line} pts`, bestUn.price,
                   `O/U: ${((1-overP)*100).toFixed(1)}% under | ${bestUn.bookie}: ${bestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals);
+                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals, null, fxMetaUnBb);
             }
           }
         }
@@ -3091,7 +3096,7 @@ async function runBasketball(emit) {
             const h1Line = parseFloat(h1MainLine);
             const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
             const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            if (h1Ov.length && h1Un.length) {
+            if (h1Ov.length >= 2 && h1Un.length >= 2) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
               const h1TotIP = h1AvgOvIP + h1AvgUnIP;
@@ -3100,15 +3105,19 @@ async function runBasketball(emit) {
               const h1BestUn = bestFromArr(h1Un);
               const h1OverEdge = h1OverP * h1BestOv.price - 1;
               const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
+              // v11.2.1: safety-gate + fxMeta
+              const h1Gate = passesDivergence2Way(h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
+              const fxMetaH1Ov = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'over', line: h1Line };
+              const fxMetaH1Un = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'under', line: h1Line };
 
-              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60)
+              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60 && h1Gate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏀 1H Over ${h1Line} pts`, h1BestOv.price,
                   `1st Half O/U: ${(h1OverP*100).toFixed(1)}% over | ${h1BestOv.bookie}: ${h1BestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals);
-              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60)
+                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals, null, fxMetaH1Ov);
+              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60 && h1Gate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 1H Under ${h1Line} pts`, h1BestUn.price,
                   `1st Half O/U: ${((1-h1OverP)*100).toFixed(1)}% under | ${h1BestUn.bookie}: ${h1BestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals);
+                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals, null, fxMetaH1Un);
             }
           }
         }
@@ -3724,52 +3733,58 @@ async function runHockey(emit) {
           const linesHome = [...new Set(homeTT.map(o => o.point))];
           const linesAway = [...new Set(awayTT.map(o => o.point))];
 
+          // v11.2.1 KRITIEKE FIX: Poisson-only TT zonder market-anchor gaf fake
+          // edges. Nu: vereist paired over/under op zelfde line (devig mogelijk),
+          // en Poisson-prob moet binnen 4pp van devigged market-consensus liggen.
+          // Zonder markt-anchor: skip (geen pick beter dan valse edge).
           for (const line of linesHome) {
             const ov = homeTT.filter(o => o.side === 'over' && o.point === line);
             const un = homeTT.filter(o => o.side === 'under' && o.point === line);
+            if (!ov.length || !un.length) continue;
+            const bestOv = bestFromArr(ov);
+            const bestUn = bestFromArr(un);
+            if (bestOv.price <= 0 || bestUn.price <= 0) continue;
             const pOver = poissonOver(lambdaHome, line);
-            if (ov.length) {
-              const best = bestFromArr(ov);
-              const edge = best.price > 0 ? pOver * best.price - 1 : -1;
-              if (edge >= MIN_EDGE && best.price >= 1.60 && best.price <= 3.5) {
-                mkP(`${hm} vs ${aw}`, league.name, `📈 ${hm} TT Over ${line}`, best.price,
-                  `Team Total Home: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaHome.toFixed(2)}) | ${best.bookie}: ${best.price} | ${ko}`,
-                  Math.round(pOver*100), edge * 0.22, kickoffTime, best.bookie, [...matchSignals, 'team_total_home']);
-              }
+            const pUnder = 1 - pOver;
+            const ttGate = passesDivergence2Way(pOver, pUnder, bestOv.price, bestUn.price);
+            const ovEdge = pOver * bestOv.price - 1;
+            const unEdge = pUnder * bestUn.price - 1;
+            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total', selectionKey: `home_over_${line}`, line };
+            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total', selectionKey: `home_under_${line}`, line };
+            if (ovEdge >= MIN_EDGE && bestOv.price >= 1.60 && bestOv.price <= 3.5 && ttGate.passA) {
+              mkP(`${hm} vs ${aw}`, league.name, `📈 ${hm} TT Over ${line}`, bestOv.price,
+                `Team Total Home: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaHome.toFixed(2)}) | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
+                Math.round(pOver*100), ovEdge * 0.22, kickoffTime, bestOv.bookie, [...matchSignals, 'team_total_home'], null, fxMetaTtH);
             }
-            if (un.length) {
-              const best = bestFromArr(un);
-              const pUnder = 1 - pOver;
-              const edge = best.price > 0 ? pUnder * best.price - 1 : -1;
-              if (edge >= MIN_EDGE && best.price >= 1.60 && best.price <= 3.5) {
-                mkP(`${hm} vs ${aw}`, league.name, `📉 ${hm} TT Under ${line}`, best.price,
-                  `Team Total Home: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaHome.toFixed(2)}) | ${best.bookie}: ${best.price} | ${ko}`,
-                  Math.round(pUnder*100), edge * 0.22, kickoffTime, best.bookie, [...matchSignals, 'team_total_home']);
-              }
+            if (unEdge >= MIN_EDGE && bestUn.price >= 1.60 && bestUn.price <= 3.5 && ttGate.passB) {
+              mkP(`${hm} vs ${aw}`, league.name, `📉 ${hm} TT Under ${line}`, bestUn.price,
+                `Team Total Home: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaHome.toFixed(2)}) | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
+                Math.round(pUnder*100), unEdge * 0.22, kickoffTime, bestUn.bookie, [...matchSignals, 'team_total_home'], null, fxMetaTtU);
             }
           }
           for (const line of linesAway) {
             const ov = awayTT.filter(o => o.side === 'over' && o.point === line);
             const un = awayTT.filter(o => o.side === 'under' && o.point === line);
+            if (!ov.length || !un.length) continue;
+            const bestOv = bestFromArr(ov);
+            const bestUn = bestFromArr(un);
+            if (bestOv.price <= 0 || bestUn.price <= 0) continue;
             const pOver = poissonOver(lambdaAway, line);
-            if (ov.length) {
-              const best = bestFromArr(ov);
-              const edge = best.price > 0 ? pOver * best.price - 1 : -1;
-              if (edge >= MIN_EDGE && best.price >= 1.60 && best.price <= 3.5) {
-                mkP(`${hm} vs ${aw}`, league.name, `📈 ${aw} TT Over ${line}`, best.price,
-                  `Team Total Away: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaAway.toFixed(2)}) | ${best.bookie}: ${best.price} | ${ko}`,
-                  Math.round(pOver*100), edge * 0.22, kickoffTime, best.bookie, [...matchSignals, 'team_total_away']);
-              }
+            const pUnder = 1 - pOver;
+            const ttGate = passesDivergence2Way(pOver, pUnder, bestOv.price, bestUn.price);
+            const ovEdge = pOver * bestOv.price - 1;
+            const unEdge = pUnder * bestUn.price - 1;
+            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total', selectionKey: `away_over_${line}`, line };
+            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total', selectionKey: `away_under_${line}`, line };
+            if (ovEdge >= MIN_EDGE && bestOv.price >= 1.60 && bestOv.price <= 3.5 && ttGate.passA) {
+              mkP(`${hm} vs ${aw}`, league.name, `📈 ${aw} TT Over ${line}`, bestOv.price,
+                `Team Total Away: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaAway.toFixed(2)}) | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
+                Math.round(pOver*100), ovEdge * 0.22, kickoffTime, bestOv.bookie, [...matchSignals, 'team_total_away'], null, fxMetaTtH);
             }
-            if (un.length) {
-              const best = bestFromArr(un);
-              const pUnder = 1 - pOver;
-              const edge = best.price > 0 ? pUnder * best.price - 1 : -1;
-              if (edge >= MIN_EDGE && best.price >= 1.60 && best.price <= 3.5) {
-                mkP(`${hm} vs ${aw}`, league.name, `📉 ${aw} TT Under ${line}`, best.price,
-                  `Team Total Away: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaAway.toFixed(2)}) | ${best.bookie}: ${best.price} | ${ko}`,
-                  Math.round(pUnder*100), edge * 0.22, kickoffTime, best.bookie, [...matchSignals, 'team_total_away']);
-              }
+            if (unEdge >= MIN_EDGE && bestUn.price >= 1.60 && bestUn.price <= 3.5 && ttGate.passB) {
+              mkP(`${hm} vs ${aw}`, league.name, `📉 ${aw} TT Under ${line}`, bestUn.price,
+                `Team Total Away: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaAway.toFixed(2)}) | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
+                Math.round(pUnder*100), unEdge * 0.22, kickoffTime, bestUn.bookie, [...matchSignals, 'team_total_away'], null, fxMetaTtU);
             }
           }
         }
@@ -3787,7 +3802,7 @@ async function runHockey(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -3796,15 +3811,19 @@ async function runHockey(emit) {
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
+              // v11.2.1: safety-gate + fxMeta
+              const hkOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const fxMetaHkOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
+              const fxMetaHkUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
-              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60)
+              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60 && hkOuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏒 Over ${line} goals`, bestOv.price,
                   `O/U: ${(overP*100).toFixed(1)}% over | ${bestOv.bookie}: ${bestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals);
-              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60)
+                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals, null, fxMetaHkOv);
+              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60 && hkOuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 Under ${line} goals`, bestUn.price,
                   `O/U: ${((1-overP)*100).toFixed(1)}% under | ${bestUn.bookie}: ${bestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals);
+                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals, null, fxMetaHkUn);
             }
           }
         }
@@ -3867,7 +3886,7 @@ async function runHockey(emit) {
             const p1Line = parseFloat(p1MainLine);
             const p1Ov = p1Over.filter(o => Math.abs(o.point - p1Line) < 0.6);
             const p1Un = p1Under.filter(o => Math.abs(o.point - p1Line) < 0.6);
-            if (p1Ov.length && p1Un.length) {
+            if (p1Ov.length >= 2 && p1Un.length >= 2) {
               const p1AvgOvIP = p1Ov.reduce((s,o)=>s+1/o.price,0) / p1Ov.length;
               const p1AvgUnIP = p1Un.reduce((s,o)=>s+1/o.price,0) / p1Un.length;
               const p1TotIP = p1AvgOvIP + p1AvgUnIP;
@@ -3876,15 +3895,19 @@ async function runHockey(emit) {
               const p1BestUn = bestFromArr(p1Un);
               const p1OverEdge = p1OverP * p1BestOv.price - 1;
               const p1UnderEdge = (1-p1OverP) * p1BestUn.price - 1;
+              // v11.2.1: safety-gate + fxMeta
+              const p1Gate = passesDivergence2Way(p1OverP, 1-p1OverP, p1BestOv.price, p1BestUn.price);
+              const fxMetaP1Ov = { fixtureId: gameId, marketType: 'period_total', selectionKey: 'over', line: p1Line };
+              const fxMetaP1Un = { fixtureId: gameId, marketType: 'period_total', selectionKey: 'under', line: p1Line };
 
-              if (p1OverEdge >= MIN_EDGE && p1BestOv.price >= 1.60)
+              if (p1OverEdge >= MIN_EDGE && p1BestOv.price >= 1.60 && p1Gate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏒 P1 Over ${p1Line} goals`, p1BestOv.price,
                   `1st Period O/U: ${(p1OverP*100).toFixed(1)}% over | ${p1BestOv.bookie}: ${p1BestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(p1OverP*100), p1OverEdge * 0.20, kickoffTime, p1BestOv.bookie, matchSignals);
-              if (p1UnderEdge >= MIN_EDGE && p1BestUn.price >= 1.60)
+                  Math.round(p1OverP*100), p1OverEdge * 0.20, kickoffTime, p1BestOv.bookie, matchSignals, null, fxMetaP1Ov);
+              if (p1UnderEdge >= MIN_EDGE && p1BestUn.price >= 1.60 && p1Gate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 P1 Under ${p1Line} goals`, p1BestUn.price,
                   `1st Period O/U: ${((1-p1OverP)*100).toFixed(1)}% under | ${p1BestUn.bookie}: ${p1BestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-p1OverP)*100), p1UnderEdge * 0.18, kickoffTime, p1BestUn.bookie, matchSignals);
+                  Math.round((1-p1OverP)*100), p1UnderEdge * 0.18, kickoffTime, p1BestUn.bookie, matchSignals, null, fxMetaP1Un);
             }
           }
         }
@@ -3903,23 +3926,23 @@ async function runHockey(emit) {
           // Look for odds that match our BTTS estimate
           const oddOdds = parsed.oddEven.filter(o => o.side === 'odd');
           const evenOdds = parsed.oddEven.filter(o => o.side === 'even');
-          if (oddOdds.length && evenOdds.length) {
+          // v11.2.1: vereist ≥3 bookies per zijde zodat pure consensus-devig stabiel is.
+          if (oddOdds.length >= 3 && evenOdds.length >= 3) {
             const bestOdd = bestFromArr(oddOdds);
             const bestEven = bestFromArr(evenOdds);
-            // Odd total is roughly correlated with both teams scoring
-            // Use consensus for fair probability
             const avgOddIP = oddOdds.reduce((s,o)=>s+1/o.price,0) / oddOdds.length;
             const avgEvenIP = evenOdds.reduce((s,o)=>s+1/o.price,0) / evenOdds.length;
             const oeTotal = avgOddIP + avgEvenIP;
             const oddP = oeTotal > 0 ? avgOddIP / oeTotal : 0.5;
             const oddEdge = oddP * bestOdd.price - 1;
             const evenEdge = (1-oddP) * bestEven.price - 1;
+            const oeGate = passesDivergence2Way(oddP, 1-oddP, bestOdd.price, bestEven.price);
 
-            if (oddEdge >= MIN_EDGE && bestOdd.price >= 1.60)
+            if (oddEdge >= MIN_EDGE && bestOdd.price >= 1.60 && oeGate.passA)
               mkP(`${hm} vs ${aw}`, league.name, `🎲 Odd Total`, bestOdd.price,
                 `Odd/Even: ${(oddP*100).toFixed(1)}% odd | ${bestOdd.bookie}: ${bestOdd.price}${sharedNotes} | ${ko}`,
                 Math.round(oddP*100), oddEdge * 0.16, kickoffTime, bestOdd.bookie, matchSignals);
-            if (evenEdge >= MIN_EDGE && bestEven.price >= 1.60)
+            if (evenEdge >= MIN_EDGE && bestEven.price >= 1.60 && oeGate.passB)
               mkP(`${hm} vs ${aw}`, league.name, `🎲 Even Total`, bestEven.price,
                 `Odd/Even: ${((1-oddP)*100).toFixed(1)}% even | ${bestEven.bookie}: ${bestEven.price}${sharedNotes} | ${ko}`,
                 Math.round((1-oddP)*100), evenEdge * 0.16, kickoffTime, bestEven.bookie, matchSignals);
@@ -4344,7 +4367,7 @@ async function runBaseball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -4353,15 +4376,19 @@ async function runBaseball(emit) {
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
+              // v11.2.1: safety-gate vangt mlbWeatherAdj die overP ver van markt kan trekken + fxMeta
+              const mlbOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const fxMetaMlbOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
+              const fxMetaMlbUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
-              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60)
+              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60 && mlbOuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `⚾ Over ${line} runs`, bestOv.price,
                   `O/U: ${(overP*100).toFixed(1)}% over | ${bestOv.bookie}: ${bestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals);
-              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60)
+                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals, null, fxMetaMlbOv);
+              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60 && mlbOuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 Under ${line} runs`, bestUn.price,
                   `O/U: ${((1-overP)*100).toFixed(1)}% under | ${bestUn.bookie}: ${bestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals);
+                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals, null, fxMetaMlbUn);
             }
           }
         }
@@ -4414,9 +4441,12 @@ async function runBaseball(emit) {
         // ── NRFI (No Run First Inning) ──
         // Research: NRFI is profitable when both pitchers have low FIP / strong 1st innings
         // We use team form + run differential as proxy for pitching quality
+        // v11.2.1: NRFI is pitcher-dominated; zonder valid pitcher-data is de
+        // team-runs-per-game proxy te zwak om op in te zetten. Vereis ook ≥3
+        // paired bookies zodat consensus-devig niet op thin pool rust.
         const nrfiOdds = parsed.nrfi.filter(o => o.side === 'nrfi');
         const yrfiOdds = parsed.nrfi.filter(o => o.side === 'yrfi');
-        if (nrfiOdds.length && yrfiOdds.length) {
+        if (nrfiOdds.length >= 3 && yrfiOdds.length >= 3 && pitcherSig.valid) {
           const avgNrfiIP = nrfiOdds.reduce((s,o)=>s+1/o.price,0) / nrfiOdds.length;
           const avgYrfiIP = yrfiOdds.reduce((s,o)=>s+1/o.price,0) / yrfiOdds.length;
           const nrfiTotIP = avgNrfiIP + avgYrfiIP;
@@ -4468,7 +4498,10 @@ async function runBaseball(emit) {
 
         if (pitcherSig.valid && f5ML.length) {
           // F5 probability: Gebruik fpHome/fpAway als baseline + pitcher × 3
-          const f5PitcherAdj = Math.max(-0.12, Math.min(0.12, pitcherSig.adj * 3 * starterReliability.factor));
+          // v11.2.1: cap lowered van ±0.12 → ±0.06 zodat signal-push niet ruim
+          // buiten de passesDivergence2Way 4pp threshold kan drijven. Gaf voorheen
+          // 8pp unguarded range. Pitcher x3 blijft gewicht-dominerend binnen cap.
+          const f5PitcherAdj = Math.max(-0.06, Math.min(0.06, pitcherSig.adj * 3 * starterReliability.factor));
           const f5Home = Math.min(0.85, Math.max(0.15, fpHome + f5PitcherAdj + ha * 0.7));
           const f5Away = Math.min(0.85, Math.max(0.15, fpAway - f5PitcherAdj * 0.7 - ha * 0.35));
 
@@ -4508,7 +4541,7 @@ async function runBaseball(emit) {
             const line = parseFloat(mainLine);
             const ov = f5Totals.filter(o => o.side === 'over' && Math.abs(o.point - line) < 0.6);
             const un = f5Totals.filter(o => o.side === 'under' && Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP = avgOvIP + avgUnIP;
@@ -4520,12 +4553,14 @@ async function runBaseball(emit) {
               const bestUn = bestFromArr(un);
               const eOv = bestOv.price > 0 ? adjOverP * bestOv.price - 1 : -1;
               const eUn = bestUn.price > 0 ? (1 - adjOverP) * bestUn.price - 1 : -1;
+              // v11.2.1: pitcherUnderBias kan adjOverP trekken; gate tegen markt-consensus
+              const f5OuGate = passesDivergence2Way(adjOverP, 1-adjOverP, bestOv.price, bestUn.price);
 
-              if (eOv >= MIN_EDGE && bestOv.price >= 1.60)
+              if (eOv >= MIN_EDGE && bestOv.price >= 1.60 && f5OuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Over ${line}`, bestOv.price,
                   `F5 Total: ${(adjOverP*100).toFixed(1)}% over ${line} | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
                   Math.round(adjOverP*100), eOv * 0.20, kickoffTime, bestOv.bookie, [...matchSignals, 'f5_total']);
-              if (eUn >= MIN_EDGE && bestUn.price >= 1.60)
+              if (eUn >= MIN_EDGE && bestUn.price >= 1.60 && f5OuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Under ${line}`, bestUn.price,
                   `F5 Total: ${((1-adjOverP)*100).toFixed(1)}% under ${line} | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
                   Math.round((1-adjOverP)*100), eUn * 0.20, kickoffTime, bestUn.bookie, [...matchSignals, 'f5_total']);
@@ -4888,7 +4923,7 @@ async function runFootballUS(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -4898,40 +4933,53 @@ async function runFootballUS(emit) {
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
+              // v11.2.1: gate vangt weather-adj die overP ver van markt drijft + fxMeta
+              const nflOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const fxMetaNflOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
+              const fxMetaNflUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
-              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60)
+              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60 && nflOuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏈 Over ${line} pts`, bestOv.price,
                   `O/U: ${(overP*100).toFixed(1)}% over | ${bestOv.bookie}: ${bestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals);
-              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60)
+                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals, null, fxMetaNflOv);
+              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60 && nflOuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 Under ${line} pts`, bestUn.price,
                   `O/U: ${((1-overP)*100).toFixed(1)}% under | ${bestUn.bookie}: ${bestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals);
+                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals, null, fxMetaNflUn);
             }
           }
         }
 
-        // Spread (NFL) — per-point devigged consensus voor cover-prob.
+        // Spread (NFL, variabele lijnen) — v11.2.1 hardened: hasDevig + bookie-count
+        // ≥ 3 + modelMarketSanityCheck + fxMeta. Was UNCHECKED in v11.1.1 (alleen
+        // 1H kreeg fix). Zelfde fake-edge risico op extreme single-bookie lijnen.
         {
           const homeSpr = parsed.spreads.filter(o => o.side === 'home');
           const awaySpr = parsed.spreads.filter(o => o.side === 'away');
-          // NFL spread-cover ≈ 0.50 × ML wanneer geen paired consensus
-          const { homeFn, awayFn } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
+          const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
           const bH = bestSpreadPick(homeSpr, homeFn, MIN_EDGE + 0.01);
-          if (bH) {
-            const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
+          if (bH && hasDevig(bH.point) && bookieCountAt(bH.point) >= 3) {
             const fp = homeFn(bH.point);
-            mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
-              `Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
-              Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals);
+            const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
+            if (sanity.agree) {
+              const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `home_${bH.point}`, line: bH.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
+                `Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
+                Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
+            }
           }
           const bA = bestSpreadPick(awaySpr, awayFn, MIN_EDGE + 0.01);
-          if (bA) {
-            const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
+          if (bA && hasDevig(bA.point) && bookieCountAt(bA.point) >= 3) {
             const fp = awayFn(bA.point);
-            mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
-              `Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
-              Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals);
+            const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
+            if (sanity.agree) {
+              const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `away_${bA.point}`, line: bA.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
+                `Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
+                Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
+            }
           }
         }
 
@@ -4984,7 +5032,7 @@ async function runFootballUS(emit) {
             const h1Line = parseFloat(h1MainLine);
             const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
             const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            if (h1Ov.length && h1Un.length) {
+            if (h1Ov.length >= 2 && h1Un.length >= 2) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
               const h1TotIP = h1AvgOvIP + h1AvgUnIP;
@@ -4993,15 +5041,19 @@ async function runFootballUS(emit) {
               const h1BestUn = bestFromArr(h1Un);
               const h1OverEdge = h1OverP * h1BestOv.price - 1;
               const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
+              // v11.2.1: safety-gate + fxMeta
+              const h1NflGate = passesDivergence2Way(h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
+              const fxMetaNflH1Ov = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'over', line: h1Line };
+              const fxMetaNflH1Un = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'under', line: h1Line };
 
-              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60)
+              if (h1OverEdge >= MIN_EDGE && h1BestOv.price >= 1.60 && h1NflGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏈 1H Over ${h1Line} pts`, h1BestOv.price,
                   `1st Half O/U: ${(h1OverP*100).toFixed(1)}% over | ${h1BestOv.bookie}: ${h1BestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals);
-              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60)
+                  Math.round(h1OverP*100), h1OverEdge * 0.20, kickoffTime, h1BestOv.bookie, matchSignals, null, fxMetaNflH1Ov);
+              if (h1UnderEdge >= MIN_EDGE && h1BestUn.price >= 1.60 && h1NflGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 1H Under ${h1Line} pts`, h1BestUn.price,
                   `1st Half O/U: ${((1-h1OverP)*100).toFixed(1)}% under | ${h1BestUn.bookie}: ${h1BestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals);
+                  Math.round((1-h1OverP)*100), h1UnderEdge * 0.18, kickoffTime, h1BestUn.bookie, matchSignals, null, fxMetaNflH1Un);
             }
           }
         }
@@ -5388,7 +5440,7 @@ async function runHandball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length && un.length) {
+            if (ov.length >= 2 && un.length >= 2) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -5397,39 +5449,51 @@ async function runHandball(emit) {
               const bestUn = bestFromArr(un);
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
+              // v11.2.1: safety-gate + fxMeta
+              const hbOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const fxMetaHbOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
+              const fxMetaHbUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
-              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60)
+              if (overEdge >= MIN_EDGE && bestOv.price >= 1.60 && hbOuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🤾 Over ${line} goals`, bestOv.price,
                   `O/U: ${(overP*100).toFixed(1)}% over | ${bestOv.bookie}: ${bestOv.price}${sharedNotes} | ${ko}`,
-                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals);
-              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60)
+                  Math.round(overP*100), overEdge * 0.24, kickoffTime, bestOv.bookie, matchSignals, null, fxMetaHbOv);
+              if (underEdge >= MIN_EDGE && bestUn.price >= 1.60 && hbOuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🔒 Under ${line} goals`, bestUn.price,
                   `O/U: ${((1-overP)*100).toFixed(1)}% under | ${bestUn.bookie}: ${bestUn.price}${sharedNotes} | ${ko}`,
-                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals);
+                  Math.round((1-overP)*100), underEdge * 0.22, kickoffTime, bestUn.bookie, matchSignals, null, fxMetaHbUn);
             }
           }
         }
 
-        // Handicap (handball) — per-point devigged consensus voor cover-prob.
+        // Handicap (handball) — v11.2.1 hardened: hasDevig + ≥3 bookies + sanity + fxMeta.
         {
           const homeSpr = parsed.spreads.filter(o => o.side === 'home');
           const awaySpr = parsed.spreads.filter(o => o.side === 'away');
-          const { homeFn, awayFn } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
+          const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
           const bH = bestSpreadPick(homeSpr, homeFn, MIN_EDGE + 0.01);
-          if (bH) {
-            const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
+          if (bH && hasDevig(bH.point) && bookieCountAt(bH.point) >= 3) {
             const fp = homeFn(bH.point);
-            mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
-              `Handicap | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
-              Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals);
+            const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
+            if (sanity.agree) {
+              const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
+              const fxMeta = { fixtureId: gameId, marketType: 'handicap', selectionKey: `home_${bH.point}`, line: bH.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
+                `Handicap | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
+                Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
+            }
           }
           const bA = bestSpreadPick(awaySpr, awayFn, MIN_EDGE + 0.01);
-          if (bA) {
-            const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
+          if (bA && hasDevig(bA.point) && bookieCountAt(bA.point) >= 3) {
             const fp = awayFn(bA.point);
-            mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
-              `Handicap | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
-              Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals);
+            const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
+            if (sanity.agree) {
+              const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
+              const fxMeta = { fixtureId: gameId, marketType: 'handicap', selectionKey: `away_${bA.point}`, line: bA.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
+                `Handicap | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
+                Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
+            }
           }
         }
       }
@@ -6117,11 +6181,15 @@ async function runPrematch(emit) {
           // v10.12.7 Phase A.1b: totals market is 2-way (over/under), line=2.5
           const fxMetaOver  = { fixtureId: fid, marketType: 'total', selectionKey: 'over',  line: 2.5 };
           const fxMetaUnder = { fixtureId: fid, marketType: 'total', selectionKey: 'under', line: 2.5 };
-          if (overEdge >= MIN_EDGE)
+          // v11.2.1: safety-gate. overP is signal-adjusted (tsAdj ±5% + weather ±3%
+          // + poisson ±4% + aggPush ±3%). Kan max ~15% divergeren van devigged
+          // consensus. Gate zorgt dat we niet op signal-gepushte fake edge inzetten.
+          const fbOuGate = passesDivergence2Way(overP, 1-overP, over.best.price, under.best.price);
+          if (overEdge >= MIN_EDGE && fbOuGate.passA)
             mkP(`${hm} vs ${aw}`, league.name, `⚽ Over 2.5 goals`, over.best.price,
               `O/U consensus: ${(overP*100).toFixed(1)}% over | ${over.best.bookie}: ${over.best.price}${tsNote}${weatherOUNote}${poissonOUNote}${predNote} | ${ko}`,
               Math.round(overP*100), overEdge * 0.24 * (cm.over?.multiplier ?? 1), kickoffTime, over.best.bookie, ouSignals, refereeName, fxMetaOver);
-          if (underEdge >= MIN_EDGE && under.best.price >= 1.60)
+          if (underEdge >= MIN_EDGE && under.best.price >= 1.60 && fbOuGate.passB)
             mkP(`${hm} vs ${aw}`, league.name, `🔒 Under 2.5 goals`, under.best.price,
               `O/U consensus: ${((1-overP)*100).toFixed(1)}% under | ${under.best.bookie}: ${under.best.price}${tsNote}${weatherOUNote}${poissonOUNote} | ${ko}`,
               Math.round((1-overP)*100), underEdge * 0.22 * (cm.under?.multiplier ?? 1), kickoffTime, under.best.bookie, ouSignals, refereeName, fxMetaUnder);
@@ -6370,45 +6438,81 @@ async function runPrematch(emit) {
           const e12 = best12.price > 0 ? p12 * best12.price - 1 : -1;
           const eX2 = bestX2.price > 0 ? pX2 * bestX2.price - 1 : -1;
 
-          if (eHX >= MIN_EDGE && bestHX.price >= 1.15 && bestHX.price <= 2.50)
+          // v11.2.1 sanity-gate + fxMeta. Vergelijk signal-adjusted DC-prob met
+          // devigged 3-way consensus (fp.home+fp.draw etc.). Signal-push >4pp blokkeert.
+          const mfHX = fp && typeof fp.home === 'number' && typeof fp.draw === 'number' ? fp.home + fp.draw : null;
+          const mf12 = fp && typeof fp.home === 'number' && typeof fp.away === 'number' ? fp.home + fp.away : null;
+          const mfX2 = fp && typeof fp.draw === 'number' && typeof fp.away === 'number' ? fp.draw + fp.away : null;
+          const sanDcHX = mfHX != null ? modelMarketSanityCheck(pHX, mfHX) : { agree: true };
+          const sanDc12 = mf12 != null ? modelMarketSanityCheck(p12, mf12) : { agree: true };
+          const sanDcX2 = mfX2 != null ? modelMarketSanityCheck(pX2, mfX2) : { agree: true };
+          const fxMetaDcHX = { fixtureId: fid, marketType: 'double_chance', selectionKey: '1x', line: null };
+          const fxMetaDc12 = { fixtureId: fid, marketType: 'double_chance', selectionKey: '12', line: null };
+          const fxMetaDcX2 = { fixtureId: fid, marketType: 'double_chance', selectionKey: 'x2', line: null };
+
+          if (eHX >= MIN_EDGE && bestHX.price >= 1.15 && bestHX.price <= 2.50 && sanDcHX.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 1X (${hm} of gelijk)`, bestHX.price,
               `Double Chance 1X: ${(pHX*100).toFixed(1)}% | ${bestHX.bookie}: ${bestHX.price} | ${ko}`,
-              Math.round(pHX*100), eHX * 0.16, kickoffTime, bestHX.bookie, matchSignals, refereeName);
-          if (e12 >= MIN_EDGE && best12.price >= 1.15 && best12.price <= 2.50)
+              Math.round(pHX*100), eHX * 0.16, kickoffTime, bestHX.bookie, matchSignals, refereeName, fxMetaDcHX);
+          if (e12 >= MIN_EDGE && best12.price >= 1.15 && best12.price <= 2.50 && sanDc12.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 12 (geen gelijk)`, best12.price,
               `Double Chance 12: ${(p12*100).toFixed(1)}% | ${best12.bookie}: ${best12.price} | ${ko}`,
-              Math.round(p12*100), e12 * 0.16, kickoffTime, best12.bookie, matchSignals, refereeName);
-          if (eX2 >= MIN_EDGE && bestX2.price >= 1.15 && bestX2.price <= 2.50)
+              Math.round(p12*100), e12 * 0.16, kickoffTime, best12.bookie, matchSignals, refereeName, fxMetaDc12);
+          if (eX2 >= MIN_EDGE && bestX2.price >= 1.15 && bestX2.price <= 2.50 && sanDcX2.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 X2 (${aw} of gelijk)`, bestX2.price,
               `Double Chance X2: ${(pX2*100).toFixed(1)}% | ${bestX2.bookie}: ${bestX2.price} | ${ko}`,
-              Math.round(pX2*100), eX2 * 0.16, kickoffTime, bestX2.bookie, matchSignals, refereeName);
+              Math.round(pX2*100), eX2 * 0.16, kickoffTime, bestX2.bookie, matchSignals, refereeName, fxMetaDcX2);
         }
 
         // ── Handicap ──────────────────────────────────────────────────
-        // v10.12.22 fix: filter op preferred bookies voordat we de 3-bookie
-        // slice nemen. Voorheen bevatte bookies.slice(0,3) vaak Pinnacle/
-        // William Hill → pick.bookie lekte naar sharp-ref.
-        const _prefSetAh = getPreferredBookies();
-        const _prefAhBookies = _prefSetAh && _prefSetAh.length
-          ? bookies.filter(bk => {
-              const lc = String(bk.title || '').toLowerCase();
-              return _prefSetAh.some(p => lc.includes(p));
-            })
-          : bookies;
-        for (const bk of _prefAhBookies.slice(0, 3)) {
-          const sMkt = bk.markets?.find(m => m.key === 'spreads');
-          if (!sMkt) continue;
-          for (const o of (sMkt.outcomes || [])) {
-            if (!o.price || o.price < 1.60 || o.price > 3.8) continue;
-            const baseP = o.name === hm ? fp.home : fp.away;
-            const sEdge = baseP * o.price - 1;
-            if (sEdge >= MIN_EDGE + 0.01) {
-              const pt = o.point !== undefined ? (o.point > 0 ? `+${o.point}` : `${o.point}`) : '';
-              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${o.name} ${pt}`, o.price,
-                `Handicap | ${bk.title}: ${o.price} | ${ko}`, Math.round(baseP*100), sEdge * 0.20, kickoffTime, bk.title, matchSignals, refereeName);
+        // v11.2.1 KRITIEKE BUG FIX: voorheen gebruikte dit fp.home/fp.away (full-game
+        // ML 3-way prob) DIRECT als cover-prob voor handicap. Chelsea -1.5 @ 2.20
+        // met fp.home=52% gaf edge 14% — maar -1.5 vereist winst met 2+ goals, NIET
+        // alleen winnen. Systematisch fake edges op extreme handicap-lijnen die
+        // alleen 1 bookie aanbiedt. Zelfde bug-klasse als NBA 1H spread (v11.1.1).
+        //
+        // Nu: per-point devig via buildSpreadFairProbFns + hasDevig + ≥3 bookies +
+        // modelMarketSanityCheck + fxMeta. Bij onvoldoende paired bookies → skip.
+        {
+          const ahHomeSpr = [];
+          const ahAwaySpr = [];
+          for (const bk of bookies) {
+            const sMkt = bk.markets?.find(m => m.key === 'spreads');
+            if (!sMkt) continue;
+            for (const o of (sMkt.outcomes || [])) {
+              if (!o.price || o.price < 1.01 || o.point === undefined) continue;
+              const side = o.name === hm ? 'home' : (o.name === aw ? 'away' : null);
+              if (!side) continue;
+              const row = { side, point: Number(o.point), price: Number(o.price), bookie: bk.title };
+              if (side === 'home') ahHomeSpr.push(row);
+              else ahAwaySpr.push(row);
             }
           }
-          break;
+          const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(ahHomeSpr, ahAwaySpr, fp.home * 0.65, fp.away * 0.65);
+          const bAhH = bestSpreadPick(ahHomeSpr, homeFn, MIN_EDGE + 0.01);
+          if (bAhH && hasDevig(bAhH.point) && bookieCountAt(bAhH.point) >= 3) {
+            const fpAh = homeFn(bAhH.point);
+            const sanity = modelMarketSanityCheck(fpAh, 1 / bAhH.price);
+            if (sanity.agree && bAhH.price <= 3.8) {
+              const pt = bAhH.point > 0 ? `+${bAhH.point}` : `${bAhH.point}`;
+              const fxMeta = { fixtureId: fid, marketType: 'handicap', selectionKey: `home_${bAhH.point}`, line: bAhH.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bAhH.price,
+                `Handicap | ${bAhH.bookie}: ${bAhH.price} · cover ${(fpAh*100).toFixed(1)}% | ${ko}`,
+                Math.round(fpAh*100), bAhH.edge * 0.20, kickoffTime, bAhH.bookie, matchSignals, refereeName, fxMeta);
+            }
+          }
+          const bAhA = bestSpreadPick(ahAwaySpr, awayFn, MIN_EDGE + 0.01);
+          if (bAhA && hasDevig(bAhA.point) && bookieCountAt(bAhA.point) >= 3) {
+            const fpAh = awayFn(bAhA.point);
+            const sanity = modelMarketSanityCheck(fpAh, 1 / bAhA.price);
+            if (sanity.agree && bAhA.price <= 3.8) {
+              const pt = bAhA.point > 0 ? `+${bAhA.point}` : `${bAhA.point}`;
+              const fxMeta = { fixtureId: fid, marketType: 'handicap', selectionKey: `away_${bAhA.point}`, line: bAhA.point };
+              mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bAhA.price,
+                `Handicap | ${bAhA.bookie}: ${bAhA.price} · cover ${(fpAh*100).toFixed(1)}% | ${ko}`,
+                Math.round(fpAh*100), bAhA.edge * 0.20, kickoffTime, bAhA.bookie, matchSignals, refereeName, fxMeta);
+            }
+          }
         }
       }
       await sleep(200);
