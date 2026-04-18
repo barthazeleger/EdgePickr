@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.13] - 2026-04-18
+
+**Phase 5.4u · admin backfill/rebuild cluster**
+
+### Added
+
+- **[claude] `lib/routes/admin-backfill.js`** — 2 admin long-running utilities extracted:
+  - `POST /api/admin/rebuild-calib` — rebuild c.markets/leagues vanaf 0 over admin settled bets, preserve oude multiplier als prior (of reset via `resetMultipliers: true`), cap op 10k bets (DoS-guard), module-scoped mutex voorkomt race met scans.
+  - `POST /api/admin/backfill-signals` — retroactief signals vullen voor bets zonder, via fixture_id (+ findGameId fallback) join op pick_candidates met zelfde bookie + odds binnen 3% (of 5% fallback), max 500/call, rate-limit 100ms/bet, module-scoped mutex.
+- Deps inject: supabase, requireAdmin, loadCalib, saveCalib, getUsersCache, normalizeSport, detectMarket, computeMarketMultiplier, refreshMarketSampleCounts, findGameId.
+- Mutex state leeft nu in het module-scope (was `let _calibRebuildInProgress / _backfillSignalsInProgress` op module-level in server.js) — functionally identiek, schoner geisoleerd.
+
+### Changed
+
+- server.js netto **-164 regels** (9909 → 9745).
+- Totaal shrinkage sinds v11.0.0 baseline: **-2788 regels** via 23 extracted route modules.
+- Dead comment-header `/api/admin/signal-performance` opgeruimd (was al verhuisd naar admin-signals.js in v11.3.4).
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde mutex-semantics, zelfde query caps, zelfde 409-response bij concurrent call.
+
 ## [11.3.12] - 2026-04-18
 
 **Phase 5.4t · live scoreboard cluster**

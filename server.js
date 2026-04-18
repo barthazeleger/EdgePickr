@@ -7947,190 +7947,23 @@ function computeMarketMultiplier(stats, currentMultiplier = 1.0) {
   return +Math.max(0.70, Math.min(1.20, 0.70 + wr * 1.0)).toFixed(3);
 }
 
-// v10.8.0: mutex om gelijktijdige rebuild/recompute te voorkomen.
-// Race scenario: scan leest _calibCache tijdens rebuild schrijft → inconsistent.
-let _calibRebuildInProgress = false;
+// v11.3.13 Phase 5.4u: /api/admin/rebuild-calib + /api/admin/backfill-signals
+// verhuisd naar lib/routes/admin-backfill.js via factory-pattern.
+// Mutex state is module-scoped (was module-level let in server.js).
+const createAdminBackfillRouter = require('./lib/routes/admin-backfill');
+app.use('/api', createAdminBackfillRouter({
+  supabase,
+  requireAdmin,
+  loadCalib,
+  saveCalib,
+  getUsersCache,
+  normalizeSport,
+  detectMarket,
+  computeMarketMultiplier,
+  refreshMarketSampleCounts,
+  findGameId,
+}));
 
-// POST /api/admin/rebuild-calib — rebuild c.markets vanaf 0 o.b.v. alle settled
-// bets. Nodig na v10.7.20 detectMarket split: bestaande historische bets zitten
-// onder `football_other`, maar moeten nu verdeeld zijn over btts/dnb/dc/spread/
-// nrfi/team_total etc. Telt ook hockey/baseball op die eerder stil bleven
-// omdat ze in `_other` verdronken.
-// v10.7.22: preserve oude multiplier als prior (geen reset naar 1.0), rebuild
-// ook `leagues`, cap query op 10k bets (DoS-guard), .limit() om eindeloze
-// iteratie te voorkomen.
-// Body: { dryRun?: boolean, resetMultipliers?: boolean }
-app.post('/api/admin/rebuild-calib', requireAdmin, async (req, res) => {
-  if (_calibRebuildInProgress) return res.status(409).json({ error: 'Rebuild al lopende, probeer over 30s opnieuw' });
-  _calibRebuildInProgress = true;
-  try {
-    const dryRun = req.body?.dryRun === true;
-    const resetMultipliers = req.body?.resetMultipliers === true;
-    const QUERY_CEILING = 10000;
-
-    // Alle admin settled bets (model trainen alleen op admin data).
-    const users = getUsersCache() || [];
-    const adminIds = users.filter(u => u.role === 'admin').map(u => u.id);
-    let q = supabase.from('bets').select('*').in('uitkomst', ['W', 'L']).limit(QUERY_CEILING);
-    if (adminIds.length) q = q.in('user_id', adminIds);
-    const { data: bets, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-
-    const oldC = loadCalib();
-    const oldMarkets = oldC.markets || {};
-
-    // Nieuwe markets-map opbouwen — behoud oude multiplier als prior zodat
-    // eerder opgebouwde tuning niet verloren gaat.
-    const newMarkets = {};
-    const newLeagues = {};
-    let totalSettled = 0, totalWins = 0, totalProfit = 0;
-    for (const b of (bets || [])) {
-      if (!['W','L'].includes(b.uitkomst)) continue;
-      const key = `${normalizeSport(b.sport)}_${detectMarket(b.markt || '')}`;
-      const won = b.uitkomst === 'W';
-      const pnl = parseFloat(b.wl) || 0;
-      if (!newMarkets[key]) {
-        const priorMult = (!resetMultipliers && oldMarkets[key]?.multiplier) || 1.0;
-        newMarkets[key] = { n: 0, w: 0, profit: 0, multiplier: priorMult };
-      }
-      const mk = newMarkets[key];
-      mk.n++; if (won) mk.w++; mk.profit += pnl;
-      totalSettled++; if (won) totalWins++; totalProfit += pnl;
-
-      // Rebuild leagues aggregate
-      const lg = b.league || 'Unknown';
-      if (!newLeagues[lg]) newLeagues[lg] = { n: 0, w: 0, profit: 0 };
-      newLeagues[lg].n++; if (won) newLeagues[lg].w++; newLeagues[lg].profit += pnl;
-    }
-
-    // Multiplier opnieuw afleiden met shared formule + prior.
-    for (const mk of Object.values(newMarkets)) {
-      const prior = mk.multiplier; // prior = oude multiplier (of 1.0 bij reset)
-      mk.multiplier = computeMarketMultiplier(mk, prior);
-    }
-
-    // Per-sport aggregate vanuit de nieuwe markets (voor UI)
-    const perSportMap = {};
-    for (const [k, mk] of Object.entries(newMarkets)) {
-      const sp = k.split('_')[0] || 'football';
-      if (!perSportMap[sp]) perSportMap[sp] = { n: 0, w: 0, profit: 0 };
-      perSportMap[sp].n += mk.n; perSportMap[sp].w += mk.w; perSportMap[sp].profit += mk.profit;
-    }
-
-    const before = Object.fromEntries(Object.entries(oldMarkets).map(([k, v]) => [k, v.n]));
-    const after = Object.fromEntries(Object.entries(newMarkets).map(([k, v]) => [k, v.n]));
-    const diff = {};
-    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-    for (const k of keys) diff[k] = { before: before[k] || 0, after: after[k] || 0 };
-
-    if (!dryRun) {
-      const next = { ...oldC, markets: newMarkets, leagues: newLeagues,
-                     totalSettled, totalWins, totalProfit,
-                     modelLastUpdated: new Date().toISOString() };
-      await saveCalib(next);
-      // Refresh market sample cache zodat scan meteen met nieuwe counts werkt
-      refreshMarketSampleCounts().catch(e => console.error('refreshMarketSampleCounts na rebuild:', e.message));
-    }
-    res.json({ ok: true, dryRun, resetMultipliers, totalSettled, totalWins, totalProfit,
-      perSport: perSportMap, marketDiff: diff, newMarketKeys: Object.keys(newMarkets).sort(),
-      leaguesCount: Object.keys(newLeagues).length,
-      capped: (bets?.length || 0) >= QUERY_CEILING });
-  } catch (e) {
-    console.error('rebuild-calib error:', e);
-    res.status(500).json({ error: (e && e.message) || 'Interne fout' });
-  } finally {
-    _calibRebuildInProgress = false;
-  }
-});
-
-// POST /api/admin/backfill-signals — retroactief signals vullen voor bets
-// die ze missen. Match via fixture_id (of findGameId fallback) naar
-// pick_candidates tabel, neem signals van best-matching candidate.
-// v10.8.8: mutex om concurrent backfill calls te voorkomen
-let _backfillSignalsInProgress = false;
-app.post('/api/admin/backfill-signals', requireAdmin, async (req, res) => {
-  if (_backfillSignalsInProgress) return res.status(409).json({ error: 'Backfill al lopende, probeer over een minuut opnieuw' });
-  _backfillSignalsInProgress = true;
-  try {
-    const dryRun = req.body?.dryRun === true;
-    // v10.8.0: DoS-cap — max 500 per call. User kan in batches draaien.
-    const MAX_CANDIDATES = Math.min(parseInt(req.body?.max || 500), 1000);
-    const { data: bets, error: betsErr } = await supabase.from('bets')
-      .select('*').limit(5000);
-    if (betsErr) return res.status(500).json({ error: betsErr.message });
-
-    // Filter bets zonder signals (of leeg)
-    const candidates = (bets || []).filter(b => {
-      if (b.signals == null) return true;
-      if (typeof b.signals === 'string') return b.signals === '' || b.signals === '[]';
-      if (Array.isArray(b.signals)) return b.signals.length === 0;
-      return false;
-    }).slice(0, MAX_CANDIDATES);
-
-    const results = { scanned: candidates.length, matched: 0, updated: 0, failed: 0, details: [], capped: candidates.length === MAX_CANDIDATES };
-
-    for (const b of candidates) {
-      try {
-        let fxId = b.fixture_id;
-        if (!fxId) {
-          // Probeer findGameId met naamlookup
-          const sport = b.sport || 'football';
-          try {
-            fxId = await findGameId(sport, b.wedstrijd);
-            if (fxId && !dryRun) {
-              await supabase.from('bets').update({ fixture_id: fxId }).eq('bet_id', b.bet_id);
-            }
-          } catch {}
-        }
-        if (!fxId) { results.failed++; results.details.push({ id: b.bet_id, wedstrijd: b.wedstrijd, reason: 'fixture niet gevonden' }); continue; }
-
-        // Zoek pick_candidates met zelfde fixture + approx odds
-        const { data: cands } = await supabase.from('pick_candidates')
-          .select('signals, bookmaker, bookmaker_odds, selection_key')
-          .eq('fixture_id', fxId);
-        if (!cands || !cands.length) { results.failed++; results.details.push({ id: b.bet_id, wedstrijd: b.wedstrijd, reason: 'geen pick_candidates' }); continue; }
-
-        const betOdds = parseFloat(b.odds) || 0;
-        const betBookie = (b.tip || '').toLowerCase();
-        // Score matches: zelfde bookie + odds binnen 3%
-        const match = cands.find(c => {
-          const oddsDiff = Math.abs(parseFloat(c.bookmaker_odds || 0) - betOdds) / Math.max(betOdds, 0.01);
-          return oddsDiff < 0.03 && (c.bookmaker || '').toLowerCase().includes(betBookie);
-        }) || cands.find(c => {
-          const oddsDiff = Math.abs(parseFloat(c.bookmaker_odds || 0) - betOdds) / Math.max(betOdds, 0.01);
-          return oddsDiff < 0.05;
-        });
-
-        if (!match || !Array.isArray(match.signals) || !match.signals.length) {
-          results.failed++;
-          results.details.push({ id: b.bet_id, wedstrijd: b.wedstrijd, reason: 'geen matchende candidate met signals' });
-          continue;
-        }
-        results.matched++;
-        if (!dryRun) {
-          await supabase.from('bets').update({ signals: match.signals }).eq('bet_id', b.bet_id);
-          results.updated++;
-        }
-        results.details.push({ id: b.bet_id, wedstrijd: b.wedstrijd, signalsCount: match.signals.length, action: dryRun ? 'would-update' : 'updated' });
-      } catch (e) {
-        results.failed++;
-        results.details.push({ id: b.bet_id, reason: (e && e.message) || String(e) || 'unknown' });
-      }
-      await new Promise(rs => setTimeout(rs, 100)); // rate-limit
-    }
-
-    res.json({ ok: true, dryRun, ...results });
-  } catch (e) {
-    console.error('backfill-signals error:', e);
-    res.status(500).json({ error: (e && e.message) || 'Interne fout' });
-  } finally {
-    _backfillSignalsInProgress = false;
-  }
-});
-
-// GET /api/admin/signal-performance — per-signal stats voor dashboard (D)
-// Returnt: name, n (bets), avgCLV, posCLV%, currentWeight, status
-// (active/muted/logging/auto_promotable).
 // Notifications · API alerts + calibratie inzichten
 // Inbox routes verhuisd naar lib/routes/notifications.js (v11.2.0). De
 // aggregate alert-feed `/api/notifications` blijft in server.js tot bredere
