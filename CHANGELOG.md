@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.2.5] - 2026-04-18
+
+**Phase 5.4c · server.js extraction · admin-users routes**
+
+### Added
+
+- **[claude] `lib/routes/admin-users.js`** — GET/PUT/DELETE `/api/admin/users[/:id]`. 3 admin-only endpoints: list users, wijzig role/status (met approval-email + notify), verwijder user (self-delete beschermd). Deps: supabase, requireAdmin, loadUsers, saveUser, clearUsersCache, notify, sendEmail.
+- 2 nieuwe tests: missing-deps + route-mount wire-check.
+
+### Changed
+
+- server.js netto **-34 regels** (12245 → 12211).
+- Totaal shrinkage sinds v11.0.0 (12537 baseline): **-326 regels** via 6 extracted route modules (notifications, clv, auth, user, tracker, admin-users).
+
+### Tests
+
+591 passed · 0 failed.
+
 ## [11.2.4] - 2026-04-18
 
 **Phase 5.4 · server.js extraction · User + Tracker routes**

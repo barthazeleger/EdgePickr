@@ -7080,12 +7080,13 @@ app.use('/api', createUserRouter({ loadUsers, saveUser, defaultSettings, resched
 
 
 // ── ADMIN ROUTES ───────────────────────────────────────────────────────────────
-app.get('/api/admin/users', requireAdmin, async (req, res) => {
-  try {
-    const users = await loadUsers(true);
-    res.json(users.map(u => ({ id: u.id, email: u.email, role: u.role, status: u.status, createdAt: u.createdAt })));
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
+// v11.2.5 Phase 5.4c: admin-users routes (list/update/delete) verhuisd naar
+// lib/routes/admin-users.js. De rest van /api/admin/* blijft in server.js
+// tot Phase 5.6 admin-v2 cluster extraction.
+const createAdminUsersRouter = require('./lib/routes/admin-users');
+app.use('/api', createAdminUsersRouter({
+  supabase, requireAdmin, loadUsers, saveUser, clearUsersCache, notify, sendEmail,
+}));
 
 // ── v2 Admin: calibration-monitor read (slice 2, v10.10.16) ────────────────
 // GET /api/admin/v2/calibration-monitor?window=90d&sport=football
@@ -8189,41 +8190,6 @@ app.get('/api/admin/v2/snapshot-counts', requireAdmin, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: (e && e.message) || 'Interne fout' });
   }
-});
-
-app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
-  try {
-    const users = await loadUsers(true);
-    const user  = users.find(u => u.id === req.params.id);
-    if (!user) return res.status(404).json({ error: 'Gebruiker niet gevonden' });
-    const VALID_STATUSES = new Set(['pending', 'approved', 'blocked']);
-    const VALID_ROLES = new Set(['user', 'admin']);
-    if (req.body.status && !VALID_STATUSES.has(req.body.status)) return res.status(400).json({ error: 'Ongeldige status' });
-    if (req.body.role && !VALID_ROLES.has(req.body.role)) return res.status(400).json({ error: 'Ongeldige rol' });
-    if (req.body.status) user.status = req.body.status;
-    if (req.body.role)   user.role   = req.body.role;
-    await saveUser(user);
-    if (req.body.status === 'approved') {
-      notify(`✅ Account goedgekeurd: ${user.email}`).catch(() => {});
-      sendEmail(user.email, 'Je EdgePickr account is goedgekeurd!',
-        '<h2>Hey!</h2><p>Je account is goedgekeurd. Je kunt nu inloggen op <a href="https://edgepickr.com">https://edgepickr.com</a></p>'
-      ).catch(() => {});
-    }
-    res.json({ id: user.id, email: user.email, role: user.role, status: user.status });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
-
-app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
-  try {
-    const users = await loadUsers(true);
-    const user  = users.find(u => u.id === req.params.id);
-    if (!user) return res.status(404).json({ error: 'Gebruiker niet gevonden' });
-    if (user.email === req.user.email)
-      return res.status(400).json({ error: 'Je kunt je eigen account niet verwijderen' });
-    await supabase.from('users').delete().eq('id', req.params.id);
-    clearUsersCache();
-    res.json({ deleted: true });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
 // ── PUSH + INBOX NOTIFICATIONS ─────────────────────────────────────────────

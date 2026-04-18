@@ -51,6 +51,7 @@ const createClvRouter = require('./lib/routes/clv');
 const createAuthRouter = require('./lib/routes/auth');
 const createUserRouter = require('./lib/routes/user');
 const createTrackerRouter = require('./lib/routes/tracker');
+const createAdminUsersRouter = require('./lib/routes/admin-users');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2401,7 +2402,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.2.4');
+  assert.strictEqual(appMeta.APP_VERSION, '11.2.5');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4980,6 +4981,25 @@ test('user router: construct met valid deps + 2 routes', () => {
   });
   const routes = router.stack.filter(l => l.route).map(l => l.route.path);
   assert.ok(routes.includes('/user/settings'));
+});
+
+test('admin-users router: throws bij missing deps', () => {
+  assert.throws(() => createAdminUsersRouter({}), /missing required dep/);
+});
+
+test('admin-users router: construct met valid deps + 3 routes', () => {
+  const router = createAdminUsersRouter({
+    supabase: { from: () => ({ delete: () => ({ eq: async () => {} }) }) },
+    requireAdmin: (req, res, next) => next(),
+    loadUsers: async () => [],
+    saveUser: async () => {},
+    clearUsersCache: () => {},
+    notify: async () => {},
+    sendEmail: async () => true,
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/admin/users'));
+  assert.ok(routes.includes('/admin/users/:id'));
 });
 
 test('tracker router: throws bij missing deps', () => {
