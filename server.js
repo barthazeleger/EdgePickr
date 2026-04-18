@@ -7793,81 +7793,13 @@ app.use('/api', createClvRouter({
 }));
 
 
-// GET /api/debug/odds?sport=hockey&date=YYYY-MM-DD&team=Vegas
-// Dumpt raw api-sports odds response voor één matchen om 3-way detectie te verifiëren
-app.get('/api/debug/odds', requireAdmin, async (req, res) => {
-  try {
-    const sport = normalizeSport(req.query.sport || 'hockey');
-    const windowDays = req.query.wide === '1' ? [-2,-1,0,1] : [-1,0,1];
-    const team = (req.query.team || '').toLowerCase();
-    const cfg = getSportApiConfig(sport);
-    const datesFromParam = req.query.date ? [req.query.date] : windowDays.map(o => {
-      const d = new Date(Date.now() + o * 86400000);
-      return d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-    });
-    let allGames = [];
-    const fetchedPerDate = {};
-    for (const date of datesFromParam) {
-      const games = await afGet(cfg.host, cfg.fixturesPath, { date }).catch(err => { console.error('debug odds fixtures fout', err); return []; });
-      fetchedPerDate[date] = (games || []).length;
-      for (const g of (games || [])) allGames.push(g);
-    }
-    const matches = allGames.filter(g => {
-      const h = (g.teams?.home?.name || '').toLowerCase();
-      const a = (g.teams?.away?.name || '').toLowerCase();
-      return !team || h.includes(team) || a.includes(team);
-    }).slice(0, 5);
-    const out = [];
-    for (const g of matches) {
-      const id = sport === 'football' ? g.fixture?.id : g.id;
-      if (!id) continue;
-      const odds = await afGet(cfg.host, cfg.oddsPath, { [cfg.fixtureParam]: id }).catch(err => { console.error('debug odds fout', err); return []; });
-      const first = Array.isArray(odds) ? odds[0] : odds;
-      const rawBookmakers = first?.bookmakers || [];
-      const bookmakers = rawBookmakers.map(bk => ({
-        bookie: bk?.name || 'unknown',
-        bets: (bk?.bets || []).map(b => {
-          const vals = Array.isArray(b?.values) ? b.values : [];
-          return {
-            id: b?.id, name: b?.name,
-            values: vals.map(v => ({ value: v?.value, odd: v?.odd })),
-            valueCount: vals.length,
-            is3Way: vals.filter(v => ['Home','Draw','Away','1','X','2'].includes(String(v?.value ?? '').trim())).length === 3,
-          };
-        }),
-      }));
-      // v10.7.24: include date/status/league zodat debug direct toont of
-      // het de juiste fixture is (avond vs afgelopen nacht etc.).
-      const gDate = g.fixture?.date || g.date || null;
-      const nlDateTime = gDate ? new Date(gDate).toLocaleString('nl-NL', {
-        weekday:'short', day:'2-digit', month:'short', year:'numeric',
-        hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam'
-      }) : null;
-      out.push({
-        id, home: g.teams?.home?.name, away: g.teams?.away?.name,
-        dateUTC: gDate, dateNL: nlDateTime,
-        status: g.fixture?.status?.short || g.status?.short || null,
-        league: g.league?.name || null,
-        bookmakers,
-      });
-    }
-    res.json({ sport, datesSearched: datesFromParam, fetchedPerDate, matchesFound: matches.length, matches: out });
-  } catch (e) {
-    console.error('debug/odds fout:', e);
-    // v10.12.1 (security): stack trace niet meer in response, alleen in server logs.
-    res.status(500).json({ error: 'Interne fout · check server logs' });
-  }
-});
-
-// Debug: settled bets data (voor bankroll diagnose)
-app.get('/api/debug/wl', requireAdmin, async (req, res) => {
-  try {
-    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
-    const { bets } = await readBets(userId);
-    const settled = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
-    res.json({ settledCount: settled.length, bets: settled, stats: calcStats(bets) });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
+// v11.3.14 Phase 5.4v: /api/debug/odds + /api/debug/wl verhuisd naar
+// lib/routes/debug.js via factory-pattern. Admin-only diagnostics,
+// lift-and-shift zonder gedragswijziging.
+const createDebugRouter = require('./lib/routes/debug');
+app.use('/api', createDebugRouter({
+  requireAdmin, normalizeSport, getSportApiConfig, afGet, readBets, calcStats,
+}));
 
 
 // v11.2.8 Phase 5.4f: /api/picks + /api/scan-history verhuisd naar

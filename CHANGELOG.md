@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.14] - 2026-04-18
+
+**Phase 5.4v · debug diagnostic routes**
+
+### Added
+
+- **[claude] `lib/routes/debug.js`** — 2 admin-only diagnostic endpoints extracted:
+  - `GET /api/debug/odds?sport=X&date=YYYY-MM-DD&team=Y&wide=1` — raw api-sports odds dump (max 5 matches) voor 3-way detectie + bookie coverage verificatie.
+  - `GET /api/debug/wl?all=1` — settled bets data voor bankroll diagnose.
+- Deps inject: requireAdmin, normalizeSport, getSportApiConfig, afGet, readBets, calcStats. Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-71 regels** (9745 → 9674).
+- Totaal shrinkage sinds v11.0.0 baseline: **-2859 regels** via 24 extracted route modules.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde responses, zelfde error-handling (stack niet in response sinds v10.12.1).
+
 ## [11.3.13] - 2026-04-18
 
 **Phase 5.4u · admin backfill/rebuild cluster**
