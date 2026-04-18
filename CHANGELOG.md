@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.22] - 2026-04-18
+
+**Phase 6.4 · learning-loop core**
+
+### Added
+
+- **[claude] `lib/learning-loop.js`** — `updateCalibration` + `revertCalibration` extracted uit server.js (180 regels):
+  - `updateCalibration(bet, userId)` — canonieke writer: muteert totalSettled/Wins/Profit, markets[mKey] met multiplier-herberekening (≥8 bets, floor 0.55, cap 1.30), epBuckets met weight-recalibration (≥100 total, ≥15 per bucket, ±0.10 per step), leagues, lossLog, modelLog. Notify bij multiplier-delta ≥0.04 of milestone 10/25/50/100/200.
+  - `revertCalibration(bet, userId)` — mirror-decrement met `Math.max(0, n-1)` floors voor outcome-flip scenario's. Multiplier zelf herkalibreert bij volgende update.
+- `DEFAULT_EPW` constant ook geexporteerd.
+- Admin-only gating: non-admin bets worden geskipt (voorkomt vervuiling van de learning-loop).
+- Deps: loadCalib, saveCalib, getUsersCache, notify, getUserMoneySettings. Factory met fail-fast dep-validation.
+- Mount na notify-declaratie (line 1354) om TDZ-error op `notify` te vermijden.
+
+### Changed
+
+- server.js netto **-178 regels** (7974 → 7796).
+- Totaal shrinkage sinds v11.0.0 baseline: **-4741 regels** (12537 → 7796, −38%).
+- `DEFAULT_EPW` const weg uit server.js (was dead na extractie).
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde multiplier-formules (0.55/1.30 bounds, 0.70 floor + wr-linear), zelfde epBuckets update (0.85 + ratio·0.15 ramp met ±0.10 cap), zelfde milestone-notify cadence, zelfde revert floor-semantics.
+
 ## [11.3.21] - 2026-04-18
 
 **Phase 6.3 · bets-data layer**
