@@ -2,6 +2,29 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.0.1] - 2026-04-18
+
+**Phase 2 · operator-UX fixes** (items 4 en 5 uit operator-report).
+
+### Fixed
+
+- **[claude] C2.1 Odds-nu button UX · `index.html`** — `refreshCurrentOdds()` rendert nu zichtbare feedback op alle paden (`canRefresh:false`, ontbrekende fixture_id, markt-mapping fail, geen odds). Voorheen werd bij `canRefresh:false` een lege string gezet waardoor de knop "stil" leek terwijl hij gewoon werkte. Operator klacht: "Odds nu knop doet niks."
+
+### Added
+
+- **[claude] C2.2 CLV backfill snapshot-fallback · `lib/clv-backfill.js`** (new module).
+  - `fetchSnapshotClosing(supabase, args)` query't `odds_snapshots` wanneer live `fetchCurrentOdds` faalt. Volgorde: preferred bookie → Pinnacle/Betfair (sharp anchor) → elke bookie (snapshot-any). Elk resultaat heeft `sourceType` voor transparency.
+  - Wired in `/api/clv/backfill`: wanneer live-api geen odds vindt, probeer fallback vóór failed te registreren. Notificatie per backfill toont `via snapshot-preferred/sharp/any` tag.
+- **[claude] C2.2 CLV backfill UI-button · `index.html`** — admin-only `🔄 CLV backfill` naast `⏰ Tijden invullen` in tracker toolbar. Triggert POST `/api/clv/backfill`, toont counts + snapshot-fallback-count inline.
+
+### Why
+
+Operator-report items 4 + 5: "Backfill lege CLVs, best wat die nog leeg zijn recentelijk" (backfill vereiste curl, geen UI) en "Odds nu knop doet niks" (silent-fail UX). Beide waren operator-pijn, geen correctness. Nu beide addressable vanuit de interface.
+
+### Tests
+
+556 passed · 0 failed. 7 nieuwe tests voor `fetchSnapshotClosing` (preferred > sharp > any preference, null edge-cases, odds sanity-check).
+
 ## [11.0.0] - 2026-04-18
 
 **Major version bump** · architectuur-shift "modular-from-start" + drie P0 correctness-bugs uit operator-report weggenomen. Geen breaking API-changes voor externe consumers, wel een doctrine-shift in hoe nieuwe code wordt toegevoegd: alle nieuwe route-handlers, scan-helpers, signal-modules en runtime-helpers landen vanaf nu DIRECT in `lib/routes/`, `lib/scan/`, `lib/signals/`, `lib/runtime/` — nooit meer eerst in server.js. server.js shrinkt monotonisch vanaf deze release.

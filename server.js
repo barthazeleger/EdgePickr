@@ -43,6 +43,7 @@ const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/runtime/live
 const { matchesClvRecomputeTarget } = require('./lib/runtime/operator-actions');
 const { resolveBetOutcome } = require('./lib/runtime/results-checker');
 const { logScanEnd } = require('./lib/runtime/scan-logger');
+const { fetchSnapshotClosing } = require('./lib/clv-backfill');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -8949,25 +8950,42 @@ app.post('/api/clv/backfill', requireAdmin, async (req, res) => {
           await new Promise(rs => setTimeout(rs, 200));
           continue;
         }
-        const closingOdds = await fetchCurrentOdds(sport, fxId, markt, r.tip, { strictBookie: true });
+        let closingOdds = await fetchCurrentOdds(sport, fxId, markt, r.tip, { strictBookie: true });
+        let bookieUsed = r.tip;
+        let sourceType = 'live-api';
+
+        // v11.0.1: als live api-sports geen odds voor de preferred bookie meer
+        // geeft (match afgelopen, bookie uit response, etc.), probeer
+        // odds_snapshots fallback — vaak is er nog een pre-kickoff snapshot
+        // vastgelegd tijdens de 90-min polling-cyclus.
+        if (!closingOdds && loggedOdds) {
+          const snap = await fetchSnapshotClosing(supabase, { fixtureId: fxId, markt, preferredBookie: r.tip });
+          if (snap && Number.isFinite(snap.closingOdds)) {
+            closingOdds = snap.closingOdds;
+            bookieUsed = snap.bookieUsed;
+            sourceType = snap.sourceType;
+          }
+        }
+
         if (!closingOdds || !loggedOdds) {
           failed++;
           details.push({ id, wedstrijd, sport, fxId, bookie: r.tip,
-                         reason: `closing odds niet beschikbaar voor bookie "${r.tip}"` });
+                         reason: `closing odds niet beschikbaar voor bookie "${r.tip}" (ook niet in odds_snapshots)` });
           await new Promise(rs => setTimeout(rs, 200));
           continue;
         }
         const clvPct = +((loggedOdds - closingOdds) / closingOdds * 100).toFixed(2);
         await supabase.from('bets').update({ clv_odds: closingOdds, clv_pct: clvPct }).eq('bet_id', id);
         filled++;
-        details.push({ id, wedstrijd, sport, clvPct });
+        details.push({ id, wedstrijd, sport, clvPct, source: sourceType, bookieUsed });
 
         // Notificatie per succesvolle backfill
         const icon = clvPct > 0 ? '✅' : '❌';
+        const srcTag = sourceType === 'live-api' ? '' : ` · via ${sourceType}`;
         await supabase.from('notifications').insert({
           type: 'clv_backfill',
           title: `CLV ingevuld: ${wedstrijd}`.slice(0, 100),
-          body: `${icon} ${wedstrijd} · ${loggedOdds} → ${closingOdds} · CLV ${clvPct > 0 ? '+' : ''}${clvPct}%`.slice(0, 200),
+          body: `${icon} ${wedstrijd} · ${loggedOdds} → ${closingOdds} · CLV ${clvPct > 0 ? '+' : ''}${clvPct}%${srcTag}`.slice(0, 200),
           read: false,
           user_id: r.user_id || null,
         }).catch(() => {});

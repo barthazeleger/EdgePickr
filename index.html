@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.0.0</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.0.1</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -319,8 +319,9 @@
         <input type="checkbox" id="compare-toggle" onchange="applyPeriodFilter()">
         <span>Vergelijk vorige periode</span>
       </label>
-      <div style="display:flex;justify-content:flex-end">
+      <div style="display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px">
         <button class="btn btn-ghost btn-sm" id="backfill-btn" onclick="backfillTimes()">⏰ Tijden invullen</button>
+        <button class="btn btn-ghost btn-sm admin-only" id="clv-backfill-btn" onclick="backfillClv()" title="Vul lege CLVs bij via huidige odds of odds_snapshots fallback" style="display:none">🔄 CLV backfill</button>
         <span class="form-msg-txt" id="backfill-msg" style="margin-left:10px;line-height:32px"></span>
       </div>
     </div>
@@ -623,7 +624,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.0.0</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.0.1</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -2214,15 +2215,30 @@ async function refreshCurrentOdds(id, btn) {
     const r = await api('/api/bets/' + id + '/current-odds');
     const d = await r.json();
     if (!d || d.error) {
-      if (span) span.textContent = d?.error ? '❌' : '—';
+      if (span) {
+        span.textContent = d?.error ? `❌ ${d.error}` : '—';
+        span.style.color = 'var(--muted)';
+        span.title = d?.error || '';
+      }
       return;
     }
+    // v11.0.1: canRefresh=false moest vroeger een lege string tonen (onzichtbaar
+    // = user klikt knop, ziet niks, denkt dat 'ie stuk is). Nu inline icon +
+    // reden zichtbaar naast de knop.
     if (d.canRefresh === false) {
-      if (span) { span.textContent = ''; span.title = d.note || ''; }
+      if (span) {
+        span.textContent = `ℹ️ ${d.note || 'niet beschikbaar'}`;
+        span.style.color = 'var(--muted)';
+        span.title = d.note || '';
+      }
       return;
     }
     if (!Number.isFinite(d.currentOdds)) {
-      if (span) { span.textContent = '—'; span.title = d.note || ''; }
+      if (span) {
+        span.textContent = `— ${d.note || 'geen odds'}`;
+        span.style.color = 'var(--muted)';
+        span.title = d.note || '';
+      }
       return;
     }
     const col = d.deltaAbs > 0 ? '#34d399' : d.deltaAbs < 0 ? '#f87171' : 'var(--muted)';
@@ -2664,6 +2680,45 @@ async function backfillTimes() {
     if (updated.length) { const bets = await api('/api/bets').then(r => r?.json()); if(bets){ betData = bets; renderStats(bets.stats); refreshBets(bets.bets); } }
   } catch(e) { msg.textContent = t('err_network'); }
   finally { btn.disabled = false; btn.textContent = t('fill_times_btn'); }
+}
+
+// v11.0.1: CLV backfill UI (admin-only). Triggert POST /api/clv/backfill, toont
+// counts (scanned/filled/failed) en een korte samenvatting van waar fallback
+// naar odds_snapshots werd gebruikt.
+async function backfillClv() {
+  const btn = document.getElementById('clv-backfill-btn');
+  const msg = document.getElementById('backfill-msg');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = '⏳ CLV bezig...';
+  if (msg) msg.textContent = '';
+  try {
+    const r = await api('/api/clv/backfill', { method: 'POST' });
+    if (!r) return;
+    const d = await r.json();
+    if (d.error) {
+      if (msg) msg.textContent = `❌ ${d.error}`;
+      return;
+    }
+    const filled = d.filled || 0;
+    const failed = d.failed || 0;
+    const scanned = d.scanned || 0;
+    const snapshotFallbacks = (d.details || []).filter(x => x.source && x.source.startsWith('snapshot')).length;
+    let summary = `✓ ${filled}/${scanned} CLVs ingevuld`;
+    if (failed) summary += `, ${failed} mislukt`;
+    if (snapshotFallbacks) summary += ` · ${snapshotFallbacks} via snapshot-fallback`;
+    if (msg) msg.textContent = summary;
+    if (filled > 0) {
+      const bets = await api('/api/bets').then(rr => rr?.json());
+      if (bets) { betData = bets; renderStats(bets.stats); refreshBets(bets.bets); }
+    }
+  } catch (e) {
+    if (msg) msg.textContent = `❌ ${e.message || 'netwerkfout'}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
 }
 
 function toggleForm() {

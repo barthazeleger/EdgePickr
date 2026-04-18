@@ -43,6 +43,7 @@ const liveBoard = require('./lib/runtime/live-board');
 const operatorActions = require('./lib/runtime/operator-actions');
 const resultsChecker = require('./lib/runtime/results-checker');
 const scanLogger = require('./lib/runtime/scan-logger');
+const clvBackfill = require('./lib/clv-backfill');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2343,7 +2344,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.0.0');
+  assert.strictEqual(appMeta.APP_VERSION, '11.0.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4913,6 +4914,107 @@ test('scan-logger: insert throw → caught als false', async () => {
   };
   const ok = await scanLogger.logScanEnd(fakeSupabase, { triggerLabel: 'manual' });
   assert.strictEqual(ok, false);
+});
+
+// ── CLV BACKFILL (v11.0.1): snapshot fallback wanneer live api faalt ────────
+console.log('\n  CLV backfill (odds_snapshots fallback):');
+
+function buildFakeSupabaseForSnapshots(rows) {
+  return {
+    from(table) {
+      assert.strictEqual(table, 'odds_snapshots');
+      return {
+        _filters: {},
+        select() { return this; },
+        eq(col, val) { this._filters[col] = val; return this; },
+        order() { return this; },
+        async limit() {
+          const f = this._filters;
+          const filtered = (rows || []).filter(r =>
+            (!f.fixture_id || r.fixture_id === f.fixture_id) &&
+            (!f.market_type || r.market_type === f.market_type) &&
+            (!f.selection_key || r.selection_key === f.selection_key)
+          );
+          return { data: filtered, error: null };
+        },
+      };
+    },
+  };
+}
+
+test('clv-backfill: geen fixtureId/markt → null', async () => {
+  const sb = buildFakeSupabaseForSnapshots([]);
+  const r1 = await clvBackfill.fetchSnapshotClosing(sb, {});
+  const r2 = await clvBackfill.fetchSnapshotClosing(sb, { fixtureId: 1 });
+  const r3 = await clvBackfill.fetchSnapshotClosing(sb, { markt: 'Over 2.5' });
+  assert.strictEqual(r1, null);
+  assert.strictEqual(r2, null);
+  assert.strictEqual(r3, null);
+});
+
+test('clv-backfill: preferred bookie row wint van Pinnacle', async () => {
+  const sb = buildFakeSupabaseForSnapshots([
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', line: 2.5, bookmaker: 'Unibet', odds: 1.90, captured_at: '2026-04-10T19:00:00Z' },
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', line: 2.5, bookmaker: 'Pinnacle', odds: 1.95, captured_at: '2026-04-10T19:00:00Z' },
+  ]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 42, markt: 'Over 2.5', preferredBookie: 'Unibet',
+  });
+  assert.strictEqual(r.closingOdds, 1.9);
+  assert.strictEqual(r.sourceType, 'snapshot-preferred');
+  assert.strictEqual(r.bookieUsed, 'Unibet');
+});
+
+test('clv-backfill: zonder preferred match → Pinnacle als sharp anchor', async () => {
+  const sb = buildFakeSupabaseForSnapshots([
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', bookmaker: 'Pinnacle', odds: 1.95, captured_at: '2026-04-10T19:00:00Z' },
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', bookmaker: 'Betway', odds: 1.88, captured_at: '2026-04-10T19:00:00Z' },
+  ]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 42, markt: 'Over 2.5', preferredBookie: 'Bet365',
+  });
+  assert.strictEqual(r.sourceType, 'snapshot-sharp');
+  assert.strictEqual(r.bookieUsed, 'Pinnacle');
+});
+
+test('clv-backfill: alleen soft-book → snapshot-any fallback', async () => {
+  const sb = buildFakeSupabaseForSnapshots([
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', bookmaker: 'Betway', odds: 1.85, captured_at: '2026-04-10T19:00:00Z' },
+  ]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 42, markt: 'Over 2.5', preferredBookie: 'Bet365',
+  });
+  assert.strictEqual(r.sourceType, 'snapshot-any');
+  assert.strictEqual(r.bookieUsed, 'Betway');
+  assert.strictEqual(r.closingOdds, 1.85);
+});
+
+test('clv-backfill: niet-mappable markt → null (geen crash)', async () => {
+  const sb = buildFakeSupabaseForSnapshots([]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 42, markt: '🎯 Exotische markt zonder mapping',
+  });
+  assert.strictEqual(r, null);
+});
+
+test('clv-backfill: geen rijen → null', async () => {
+  const sb = buildFakeSupabaseForSnapshots([]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 99, markt: 'Over 2.5', preferredBookie: 'Bet365',
+  });
+  assert.strictEqual(r, null);
+});
+
+test('clv-backfill: ongeldige odds (≤1) worden genegeerd', async () => {
+  const sb = buildFakeSupabaseForSnapshots([
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', bookmaker: 'Pinnacle', odds: 0.5, captured_at: '2026-04-10T19:00:00Z' },
+    { fixture_id: 42, market_type: 'total', selection_key: 'over', bookmaker: 'Betway', odds: 1.92, captured_at: '2026-04-10T18:00:00Z' },
+  ]);
+  const r = await clvBackfill.fetchSnapshotClosing(sb, {
+    fixtureId: 42, markt: 'Over 2.5', preferredBookie: 'Bet365',
+  });
+  assert.strictEqual(r.bookieUsed, 'Betway');
+  assert.strictEqual(r.closingOdds, 1.92);
 });
 
 // ── PRICE-MEMORY: line-timeline (v10.10.9, fundament 2 uit Bouwvolgorde) ─────
