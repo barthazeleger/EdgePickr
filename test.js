@@ -49,6 +49,8 @@ const earlyPayoutRules = require('./lib/signals/early-payout-rules');
 const createNotificationsRouter = require('./lib/routes/notifications');
 const createClvRouter = require('./lib/routes/clv');
 const createAuthRouter = require('./lib/routes/auth');
+const createUserRouter = require('./lib/routes/user');
+const createTrackerRouter = require('./lib/routes/tracker');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2399,7 +2401,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.2.3');
+  assert.strictEqual(appMeta.APP_VERSION, '11.2.4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4963,6 +4965,39 @@ console.log('\n  CLV router (factory extraction):');
 
 test('clv router: throws bij missing deps', () => {
   assert.throws(() => createClvRouter({}), /missing required dep/);
+});
+
+test('user router: throws bij missing deps', () => {
+  assert.throws(() => createUserRouter({}), /missing required dep/);
+});
+
+test('user router: construct met valid deps + 2 routes', () => {
+  const router = createUserRouter({
+    loadUsers: async () => [],
+    saveUser: async () => {},
+    defaultSettings: () => ({}),
+    rescheduleUserScans: () => {},
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/user/settings'));
+});
+
+test('tracker router: throws bij missing deps', () => {
+  assert.throws(() => createTrackerRouter({}), /missing required dep/);
+});
+
+test('tracker router: construct met valid deps + 2 routes', () => {
+  const router = createTrackerRouter({
+    supabase: { from: () => ({}) },
+    requireAdmin: (req, res, next) => next(),
+    readBets: async () => ({ bets: [], stats: {} }),
+    checkOpenBetResults: async () => ({ checked: 0, updated: 0, results: [] }),
+    afGet: async () => [],
+    sleep: async () => {},
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/check-results'));
+  assert.ok(routes.includes('/backfill-times'));
 });
 
 test('auth router: throws bij missing deps', () => {

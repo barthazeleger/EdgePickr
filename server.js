@@ -7074,27 +7074,9 @@ app.use('/api', createAuthRouter({
 
 
 // ── USER SETTINGS ──────────────────────────────────────────────────────────────
-app.get('/api/user/settings', async (req, res) => {
-  try {
-    const users = await loadUsers();
-    const user  = users.find(u => u.id === req.user.id);
-    res.json(user?.settings || defaultSettings());
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
-
-app.put('/api/user/settings', async (req, res) => {
-  try {
-    const users = await loadUsers(true);
-    const user  = users.find(u => u.id === req.user.id);
-    if (!user) return res.status(404).json({ error: 'Gebruiker niet gevonden' });
-    const allowed = ['startBankroll','unitEur','language','timezone','scanTimes','scanEnabled','twoFactorEnabled','preferredBookies'];
-    allowed.forEach(k => { if (req.body[k] !== undefined) user.settings[k] = req.body[k]; });
-    await saveUser(user);
-    // Herplan scans als admin
-    if (user.role === 'admin') rescheduleUserScans(user);
-    res.json({ settings: user.settings });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
+// v11.2.4 Phase 5.4a: user-settings verhuisd naar lib/routes/user.js.
+const createUserRouter = require('./lib/routes/user');
+app.use('/api', createUserRouter({ loadUsers, saveUser, defaultSettings, rescheduleUserScans }));
 
 
 // ── ADMIN ROUTES ───────────────────────────────────────────────────────────────
@@ -10451,15 +10433,13 @@ async function checkOpenBetResults(userId = null) {
   return { checked: openBets.length, updated: results.filter(r => r.uitkomst).length, results };
 }
 
-// Check uitslagen route
-app.get('/api/check-results', async (req, res) => {
-  try {
-    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
-    const result = await checkOpenBetResults(userId);
-    const { bets, stats } = await readBets(userId);
-    res.json({ ...result, bets, stats });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
+// v11.2.4 Phase 5.4b: /api/check-results + /api/backfill-times verhuisd naar
+// lib/routes/tracker.js. De zware checkOpenBetResults + readBets helpers
+// blijven in server.js tot Phase 5.5+ refactor.
+const createTrackerRouter = require('./lib/routes/tracker');
+app.use('/api', createTrackerRouter({
+  supabase, requireAdmin, readBets, checkOpenBetResults, afGet, sleep,
+}));
 
 // Live scores via api-football
 // Lightweight live poll via ESPN (gratis, onbeperkt · voor auto-refresh)
@@ -10769,59 +10749,6 @@ app.get('/api/live-events/:id', async (req, res) => {
 
     res.json({ events, home: homeT, away: awayT, scoreH, scoreA, status, minute, stats });
   } catch (e) { res.status(500).json({ error: 'Interne fout', events: [] }); }
-});
-
-// Eenmalig: kickofftijden invullen voor bets zonder tijd
-app.post('/api/backfill-times', requireAdmin, async (req, res) => {
-  try {
-    const userId = req.user?.role === 'admin' && req.query.all ? null : req.user?.id;
-    const { bets } = await readBets(userId);
-    const results = [];
-
-    for (let i = 0; i < bets.length; i++) {
-      const b = bets[i];
-      // altijd overschrijven zodat foute tijden gecorrigeerd worden
-
-      // Zoek fixture op datum + teamnaam
-      const dateStr = b.datum.split('-').reverse().join('-'); // dd-mm-yyyy → yyyy-mm-dd
-      const fixtures = await afGet('v3.football.api-sports.io', '/fixtures', { date: dateStr });
-      await sleep(200);
-
-      const [tA, tB] = b.wedstrijd.toLowerCase().split(' vs ').map(t => t.trim());
-      // Zoek fixture waar BEIDE teams (deels) matchen · voorkomt jeugd/reserve wedstrijden
-      let match = fixtures.find(f => {
-        const home = f.teams?.home?.name?.toLowerCase() || '';
-        const away = f.teams?.away?.name?.toLowerCase() || '';
-        const homeMatch = home.includes(tA.split(' ')[0]) || tA.includes(home.split(' ')[0]);
-        const awayMatch = away.includes(tB.split(' ')[0]) || tB.includes(away.split(' ')[0]);
-        return homeMatch && awayMatch;
-      });
-      // Fallback: één team matcht, maar neem de LAATSTE kickoff (meest waarschijnlijk hoofdteam)
-      if (!match) {
-        const candidates = fixtures.filter(f => {
-          const home = f.teams?.home?.name?.toLowerCase() || '';
-          const away = f.teams?.away?.name?.toLowerCase() || '';
-          return home.includes(tA.split(' ')[0]) || tA.includes(home.split(' ')[0]) ||
-                 away.includes(tB.split(' ')[0]) || tB.includes(away.split(' ')[0]);
-        });
-        match = candidates.sort((a, b) => new Date(b.fixture?.date) - new Date(a.fixture?.date))[0];
-      }
-
-      if (!match) { results.push({ id: b.id, status: 'niet gevonden', wedstrijd: b.wedstrijd }); continue; }
-
-      const rawDate = match.fixture?.date || '';
-      const tijd = new Date(rawDate).toLocaleTimeString('nl-NL', {
-        hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam'
-      });
-
-      // Schrijf naar Supabase
-      await supabase.from('bets').update({ tijd }).eq('bet_id', b.id);
-
-      results.push({ id: b.id, status: 'bijgewerkt', wedstrijd: b.wedstrijd, tijd, rawDate });
-    }
-
-    res.json({ results });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
 });
 
 // ── ODDS MOVEMENT ALERTS ─────────────────────────────────────────────────────

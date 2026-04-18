@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.2.4] - 2026-04-18
+
+**Phase 5.4 · server.js extraction · User + Tracker routes**
+
+### Added
+
+- **[claude] `lib/routes/user.js`** — GET/PUT `/api/user/settings`. Allowlist blijft strikt (startBankroll, unitEur, language, timezone, scanTimes, scanEnabled, twoFactorEnabled, preferredBookies). Rescheduled admin-cron-scans bij PUT.
+- **[claude] `lib/routes/tracker.js`** — GET `/api/check-results` + POST `/api/backfill-times` (admin). checkOpenBetResults + readBets helpers blijven in server.js tot Phase 5.5 refactor.
+- 4 nieuwe tests: beide routers missing-deps throws + route-mount wire-checks.
+
+### Changed
+
+- server.js netto **-73 regels** (12318 → 12245).
+- Totaal shrinkage sinds v11.0.0 (12537 baseline): **-292 regels** — monotone shrink houdt aan.
+
+### Tests
+
+589 passed · 0 failed · server.js syntax valid.
+
 ## [11.2.3] - 2026-04-18
 
 **Phase 5.3 · server.js extraction · Auth routes** (5 endpoints, security-sensitive).
