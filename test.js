@@ -41,6 +41,7 @@ const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-cap
 const dailyResults = require('./lib/runtime/daily-results');
 const liveBoard = require('./lib/runtime/live-board');
 const operatorActions = require('./lib/runtime/operator-actions');
+const resultsChecker = require('./lib/runtime/results-checker');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -4716,6 +4717,128 @@ test('operator-actions: live over/btts kunnen vroegtijdig beslissen', () => {
     operatorActions.resolveEarlyLiveOutcome('Under 2.5', { scoreH: 1, scoreA: 0 }),
     null
   );
+});
+
+// ── RESULTS-CHECKER (v11.0.0): LIVE-GATE VOORKOMT ONTERECHTE AUTO-SETTLE ─────
+console.log('\n  Results-checker (auto-settle pipeline):');
+
+test('results-checker: LIVE gate blokkeert BTTS Nee op 0-0 in-progress', () => {
+  // Operator-bug report: BTTS Nee op nog-lopende wedstrijd werd als L gesloten.
+  // Vanaf v11.0.0 moet een live-event met onbepaalde BTTS-status Open blijven.
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Nee',
+    { home: 'Ajax', away: 'PSV', scoreH: 0, scoreA: 0 },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, null);
+  assert.ok(r.note && r.note.toLowerCase().includes('bezig'));
+});
+
+test('results-checker: LIVE gate sluit BTTS Nee wel op 1-1 (mathematisch verloren)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Nee',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 1 },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, 'L');
+});
+
+test('results-checker: LIVE gate sluit BTTS Ja op 1-1 (mathematisch gewonnen)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Ja',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 1 },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, 'W');
+});
+
+test('results-checker: LIVE gate houdt ML Open bij partial lead (kan nog kantelen)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '🏠 Ajax wint',
+    { home: 'Ajax', away: 'PSV', scoreH: 2, scoreA: 0, live: true },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, null);
+});
+
+test('results-checker: LIVE gate sluit Over 2.5 bij overschreden lijn', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    'Over 2.5',
+    { home: 'Ajax', away: 'PSV', scoreH: 2, scoreA: 1 },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, 'W');
+});
+
+test('results-checker: LIVE gate houdt Under 2.5 Open bij partial (kan nog overschreden worden)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    'Under 2.5',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 0 },
+    { isLive: true }
+  );
+  assert.strictEqual(r.uitkomst, null);
+});
+
+test('results-checker: FINISHED pipeline resolved BTTS Ja op 2-1 als W', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Ja',
+    { home: 'Ajax', away: 'PSV', scoreH: 2, scoreA: 1 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, 'W');
+});
+
+test('results-checker: FINISHED pipeline resolved BTTS Ja op 0-0 als L', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Ja',
+    { home: 'Ajax', away: 'PSV', scoreH: 0, scoreA: 0 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, 'L');
+});
+
+test('results-checker: FINISHED pipeline resolved BTTS Nee op 1-0 als W', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    '⚽ BTTS Nee',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 0 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, 'W');
+});
+
+test('results-checker: FINISHED Under 2.5 op 1-0 → W', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    'Under 2.5',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 0 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, 'W');
+});
+
+test('results-checker: FINISHED Over 2.5 op exacte 2-0 → null (push)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    'Over 2.0',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 1 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, null);
+  assert.ok(r.note && r.note.toLowerCase().includes('push'));
+});
+
+test('results-checker: FINISHED DNB draw → null (void)', () => {
+  const r = resultsChecker.resolveBetOutcome(
+    'DNB Ajax',
+    { home: 'Ajax', away: 'PSV', scoreH: 1, scoreA: 1 },
+    { isLive: false }
+  );
+  assert.strictEqual(r.uitkomst, null);
+  assert.ok(r.note && r.note.toLowerCase().includes('dnb'));
+});
+
+test('results-checker: zonder event → null met uitleg', () => {
+  const r = resultsChecker.resolveBetOutcome('⚽ BTTS Ja', null, { isLive: false });
+  assert.strictEqual(r.uitkomst, null);
+  assert.ok(r.note);
 });
 
 // ── PRICE-MEMORY: line-timeline (v10.10.9, fundament 2 uit Bouwvolgorde) ─────

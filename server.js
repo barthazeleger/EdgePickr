@@ -40,7 +40,8 @@ const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const { shouldRunPostResultsModelJobs } = require('./lib/runtime/daily-results');
 const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/runtime/live-board');
-const { matchesClvRecomputeTarget, resolveEarlyLiveOutcome } = require('./lib/runtime/operator-actions');
+const { matchesClvRecomputeTarget } = require('./lib/runtime/operator-actions');
+const { resolveBetOutcome } = require('./lib/runtime/results-checker');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -852,6 +853,60 @@ async function updateCalibration(bet, userId = null) {
     notify(msg).catch(() => {});
   }
 
+  saveCalib(c);
+  return c;
+}
+
+// v11.0.0: mirror van updateCalibration voor outcome-flip scenario's. Als operator
+// W→L of L→W corrigeert in de tracker, moet de calibration de vorige delta
+// reverten voordat de nieuwe wordt geapplied — anders stapelt de learning-loop
+// tegenstrijdige data op. Revert decrementeert n/w/profit (floor 0), de
+// multiplier-herberekening wordt bewust overgeslagen: die herziet zichzelf bij
+// de volgende updateCalibration-oproep. modelLog-entries blijven staan als
+// audit-trail.
+async function revertCalibration(bet, userId = null) {
+  if (!bet || !['W','L'].includes(bet.uitkomst)) return;
+  if (userId) {
+    const users = getUsersCache() || [];
+    const user = users.find(u => u.id === userId);
+    if (user && user.role !== 'admin') return;
+  }
+  const c = loadCalib();
+  const mKey = `${normalizeSport(bet.sport)}_${detectMarket(bet.markt || '')}`;
+  const lg = bet.league || 'Unknown';
+  const won = bet.uitkomst === 'W';
+  const pnl = parseFloat(bet.wl) || 0;
+
+  c.totalSettled = Math.max(0, (c.totalSettled || 0) - 1);
+  if (won) c.totalWins = Math.max(0, (c.totalWins || 0) - 1);
+  c.totalProfit = (c.totalProfit || 0) - pnl;
+
+  const mk = c.markets?.[mKey];
+  if (mk) {
+    mk.n = Math.max(0, (mk.n || 0) - 1);
+    if (won) mk.w = Math.max(0, (mk.w || 0) - 1);
+    mk.profit = (mk.profit || 0) - pnl;
+    c.markets[mKey] = mk;
+  }
+
+  const epEst = bet.ep ? parseFloat(bet.ep) : (bet.prob ? parseFloat(bet.prob) / 100 : null);
+  if (epEst && epEst >= 0.28 && c.epBuckets) {
+    const bk = epBucketKey(epEst);
+    const eb = c.epBuckets[bk];
+    if (eb) {
+      eb.n = Math.max(0, (eb.n || 0) - 1);
+      if (won) eb.w = Math.max(0, (eb.w || 0) - 1);
+      c.epBuckets[bk] = eb;
+    }
+  }
+
+  if (c.leagues?.[lg]) {
+    c.leagues[lg].n = Math.max(0, (c.leagues[lg].n || 0) - 1);
+    if (won) c.leagues[lg].w = Math.max(0, (c.leagues[lg].w || 0) - 1);
+    c.leagues[lg].profit = (c.leagues[lg].profit || 0) - pnl;
+  }
+
+  c.lastUpdated = new Date().toISOString();
   saveCalib(c);
   return c;
 }
@@ -6784,11 +6839,33 @@ async function updateBetOutcome(id, uitkomst, userId = null) {
   const userUnitEur = await getUserUnitEur(userId);
   const inzet = row.inzet != null ? row.inzet : +(units * userUnitEur).toFixed(2);
   const wl = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : uitkomst === 'L' ? -inzet : 0;
+  const prevOutcome = row.uitkomst;
   let updateQuery = supabase.from('bets').update({ uitkomst, wl }).eq('bet_id', id);
   if (userId) updateQuery = updateQuery.eq('user_id', userId);
   await updateQuery;
-  await updateCalibration({ datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
-                            odds, units, uitkomst, wl, sport: row.sport || 'football' }, userId);
+
+  // v11.0.0: outcome-flip handling. Als de bet al settled was en het uitkomst
+  // verandert (W→L, L→W, of W/L→Open), rol de vorige calibration-delta eerst
+  // terug voordat de nieuwe wordt geapplied. Voorkomt dat operator-correcties
+  // dubbele (tegenstrijdige) updates in de learning-loop laten lekken.
+  const prevSettled = prevOutcome === 'W' || prevOutcome === 'L';
+  const newSettled = uitkomst === 'W' || uitkomst === 'L';
+  if (prevSettled && prevOutcome !== uitkomst) {
+    await revertCalibration({
+      datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
+      odds, units, uitkomst: prevOutcome, wl: row.wl,
+      sport: row.sport || 'football', league: row.league,
+      ep: row.ep, prob: row.prob,
+    }, userId);
+  }
+  if (newSettled) {
+    await updateCalibration({
+      datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
+      odds, units, uitkomst, wl,
+      sport: row.sport || 'football', league: row.league,
+      ep: row.ep, prob: row.prob,
+    }, userId);
+  }
 }
 
 async function deleteBet(id, userId = null) {
@@ -10545,166 +10622,25 @@ async function checkOpenBetResults(userId = null) {
     const ev = finishedEv || liveEv;
     if (!ev) continue;
 
-    const markt = (bet.markt||'').toLowerCase();
-    const total = ev.scoreH + ev.scoreA;
-    let uitkomst = null;
-
-    if (liveEv) {
-      uitkomst = resolveEarlyLiveOutcome(markt, ev);
-    }
-
-    // ── 3-weg 60-min markten (hockey/handbal regulation) ──
-    // Gebruikt regScoreH/regScoreA (na 60 min, excl OT/SO). Bij AOT/AP was reg score gelijk.
-    const is60min = markt.includes('60-min') || markt.includes('60 min') || markt.includes('🕐');
-    if (!uitkomst && is60min && ev.regScoreH != null && ev.regScoreA != null) {
-      if (markt.includes('gelijkspel') || markt.includes('draw')) {
-        uitkomst = ev.regScoreH === ev.regScoreA ? 'W' : 'L';
-      } else {
-        // Winnaar-detectie: pak teamnaam uit markt
-        const winnerMatch = markt.match(/(.+?)\s+wint/i);
-        if (winnerMatch) {
-          const t = winnerMatch[1].replace(/[🏠✈️🕐]/g, '').trim().toLowerCase();
-          const isHome = ev.home.toLowerCase().includes(t) || t.includes(ev.home.toLowerCase().split(' ').pop());
-          const isAway = ev.away.toLowerCase().includes(t) || t.includes(ev.away.toLowerCase().split(' ').pop());
-          if (isHome) uitkomst = ev.regScoreH > ev.regScoreA ? 'W' : 'L'; // gelijk = L (draw won)
-          else if (isAway) uitkomst = ev.regScoreA > ev.regScoreH ? 'W' : 'L';
-        }
-      }
-    }
-    // ── NRFI / YRFI (baseball 1st inning) ──
-    else if (!uitkomst && (markt.includes('nrfi') || markt.includes('yrfi') || markt.includes('no run 1st') || markt.includes('yes run 1st') || markt.includes('no run first') || markt.includes('yes run first'))) {
-      if (ev.inn1H !== null && ev.inn1H !== undefined && ev.inn1A !== null && ev.inn1A !== undefined) {
-        const firstInningRuns = (ev.inn1H || 0) + (ev.inn1A || 0);
-        const isNRFI = markt.includes('nrfi') || markt.includes('no run');
-        if (isNRFI) uitkomst = firstInningRuns === 0 ? 'W' : 'L';
-        else uitkomst = firstInningRuns > 0 ? 'W' : 'L';
-      }
-    }
-    // ── 1st Half Over/Under (basketball, NFL) ──
-    else if (!uitkomst && (markt.includes('1h ') || markt.includes('1st half')) && (markt.includes('over') || markt.includes('under'))) {
-      const halfTotal = (ev.halfH ?? null) !== null && (ev.halfA ?? null) !== null ? ev.halfH + ev.halfA : null;
-      if (halfTotal !== null) {
-        const h1OverMatch = markt.match(/over\s*(\d+\.?\d*)/i);
-        const h1UnderMatch = !h1OverMatch && markt.match(/under\s*(\d+\.?\d*)/i);
-        if (h1OverMatch) {
-          const line = parseFloat(h1OverMatch[1]);
-          uitkomst = halfTotal > line ? 'W' : halfTotal < line ? 'L' : null;
-        } else if (h1UnderMatch) {
-          const line = parseFloat(h1UnderMatch[1]);
-          uitkomst = halfTotal < line ? 'W' : halfTotal > line ? 'L' : null;
-        }
-      }
-    }
-    // ── 1st Half Spread (basketball, NFL) ──
-    else if (!uitkomst && (markt.includes('1h ') || markt.includes('1st half')) && (markt.includes('spread') || markt.match(/[+-]\d/))) {
-      const halfH = ev.halfH ?? null;
-      const halfA = ev.halfA ?? null;
-      if (halfH !== null && halfA !== null) {
-        const h1SpreadMatch = markt.match(/([+-]?\d+\.?\d*)/);
-        if (h1SpreadMatch) {
-          const line = parseFloat(h1SpreadMatch[1]);
-          // Determine which side from the label
-          const isHome = markt.includes(ev.home.toLowerCase().split(' ').pop());
-          const diff = isHome ? (halfH - halfA) : (halfA - halfH);
-          const adjusted = diff + line;
-          uitkomst = adjusted > 0 ? 'W' : adjusted < 0 ? 'L' : null;
-        }
-      }
-    }
-    // ── 1st Period Over/Under (hockey) ──
-    else if (!uitkomst && (markt.includes('p1 ') || markt.includes('1st period')) && (markt.includes('over') || markt.includes('under'))) {
-      const p1Total = (ev.p1H ?? null) !== null && (ev.p1A ?? null) !== null ? ev.p1H + ev.p1A : null;
-      if (p1Total !== null) {
-        const p1OverMatch = markt.match(/over\s*(\d+\.?\d*)/i);
-        const p1UnderMatch = !p1OverMatch && markt.match(/under\s*(\d+\.?\d*)/i);
-        if (p1OverMatch) {
-          const line = parseFloat(p1OverMatch[1]);
-          uitkomst = p1Total > line ? 'W' : p1Total < line ? 'L' : null;
-        } else if (p1UnderMatch) {
-          const line = parseFloat(p1UnderMatch[1]);
-          uitkomst = p1Total < line ? 'W' : p1Total > line ? 'L' : null;
-        }
-      }
-    }
-    // ── Odd/Even total ──
-    else if (!uitkomst && (markt.includes('odd total') || markt.includes('even total') || markt.includes('🎲'))) {
-      const isOdd = markt.includes('odd');
-      uitkomst = (total % 2 === 1) === isOdd ? 'W' : 'L';
-    }
-    // Generic over/under detection (works for all sports: goals, points, runs, etc.)
-    else if (!uitkomst && markt.match(/over\s*(\d+\.?\d*)/i)) {
-      const ouMatch = markt.match(/over\s*(\d+\.?\d*)/i);
-      const line = parseFloat(ouMatch[1]);
-      uitkomst = total > line ? 'W' : total < line ? 'L' : null; // exact = push
-    }
-    else if (!uitkomst && markt.match(/under\s*(\d+\.?\d*)/i) && !markt.match(/over\s*(\d+\.?\d*)/i)) {
-      const ouMatch = markt.match(/under\s*(\d+\.?\d*)/i);
-      const line = parseFloat(ouMatch[1]);
-      uitkomst = total < line ? 'W' : total > line ? 'L' : null;
-    }
-    else if (!uitkomst && (markt.includes('btts ja') || markt.includes('btts yes') || (markt.includes('btts') && !markt.includes('nee') && !markt.includes('no')))) {
-      uitkomst = (ev.scoreH > 0 && ev.scoreA > 0) ? 'W' : 'L';
-    }
-    else if (!uitkomst && (markt.includes('btts nee') || markt.includes('btts no'))) {
-      uitkomst = (ev.scoreH === 0 || ev.scoreA === 0) ? 'W' : 'L';
-    }
-    else if (!uitkomst && (markt.includes('dnb ') || markt.includes('draw no bet'))) {
-      // Draw No Bet: draw = void (no result)
-      if (ev.scoreH === ev.scoreA) {
-        uitkomst = null; // void / push · skip
-      } else {
-        // Find which team was picked
-        const dnbTeam = markt.replace(/.*dnb\s*/i, '').replace(/draw no bet\s*/i, '').trim().toLowerCase();
-        const isHome = ev.home.toLowerCase().includes(dnbTeam) || dnbTeam.includes(ev.home.toLowerCase().split(' ').pop());
-        const isAway = ev.away.toLowerCase().includes(dnbTeam) || dnbTeam.includes(ev.away.toLowerCase().split(' ').pop());
-        if (isHome) uitkomst = ev.scoreH > ev.scoreA ? 'W' : 'L';
-        else if (isAway) uitkomst = ev.scoreA > ev.scoreH ? 'W' : 'L';
-      }
-    }
-    else {
-      // Spread / handicap / run line / puck line detection
-      const spreadMatch = markt.match(/(?:spread|handicap|line)\s*[:\s]?\s*(.+?)\s*([+-]\d+\.?\d*)/i);
-      if (spreadMatch) {
-        const spreadTeam = spreadMatch[1].trim().toLowerCase();
-        const line = parseFloat(spreadMatch[2]);
-        const isHome = ev.home.toLowerCase().includes(spreadTeam) || spreadTeam.includes(ev.home.toLowerCase().split(' ').pop());
-        const isAway = ev.away.toLowerCase().includes(spreadTeam) || spreadTeam.includes(ev.away.toLowerCase().split(' ').pop());
-        if (isHome || isAway) {
-          const diff = isHome ? (ev.scoreH - ev.scoreA) : (ev.scoreA - ev.scoreH);
-          const adjusted = diff + line;
-          uitkomst = adjusted > 0 ? 'W' : adjusted < 0 ? 'L' : null; // exact 0 = push
-        }
-      }
-
-      if (!uitkomst) {
-        // Moneyline / winner detection
-        const winnerMatch = markt.match(/(?:winner|wint)[^a-z]+([\w\s]+?)(?:\s*[\|·]|$)/i)
-                         || markt.match(/→\s*([\w\s]+?)(?:\s*[\|·]|$)/i);
-        if (winnerMatch) {
-          const t = winnerMatch[1].trim().toLowerCase();
-          const isHome = ev.home.toLowerCase().includes(t) || t.includes(ev.home.toLowerCase().split(' ').pop());
-          const isAway = ev.away.toLowerCase().includes(t) || t.includes(ev.away.toLowerCase().split(' ').pop());
-          if (isHome) uitkomst = ev.scoreH > ev.scoreA ? 'W' : ev.scoreH < ev.scoreA ? 'L' : null;
-          else if (isAway) uitkomst = ev.scoreA > ev.scoreH ? 'W' : ev.scoreA < ev.scoreH ? 'L' : null;
-        }
-      }
-    }
+    // v11.0.0: settle-logica uit lib/runtime/results-checker.js. LIVE-gate
+    // voorkomt dat een nog-lopende wedstrijd een Open-bet onterecht sluit.
+    const { uitkomst, note } = resolveBetOutcome(bet.markt, ev, { isLive: !finishedEv });
 
     if (uitkomst) {
       await updateBetOutcome(bet.id, uitkomst, userId);
-      // Push notification for bet result
       const wlAmount = uitkomst === 'W' ? +((bet.odds-1)*bet.inzet).toFixed(2) : -bet.inzet;
-      // v10.10.22 fix: per-user push i.p.v. global broadcast (Codex P0 blocker).
       await sendPushToUser(userId, {
         title: uitkomst === 'W' ? '✅ Bet gewonnen!' : '❌ Bet verloren',
         body: `${bet.wedstrijd}: ${ev.scoreH}-${ev.scoreA}\n${bet.markt} · ${uitkomst === 'W' ? '+' : ''}€${wlAmount}`,
         tag: 'bet-result-' + bet.id,
         url: '/',
-      }).catch(() => {});
+      }).catch(e => console.warn(`[bet-push] failed voor bet ${bet.id}:`, e?.message || e));
     }
-    results.push({ id: bet.id, wedstrijd: bet.wedstrijd, markt: bet.markt,
-                   score: `${ev.scoreH}-${ev.scoreA}`, uitkomst,
-                   note: uitkomst ? null : 'Score gevonden · update handmatig' });
+    results.push({
+      id: bet.id, wedstrijd: bet.wedstrijd, markt: bet.markt,
+      score: `${ev.scoreH}-${ev.scoreA}`, uitkomst,
+      note: uitkomst ? null : (note || 'Score gevonden · update handmatig'),
+    });
   }
 
   return { checked: openBets.length, updated: results.filter(r => r.uitkomst).length, results };
