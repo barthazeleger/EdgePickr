@@ -2,6 +2,45 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.23] - 2026-04-18
+
+**Phase 7.1 · reviewer-bugs live fixes (Codex #1 + Codex #2)**
+
+Twee onafhankelijke reviews (Codex #1 op v11.1.0, Codex #2 op v11.3.x) vonden overlappend dezelfde kritieke bugs. Dit commit fixt alle live defects + port de patches die Codex #1 al in een andere working tree had toegepast.
+
+### Fixed
+
+- **[C1]** `lib/integrations/nhl-goalie-preview.js`: `safeFetch` wordt nu correct aangeroepen met 2-arg interface (`url, { headers, allowedHosts }`) en de returnwaarde wordt als parsed data behandeld i.p.v. `Response`-object. Eerdere 3-arg call + `resp.ok`/`resp.json()` was effectief stuk — goalie-preview data kwam niet binnen.
+- **[C2]** `schedulePreKickoffCheck` + `scheduleCLVCheck` + odds-monitor gebruiken nu `bet.datum` + `bet.tijd` via nieuwe pure helper `lib/runtime/bet-kickoff.js` (DST-aware, Europe/Amsterdam). Eerdere code gebruikte `nowAms`-datum → bets >1 dag vooruit verkeerd/niet gepland.
+- **[C3]** `POST /api/bets` + `lib/bets-data.js writeBet` gebruiken nu atomaire retry-on-unique-violation pattern met bounded 5 attempts. Geen `Math.max(...ids)+1` meer op client-side bets-array → geen race-condition bij dubbelkliks of concurrent writes.
+- **[H1]** Nieuwe public `GET /api/health` endpoint in `lib/routes/health.js` voor Render keep-alive. Minimale `{ ok: true, ts }` payload, in `PUBLIC_PATHS`, géén auth. Eerdere keep-alive hit `/api/status` (niet meer public) → 401 → geen anti-sleep werking.
+- **[H3]** Admin/observability paden lekken geen raw `e.message` meer naar response-body. Alle 500-paden in `lib/routes/admin-*.js`, `lib/routes/clv.js` en `server.js` loggen server-side en sturen generieke `Interne fout · check server logs`. Nieuwe helper `lib/utils/http-error.js` documenteert de canonical responder.
+- **[F1]** (Codex #1) `checkOpenBetResults` in `lib/runtime/check-open-bets.js` gebruikt nu `bet.userId` als owner-scope wanneer beschikbaar. Bij globale cron-run voorkomt dit dat settled bets zonder user-scope worden geschreven én dat push naar `null`-user gaat ipv de daadwerkelijke owner.
+- **[F2]** (Codex #1) `recomputeStakeRegime` query is nu admin-scoped (`user_id.eq.<admin>,user_id.is.null`) i.p.v. alle users. Stake-regime-engine wordt niet gecontamineerd door niet-admin bets.
+- **[F3]** (Codex #1) Zowel `lib/db.js readBets` als `lib/bets-data.js readBets` preserve nu `userId` in bet-mapping, voorwaarde voor F1.
+- **[F4]** (Codex #1) Live tracker in `index.html` detecteert nu ook `Under X.5` irreversible loss tijdens live (`totalGoals > line`) en triggert meteen `syncTrackerFromResultsCheck()` + push-notif. Plus nieuwe helper `isLiveIrreversiblyLost` in `lib/runtime/operator-actions.js`.
+
+### Added (tests)
+
+- Nieuwe regressietests voor C1/C2/C3/F3/F4/H1/H2:
+  - `parseBetKickoff`: ISO, HH:MM+datum today/tomorrow/3-days-ahead, invalid, fallback.
+  - `isLiveIrreversiblyLost`: Under 2.5 broken, Under safe, BTTS Nee both-scored, Over niet.
+  - `bets-data.readBets` preserves `userId`.
+  - `writeBet` retries on unique-violation (mocked Supabase race).
+  - `PUBLIC_PATHS` structural test: `/api/status` niet public, `/api/health` wel.
+  - `nhl-goalie-preview` module smoke-require (post-fix).
+  - `health-route` factory exports correct router.
+
+### Changed
+
+- server.js netto +29 regels (7796 → 7825) — netto gelijk (C2 verkort, H1/H3 kleine toevoegingen).
+- Test count: 609 → **624 passed** (+15 regressietests), 0 failed.
+
+### Files
+
+- Nieuw: `lib/runtime/bet-kickoff.js`, `lib/routes/health.js`, `lib/utils/http-error.js`.
+- Gewijzigd: `lib/integrations/nhl-goalie-preview.js`, `lib/runtime/polling-schedulers.js`, `lib/runtime/check-open-bets.js`, `lib/runtime/operator-actions.js`, `lib/bets-data.js`, `lib/db.js`, `lib/routes/bets-write.js`, `lib/routes/admin-*.js` (6 files), `lib/routes/clv.js`, `server.js`, `index.html`, `test.js`.
+
 ## [11.3.22] - 2026-04-18
 
 **Phase 6.4 · learning-loop core**

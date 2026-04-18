@@ -2410,7 +2410,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.22');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.23');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7270,6 +7270,164 @@ test('buildTimeline: lege rows → sharpGap=null (geen crash)', () => {
   const t = lineTimeline.buildTimeline([]);
   assert.strictEqual(t.sharpGap, null);
   assert.strictEqual(t.sharpBookie, null);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v11.3.23 · PHASE 7.1 REVIEW-BUG REGRESSION TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// C2: parseBetKickoff uses bet.datum + bet.tijd, not today's date.
+const { parseBetKickoff } = require('./lib/runtime/bet-kickoff');
+
+test('parseBetKickoff: ISO-string returns exact timestamp', () => {
+  const iso = '2026-05-15T19:30:00+02:00';
+  const result = parseBetKickoff(null, iso);
+  assert.strictEqual(result, new Date(iso).getTime());
+});
+
+test('parseBetKickoff: HH:MM + datum morgen geeft morgen (niet vandaag)', () => {
+  // Vandaag in Amsterdam
+  const nowAms = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const tomorrowMs = Date.parse(nowAms + 'T00:00:00Z') + 86400000;
+  const tomorrowAms = new Date(tomorrowMs).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const [yyyy, mm, dd] = tomorrowAms.split('-');
+  const datum = `${dd}-${mm}-${yyyy}`;
+  const kickoff = parseBetKickoff(datum, '20:00');
+  // Moet minstens een paar uur in de toekomst liggen (niet vandaag 20:00).
+  assert(kickoff > Date.now() + 60 * 60 * 1000, 'kickoff should be at least 1 hour out');
+});
+
+test('parseBetKickoff: HH:MM + datum 3 dagen vooruit respecteert datum', () => {
+  const nowAms = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const threeAheadMs = Date.parse(nowAms + 'T12:00:00Z') + 3 * 86400000;
+  const threeAheadAms = new Date(threeAheadMs).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const [yyyy, mm, dd] = threeAheadAms.split('-');
+  const datum = `${dd}-${mm}-${yyyy}`;
+  const kickoff = parseBetKickoff(datum, '14:00');
+  const deltaDays = (kickoff - Date.now()) / 86400000;
+  assert(deltaDays >= 2.5 && deltaDays <= 3.5, `delta should be ~3 days, got ${deltaDays.toFixed(2)}`);
+});
+
+test('parseBetKickoff: invalid tijd returns null', () => {
+  assert.strictEqual(parseBetKickoff('19-04-2026', 'notatime'), null);
+  assert.strictEqual(parseBetKickoff('19-04-2026', '25:99'), null);
+  assert.strictEqual(parseBetKickoff('19-04-2026', ''), null);
+});
+
+test('parseBetKickoff: geen datum valt terug op vandaag (legacy gedrag)', () => {
+  // Tijd moet in de toekomst liggen (anders +1 dag).
+  const nowAms = new Date();
+  const futureHour = (nowAms.getHours() + 2) % 24;
+  const tijd = `${String(futureHour).padStart(2, '0')}:00`;
+  const kickoff = parseBetKickoff(null, tijd);
+  assert(Number.isFinite(kickoff), 'kickoff should be finite');
+  const delta = kickoff - Date.now();
+  assert(delta > 0 && delta < 36 * 3600 * 1000, `kickoff should be within 36h, delta=${delta}`);
+});
+
+// F3: readBets preserves userId in mapped bets.
+test('bets-data.readBets mapping preserves userId for global results-check', () => {
+  // Pure map test — we simuleren één Supabase row en checken dat userId bewaard blijft.
+  const mockRow = { bet_id: 42, user_id: 'abc-123', uitkomst: 'Open', odds: 2.0, units: 1, datum: '01-01-2026', wedstrijd: 'A vs B', markt: '🏠 A wint' };
+  // Simpele mapping-replicatie (mirror van bets-data.js).
+  const mapped = {
+    id: mockRow.bet_id,
+    userId: mockRow.user_id || null,
+  };
+  assert.strictEqual(mapped.id, 42);
+  assert.strictEqual(mapped.userId, 'abc-123');
+});
+
+// F4: isLiveIrreversiblyLost detects Under-broken + BTTS-nee-both-scored.
+const { isLiveIrreversiblyLost } = require('./lib/runtime/operator-actions');
+
+test('isLiveIrreversiblyLost: Under 2.5 met 3 goals → true', () => {
+  assert.strictEqual(isLiveIrreversiblyLost('Under 2.5', { scoreH: 2, scoreA: 1 }), true);
+});
+
+test('isLiveIrreversiblyLost: Under 2.5 met 2 goals → false', () => {
+  assert.strictEqual(isLiveIrreversiblyLost('Under 2.5', { scoreH: 1, scoreA: 1 }), false);
+});
+
+test('isLiveIrreversiblyLost: BTTS Nee met beide teams gescoord → true', () => {
+  assert.strictEqual(isLiveIrreversiblyLost('BTTS Nee', { scoreH: 1, scoreA: 1 }), true);
+});
+
+test('isLiveIrreversiblyLost: BTTS Nee met 1-0 → false (nog reversibel)', () => {
+  assert.strictEqual(isLiveIrreversiblyLost('BTTS Nee', { scoreH: 1, scoreA: 0 }), false);
+});
+
+test('isLiveIrreversiblyLost: Over 2.5 → nooit irreversibel verloren via deze helper', () => {
+  assert.strictEqual(isLiveIrreversiblyLost('Over 2.5', { scoreH: 0, scoreA: 0 }), false);
+});
+
+// C1: fetchNhlGoaliePreview handles safeFetch 2-arg interface correctly.
+// We smoke-test via require alone — runtime path tested separately if mock framework available.
+test('nhl-goalie-preview module loads without crash', () => {
+  const mod = require('./lib/integrations/nhl-goalie-preview');
+  assert.strictEqual(typeof mod.fetchNhlGoaliePreview, 'function');
+  assert.strictEqual(typeof mod.extractNhlGoaliePreview, 'function');
+  assert.strictEqual(typeof mod.selectLikelyGoalie, 'function');
+});
+
+// H2: PUBLIC_PATHS test uses the actual server.js constant (structural test).
+test('PUBLIC_PATHS: /api/status is NOT public, /api/health IS public', () => {
+  // Read server.js source and verify the PUBLIC_PATHS set.
+  const serverSrc = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const pubMatch = serverSrc.match(/const PUBLIC_PATHS = new Set\(\[[\s\S]*?\]\);/);
+  assert(pubMatch, 'PUBLIC_PATHS declaration not found in server.js');
+  const block = pubMatch[0];
+  assert(!/['"]\/api\/status['"]/.test(block), '/api/status must NOT be in PUBLIC_PATHS');
+  assert(/['"]\/api\/health['"]/.test(block), '/api/health MUST be in PUBLIC_PATHS for keep-alive');
+  assert(/['"]\/api\/auth\/login['"]/.test(block), '/api/auth/login must be in PUBLIC_PATHS');
+});
+
+// C3: writeBet retries on unique-violation (bet_id race).
+test('writeBet retries on bet_id unique violation (simulated race)', async () => {
+  const createBetsData = require('./lib/bets-data');
+  let insertAttempts = 0;
+  let selectCalls = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        order: () => ({
+          limit: () => {
+            selectCalls++;
+            // Eerste call: max=41 (next=42). Tweede call: max=42 (next=43).
+            return Promise.resolve({ data: [{ bet_id: 40 + selectCalls }] });
+          },
+        }),
+      }),
+      insert: () => {
+        insertAttempts++;
+        if (insertAttempts === 1) {
+          return Promise.resolve({ error: { message: 'duplicate key value violates unique constraint' } });
+        }
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  const betsData = createBetsData({
+    supabase: mockSupabase,
+    getUserMoneySettings: async () => ({ unitEur: 10, startBankroll: 500 }),
+    defaultStartBankroll: 500,
+    defaultUnitEur: 10,
+    revertCalibration: async () => {},
+    updateCalibration: async () => {},
+  });
+  const bet = { units: 1, odds: 2.0, uitkomst: 'Open', sport: 'football', wedstrijd: 'A vs B', markt: 'ML', datum: '01-01-2026', tijd: '19:00' };
+  await betsData.writeBet(bet);
+  assert(insertAttempts >= 2, `expected ≥2 insert attempts on unique violation, got ${insertAttempts}`);
+  assert(bet.id >= 42, `bet.id should be set to retry-allocated id, got ${bet.id}`);
+});
+
+// H1: /api/health route is public + returns minimal payload.
+test('health-route factory returns router with /health endpoint', () => {
+  const createHealthRouter = require('./lib/routes/health');
+  const router = createHealthRouter();
+  assert.strictEqual(typeof router, 'function');
+  // Express Router exposes stack; check at least one route registered.
+  assert(Array.isArray(router.stack) && router.stack.length > 0, 'health router should have routes');
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────

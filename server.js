@@ -39,6 +39,7 @@ const { fetchNhlGoaliePreview } = require('./lib/integrations/nhl-goalie-preview
 const { applyCorrelationDamp } = require('./lib/correlation-damp');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const { shouldRunPostResultsModelJobs } = require('./lib/runtime/daily-results');
+const { parseBetKickoff } = require('./lib/runtime/bet-kickoff');
 const { isV1LiveStatus, shouldIncludeDatedV1Game } = require('./lib/runtime/live-board');
 const { matchesClvRecomputeTarget } = require('./lib/runtime/operator-actions');
 const { resolveBetOutcome } = require('./lib/runtime/results-checker');
@@ -484,7 +485,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function isValidUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
 
 // v10.10.22 fase 2: /api/status verwijderd uit publieke paden (lekte model-stats + API-usage).
-const PUBLIC_PATHS = new Set(['/api/auth/login', '/api/auth/register', '/api/auth/verify-code']);
+// v11.3.23 H1: /api/health dedicated public keep-alive endpoint (minimale { ok, ts } payload).
+const PUBLIC_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/verify-code',
+  '/api/health',
+]);
 
 // JWT middleware
 // v10.10.22: DB-backed auth — herlaadt live user-status/role uit database.
@@ -593,8 +600,16 @@ async function refreshActiveUnitEur() {
 async function recomputeStakeRegime() {
   try {
     const { evaluateStakeRegime, computeBankrollMetrics } = require('./lib/stake-regime');
-    const { data: bets, error } = await supabase.from('bets')
+    // v11.3.23 F2 (Codex #1): scope op admin-user + legacy user_id=null.
+    // Eerdere versie las alle users' settled history, wat in een multi-user
+    // scenario de stake-regime contaminates. Doctrine: single-operator.
+    const adminId = await getAdminUserId().catch(() => null);
+    let query = supabase.from('bets')
       .select('uitkomst, clv_pct, wl, inzet, datum').in('uitkomst', ['W', 'L']);
+    if (adminId) {
+      query = query.or(`user_id.eq.${adminId},user_id.is.null`);
+    }
+    const { data: bets, error } = await query;
     if (error) return;
     const metrics = computeBankrollMetrics(bets || [], _activeStartBankroll);
 
@@ -7088,31 +7103,12 @@ async function schedulePreKickoffCheck(bet) {
   // Live bets zijn al bezig · geen pre-kickoff check nodig
   if (bet.scanType === 'live') return;
 
-  // Probeer aftrap-tijdstip uit de bet te halen (veld 'datum' = datum, 'tijd' = HH:MM)
-  const tijdStr = bet.tijd || bet.time; // "HH:MM" of ISO
+  // v11.3.23 C2: gebruik bet.datum + bet.tijd canonical via pure helper.
+  // Eerdere code gebruikte `nowAms` bij HH:MM → bets >1 dag vooruit verkeerd gepland.
+  const tijdStr = bet.tijd || bet.time;
   if (!tijdStr) return;
-
-  let kickoffMs;
-  try {
-    if (tijdStr.includes('T') || tijdStr.includes('-')) {
-      kickoffMs = new Date(tijdStr).getTime();
-    } else {
-      // "HH:MM" in Amsterdam-tijd · converteer naar UTC
-      const [h, m] = tijdStr.split(':').map(Number);
-      const nowAms = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-      // Maak een ISO-string in Amsterdam-tijd en parse die correct
-      const amsIso = `${nowAms}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
-      // Bereken offset: verschil tussen UTC en Amsterdam
-      const probe = new Date();
-      const utcH = probe.getUTCHours();
-      const amsH = parseInt(probe.toLocaleTimeString('en-US', { hour:'numeric', hour12:false, timeZone:'Europe/Amsterdam' }));
-      const offsetMs = (amsH - utcH) * 3600000;
-      // Kickoff in UTC = Amsterdam-tijd minus offset
-      const d = new Date(new Date(amsIso + 'Z').getTime() - offsetMs);
-      if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1); // morgen
-      kickoffMs = d.getTime();
-    }
-  } catch { return; }
+  const kickoffMs = parseBetKickoff(bet.datum, tijdStr);
+  if (!Number.isFinite(kickoffMs)) return;
 
   const checkMs = kickoffMs - 30 * 60 * 1000; // 30 min voor aftrap
   const delayMs = checkMs - Date.now();
@@ -7172,26 +7168,11 @@ async function schedulePreKickoffCheck(bet) {
 async function scheduleCLVCheck(bet) {
   if (bet.scanType === 'live') return;
 
+  // v11.3.23 C2: gebruik bet.datum + bet.tijd canonical via pure helper.
   const tijdStr = bet.tijd || bet.time;
   if (!tijdStr) return;
-
-  let kickoffMs;
-  try {
-    if (tijdStr.includes('T') || tijdStr.includes('-')) {
-      kickoffMs = new Date(tijdStr).getTime();
-    } else {
-      const [h, m] = tijdStr.split(':').map(Number);
-      const nowAms = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-      const amsIso = `${nowAms}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
-      const probe = new Date();
-      const utcH = probe.getUTCHours();
-      const amsH = parseInt(probe.toLocaleTimeString('en-US', { hour:'numeric', hour12:false, timeZone:'Europe/Amsterdam' }));
-      const offsetMs = (amsH - utcH) * 3600000;
-      const d = new Date(new Date(amsIso + 'Z').getTime() - offsetMs);
-      if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
-      kickoffMs = d.getTime();
-    }
-  } catch { return; }
+  const kickoffMs = parseBetKickoff(bet.datum, tijdStr);
+  if (!Number.isFinite(kickoffMs)) return;
 
   const checkMs = kickoffMs - 2 * 60 * 1000; // 2 min voor aftrap
   const delayMs = checkMs - Date.now();
@@ -7331,6 +7312,10 @@ app.use('/api', createAdminObservabilityRouter({
   getUserScanTimers: (userId) => userScanTimers[userId],
   supabaseUrl: process.env.SUPABASE_URL,
 }));
+
+// v11.3.23 H1: /api/health public keep-alive endpoint.
+const createHealthRouter = require('./lib/routes/health');
+app.use('/api', createHealthRouter());
 
 // v11.2.9 Phase 5.4g: /api/status toegevoegd aan lib/routes/info.js module
 // (naast /api/version + /api/changelog). Alle meta/info routes één mount,
@@ -7574,9 +7559,11 @@ app.listen(PORT, () => {
     console.log(`⏱  Pre-kickoff + CLV checks herplanned voor ${openWithTime.length} open bet(s)`);
   }).catch(() => {});
 
-  // Keep-alive voor Render free tier (voorkomt slaapstand na 15 min)
+  // Keep-alive voor Render free tier (voorkomt slaapstand na 15 min).
+  // v11.3.23 H1: hit /api/health (public) ipv /api/status (auth-required).
+  // Eerdere keep-alive kreeg 401 en had geen effect op slaapstand.
   if (process.env.RENDER_EXTERNAL_HOSTNAME) {
-    const url = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/api/status`;
+    const url = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/api/health`;
     console.log(`🔁 Keep-alive actief → ${url}`);
     setInterval(() => fetch(url).catch(e => console.warn('Keep-alive ping failed:', e.message)), 14 * 60 * 1000);
   }
