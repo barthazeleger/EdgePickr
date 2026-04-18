@@ -6729,192 +6729,26 @@ const { runLive, getLivePicks } = createLiveScan({
   leagues: { football: AF_FOOTBALL_LEAGUES },
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// BET TRACKER · GOOGLE SHEETS
-// ═══════════════════════════════════════════════════════════════════════════════
+// v11.3.21 Phase 6.3: data-access voor bets-tabel verhuisd naar
+// lib/bets-data.js. calcStats + readBets + writeBet + updateBetOutcome +
+// deleteBet + getUserUnitEur via factory-pattern. revertCalibration +
+// updateCalibration blijven in server.js (learning-loop), worden geinject.
+const createBetsData = require('./lib/bets-data');
+const betsData = createBetsData({
+  supabase,
+  getUserMoneySettings,
+  defaultStartBankroll: START_BANKROLL,
+  defaultUnitEur: UNIT_EUR,
+  revertCalibration,
+  updateCalibration,
+});
+const calcStats = betsData.calcStats;
+const readBets = betsData.readBets;
+const getUserUnitEur = betsData.getUserUnitEur;
+const writeBet = betsData.writeBet;
+const updateBetOutcome = betsData.updateBetOutcome;
+const deleteBet = betsData.deleteBet;
 
-function calcStats(bets, startBankroll = START_BANKROLL, unitEur = UNIT_EUR) {
-  const W     = bets.filter(b => b.uitkomst === 'W').length;
-  const L     = bets.filter(b => b.uitkomst === 'L').length;
-  const open  = bets.filter(b => b.uitkomst === 'Open').length;
-  const total = bets.length;
-  const wlEur = bets.reduce((s, b) => s + (b.uitkomst !== 'Open' ? b.wl : 0), 0);
-  const totalInzet = bets.filter(b => b.uitkomst !== 'Open').reduce((s, b) => s + b.inzet, 0);
-  const roi   = totalInzet > 0 ? wlEur / totalInzet : 0;
-  const openInzet = bets.filter(b => b.uitkomst === 'Open').reduce((s, b) => s + (b.inzet || 0), 0);
-  const bankroll  = +(startBankroll + wlEur).toFixed(2); // alleen settled
-  const avgOdds   = total > 0 ? +(bets.reduce((s,b)=>s+b.odds,0)/total).toFixed(3) : 0;
-  const avgUnits  = total > 0 ? +(bets.reduce((s,b)=>s+b.units,0)/total).toFixed(2) : 0;
-  const strikeRate = (W+L) > 0 ? Math.round(W/(W+L)*100) : 0;
-  // Per-bet unit_at_time (v10.10.7) — fallback huidige unitEur voor legacy rows.
-  const unitFor = (b) => {
-    const ue = b && b.unitAtTime;
-    return Number.isFinite(ue) && ue > 0 ? ue : unitEur;
-  };
-  const winU  = +bets.filter(b=>b.uitkomst==='W').reduce((s,b)=>{ const ue = unitFor(b); return ue > 0 ? s + (b.wl/ue) : s; },0).toFixed(2);
-  const lossU = +bets.filter(b=>b.uitkomst==='L').reduce((s,b)=>{ const ue = unitFor(b); return ue > 0 ? s + (b.wl/ue) : s; },0).toFixed(2);
-  // CLV stats
-  const clvBets = bets.filter(b => b.clvPct !== null && b.clvPct !== undefined && !isNaN(b.clvPct));
-  const avgCLV = clvBets.length > 0 ? +(clvBets.reduce((s, b) => s + b.clvPct, 0) / clvBets.length).toFixed(2) : 0;
-  const clvPositive = clvBets.filter(b => b.clvPct > 0).length;
-  const clvTotal = clvBets.length;
-
-  // Variance tracker
-  const settledBets = bets.filter(b => b.uitkomst === 'W' || b.uitkomst === 'L');
-  const expectedWins = +settledBets.reduce((s, b) => {
-    const prob = b.odds > 1 ? 1 / b.odds : 0.5;
-    return s + prob;
-  }, 0).toFixed(2);
-  const actualWins = W;
-  const variance = +(actualWins - expectedWins).toFixed(2);
-  const varianceStdDev = +Math.sqrt(settledBets.reduce((s, b) => {
-    const prob = b.odds > 1 ? 1 / b.odds : 0.5;
-    return s + prob * (1 - prob);
-  }, 0)).toFixed(2);
-  const luckFactor = varianceStdDev > 0 ? +(variance / varianceStdDev).toFixed(2) : 0;
-
-  // Potentiële dagwinst voor open bets van vandaag
-  const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
-  const todayBets = bets.filter(b => {
-    if (b.uitkomst !== 'Open') return false;
-    // datum format: DD-MM-YYYY → YYYY-MM-DD
-    const d = b.datum;
-    if (!d) return false;
-    const parts = d.split('-');
-    if (parts.length !== 3) return false;
-    const iso = `${parts[2]}-${parts[1]}-${parts[0]}`;
-    return iso === todayStr;
-  });
-  const potentialWin = +todayBets.reduce((s, b) => s + (b.odds - 1) * b.inzet, 0).toFixed(2);
-  const potentialLoss = +todayBets.reduce((s, b) => s + b.inzet, 0).toFixed(2);
-  const todayBetsCount = todayBets.length;
-
-  // Net units: per-bet division door unit_at_time (v10.10.7); legacy fallback
-  // huidige unitEur. Vervangt eerdere proxy die alle wl door één unit deelde.
-  const netUnits  = +bets.reduce((s, b) => {
-    if (b.uitkomst === 'Open') return s;
-    const ue = unitFor(b);
-    return ue > 0 ? s + (b.wl / ue) : s;
-  }, 0).toFixed(2);
-  const netProfit = +wlEur.toFixed(2);
-
-  return { total, W, L, open, wlEur: +wlEur.toFixed(2), roi: +roi.toFixed(4),
-           bankroll: +bankroll.toFixed(2), startBankroll, avgOdds, avgUnits, strikeRate, winU, lossU,
-           netUnits, netProfit,
-           avgCLV, clvPositive, clvTotal,
-           expectedWins, actualWins, variance, varianceStdDev, luckFactor,
-           potentialWin, potentialLoss, todayBetsCount };
-}
-
-async function readBets(userId = null, money = null) {
-  const effectiveMoney = money || await getUserMoneySettings(userId);
-  let query = supabase.from('bets').select('*').order('bet_id', { ascending: true });
-  if (userId) query = query.eq('user_id', userId);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  const bets = (data || []).map(r => {
-    const unitAtTime = Number.isFinite(parseFloat(r.unit_at_time)) && parseFloat(r.unit_at_time) > 0
-      ? parseFloat(r.unit_at_time)
-      : null;
-    const ueForInzet = unitAtTime || effectiveMoney.unitEur;
-    return {
-      id: r.bet_id, datum: r.datum || '', sport: r.sport || '', wedstrijd: r.wedstrijd || '',
-      markt: r.markt || '', odds: r.odds || 0, units: r.units || 0,
-      inzet: r.inzet != null ? r.inzet : +(r.units * ueForInzet).toFixed(2),
-      tip: r.tip || 'Bet365', uitkomst: r.uitkomst || 'Open', wl: r.wl || 0,
-      tijd: r.tijd || '', score: r.score || null,
-      signals: r.signals || '', clvOdds: r.clv_odds || null, clvPct: r.clv_pct || null, sharpClvOdds: r.sharp_clv_odds || null, sharpClvPct: r.sharp_clv_pct || null,
-      fixtureId: r.fixture_id || null,
-      unitAtTime,
-    };
-  });
-  return { bets, stats: calcStats(bets, effectiveMoney.startBankroll, effectiveMoney.unitEur), _raw: data };
-}
-
-// getUserMoneySettings: nu uit lib/db.js (boven geïmporteerd)
-// getUserUnitEur: thin wrapper voor writeBet/updateBetOutcome
-async function getUserUnitEur(userId) {
-  const { unitEur } = await getUserMoneySettings(userId);
-  return unitEur;
-}
-
-async function writeBet(bet, userId = null, unitEur = null) {
-  const ue = unitEur ?? await getUserUnitEur(userId);
-  const inzet = +(bet.units * ue).toFixed(2);
-  const wl = bet.uitkomst === 'W' ? +((bet.odds-1)*inzet).toFixed(2)
-           : bet.uitkomst === 'L' ? -inzet : 0;
-  const base = {
-    bet_id: bet.id, datum: bet.datum, sport: bet.sport, wedstrijd: bet.wedstrijd,
-    markt: bet.markt, odds: bet.odds, units: bet.units, inzet, tip: bet.tip || 'Bet365',
-    uitkomst: bet.uitkomst || 'Open', wl, tijd: bet.tijd || '', score: bet.score || null,
-    signals: bet.signals || '',
-    user_id: userId || null,
-    unit_at_time: ue,
-  };
-  // Schema-tolerant: tier 1 = full payload (v10.10.7+); tier 2 = zonder
-  // fixture_id; tier 3 = ook zonder unit_at_time (pre-v10.10.7 schema).
-  const isColumnError = (msg) => (msg || '').toLowerCase().includes('column');
-  const safeInsert = async (payload) => {
-    try {
-      const { error } = await supabase.from('bets').insert(payload);
-      return error || null;
-    } catch (e) {
-      return { message: e.message };
-    }
-  };
-  let err = await safeInsert({ ...base, fixture_id: bet.fixtureId || null });
-  if (err && isColumnError(err.message)) err = await safeInsert(base);
-  if (err && isColumnError(err.message)) {
-    const { unit_at_time, ...legacy } = base;
-    err = await safeInsert(legacy);
-  }
-  if (err) throw new Error(err.message);
-}
-
-async function updateBetOutcome(id, uitkomst, userId = null) {
-  let query = supabase.from('bets').select('*').eq('bet_id', id);
-  if (userId) query = query.eq('user_id', userId);
-  const { data: row } = await query.single();
-  if (!row) return;
-  const odds = row.odds || 0;
-  const units = row.units || 0;
-  const userUnitEur = await getUserUnitEur(userId);
-  const inzet = row.inzet != null ? row.inzet : +(units * userUnitEur).toFixed(2);
-  const wl = uitkomst === 'W' ? +((odds-1)*inzet).toFixed(2) : uitkomst === 'L' ? -inzet : 0;
-  const prevOutcome = row.uitkomst;
-  let updateQuery = supabase.from('bets').update({ uitkomst, wl }).eq('bet_id', id);
-  if (userId) updateQuery = updateQuery.eq('user_id', userId);
-  await updateQuery;
-
-  // v11.0.0: outcome-flip handling. Als de bet al settled was en het uitkomst
-  // verandert (W→L, L→W, of W/L→Open), rol de vorige calibration-delta eerst
-  // terug voordat de nieuwe wordt geapplied. Voorkomt dat operator-correcties
-  // dubbele (tegenstrijdige) updates in de learning-loop laten lekken.
-  const prevSettled = prevOutcome === 'W' || prevOutcome === 'L';
-  const newSettled = uitkomst === 'W' || uitkomst === 'L';
-  if (prevSettled && prevOutcome !== uitkomst) {
-    await revertCalibration({
-      datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
-      odds, units, uitkomst: prevOutcome, wl: row.wl,
-      sport: row.sport || 'football', league: row.league,
-      ep: row.ep, prob: row.prob,
-    }, userId);
-  }
-  if (newSettled) {
-    await updateCalibration({
-      datum: row.datum, wedstrijd: row.wedstrijd, markt: row.markt,
-      odds, units, uitkomst, wl,
-      sport: row.sport || 'football', league: row.league,
-      ep: row.ep, prob: row.prob,
-    }, userId);
-  }
-}
-
-async function deleteBet(id, userId = null) {
-  let query = supabase.from('bets').delete().eq('bet_id', id);
-  if (userId) query = query.eq('user_id', userId);
-  await query;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPRESS ROUTES

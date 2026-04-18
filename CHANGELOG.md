@@ -2,6 +2,31 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.21] - 2026-04-18
+
+**Phase 6.3 · bets-data layer**
+
+### Added
+
+- **[claude] `lib/bets-data.js`** — Supabase-bets data-access laag via factory-pattern:
+  - `calcStats(bets, startBankroll, unitEur)` — pure stats-aggregatie (W/L/open, ROI, CLV, variance, luck-factor, potentiële dagwinst, per-bet unitAtTime fallback).
+  - `readBets(userId, money?)` — projecteert Supabase-rows naar app-vorm, include CLV + sharp-CLV + fixtureId + unitAtTime.
+  - `getUserUnitEur(userId)` — thin wrapper om unit te resolven.
+  - `writeBet(bet, userId, unitEur?)` — schema-tolerant insert met tier-retry (v10.10.7 → no fixture_id → no unit_at_time legacy).
+  - `updateBetOutcome(id, uitkomst, userId)` — update wl + trigger revertCalibration (bij flip) + updateCalibration (bij nieuwe settled).
+  - `deleteBet(id, userId)` — user-scoped delete.
+- revertCalibration + updateCalibration via dep-inject (blijven in server.js want onderdeel van learning-loop).
+- Factory met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-166 regels** (8140 → 7974).
+- Totaal shrinkage sinds v11.0.0 baseline: **-4563 regels**.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde SELECT-order (bet_id asc), zelfde schema-tier-retry, zelfde calibration revert+apply logica bij outcome-flip, zelfde CLV/variance aggregaties.
+
 ## [11.3.20] - 2026-04-18
 
 **Phase 6.2c · scan schedulers (cron)**
