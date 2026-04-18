@@ -1351,10 +1351,14 @@ test('modelMarketSanityCheck: invalid inputs reject safely', () => {
   assert.strictEqual(modelMarketSanityCheck('0.5', 0.5, 0.04).agree, false);
 });
 
-test('modelMarketSanityCheck: default threshold is 0.04', () => {
+test('modelMarketSanityCheck: default threshold is 0.07 (v11.3.28)', () => {
+  // v11.3.28: threshold 0.04 → 0.07 om legitieme signal-based picks niet
+  // te blokkeren. 0.05 divergence moet nu passeren; 0.08 moet falen.
   const r = modelMarketSanityCheck(0.50, 0.55);
-  assert.strictEqual(r.agree, false, 'divergence 0.05 > default 0.04');
-  assert.strictEqual(r.threshold, 0.04);
+  assert.strictEqual(r.agree, true, 'divergence 0.05 ≤ default 0.07');
+  assert.strictEqual(r.threshold, 0.07);
+  const r2 = modelMarketSanityCheck(0.50, 0.58);
+  assert.strictEqual(r2.agree, false, 'divergence 0.08 > default 0.07');
 });
 
 // ── Poisson3Way regression ───────────────────────────────────────────────────
@@ -2422,7 +2426,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.27');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.28');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

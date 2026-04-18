@@ -2856,7 +2856,7 @@ async function runBasketball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -2933,7 +2933,7 @@ async function runBasketball(emit) {
             const h1Line = parseFloat(h1MainLine);
             const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
             const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            if (h1Ov.length >= 2 && h1Un.length >= 2) {
+            if (h1Ov.length && h1Un.length) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
               const h1TotIP = h1AvgOvIP + h1AvgUnIP;
@@ -3639,7 +3639,7 @@ async function runHockey(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -3723,7 +3723,7 @@ async function runHockey(emit) {
             const p1Line = parseFloat(p1MainLine);
             const p1Ov = p1Over.filter(o => Math.abs(o.point - p1Line) < 0.6);
             const p1Un = p1Under.filter(o => Math.abs(o.point - p1Line) < 0.6);
-            if (p1Ov.length >= 2 && p1Un.length >= 2) {
+            if (p1Ov.length && p1Un.length) {
               const p1AvgOvIP = p1Ov.reduce((s,o)=>s+1/o.price,0) / p1Ov.length;
               const p1AvgUnIP = p1Un.reduce((s,o)=>s+1/o.price,0) / p1Un.length;
               const p1TotIP = p1AvgOvIP + p1AvgUnIP;
@@ -4204,7 +4204,7 @@ async function runBaseball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -4378,7 +4378,7 @@ async function runBaseball(emit) {
             const line = parseFloat(mainLine);
             const ov = f5Totals.filter(o => o.side === 'over' && Math.abs(o.point - line) < 0.6);
             const un = f5Totals.filter(o => o.side === 'under' && Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP = avgOvIP + avgUnIP;
@@ -4760,7 +4760,7 @@ async function runFootballUS(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
@@ -4869,7 +4869,7 @@ async function runFootballUS(emit) {
             const h1Line = parseFloat(h1MainLine);
             const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
             const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            if (h1Ov.length >= 2 && h1Un.length >= 2) {
+            if (h1Ov.length && h1Un.length) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
               const h1TotIP = h1AvgOvIP + h1AvgUnIP;
@@ -5277,7 +5277,7 @@ async function runHandball(emit) {
             const line = parseFloat(mainLine);
             const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
             const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            if (ov.length >= 2 && un.length >= 2) {
+            if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;

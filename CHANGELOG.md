@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.28] - 2026-04-18
+
+**Hotfix · sanity-gate threshold te strikt (operator-rapport 22:00)**
+
+### Fixed
+
+- **[CRITICAL]** Scan-pipeline regressie: sinds 2026-04-18 14:00-scan kwamen er **alleen Over 2.5 voetbal picks** (bij Bet365+Unibet preferred; bij alleen Unibet 0 picks). Geen BTTS, geen 1X2, geen DNB, geen DC, geen basketball/hockey/baseball ML. Root cause: v11.1.2 (09:30) + v11.2.1 (09:52) zetten `MODEL_MARKET_DIVERGENCE_THRESHOLD = 0.04` (4pp) als sanity-gate op 11 markten. Cumulatieve signal-pushes (referee + H2H + form + predictions + congestion + weather) zitten legitiem op **5-8pp** voor 1X2/BTTS/DNB. Over 2.5 voetbal heeft weinig signals (≤3pp push gemiddeld) en overleefde daardoor als enige. Fix: threshold **0.04 → 0.07**. Behoudt Sandefjord-class 34pp guard, laat legitieme signal-based picks door.
+- **[CRITICAL]** Bijbehorende regressie: v11.2.1 verhoogde `ov.length && un.length` naar `ov.length >= 2 && un.length >= 2` op alle O/U markten (basketball, hockey, baseball, NFL). Bij alleen Unibet preferred + Pinnacle/WH als sharp-anchor zijn vaak ≥2 paired bookies per line niet haalbaar op Amerikaanse sports → **nul** O/U picks. Rollback naar `&&` (1+ elk): de sanity-gate zelf (nu op 7pp) vangt al af wanneer een ene-bookie-devig te wild is. Odd/Even (≥3) en NRFI (≥3 + pitcherSig.valid) blijven strenger want exotic markets met inherent dunne pools.
+- Test `modelMarketSanityCheck: default threshold is 0.04` geupdate naar 0.07 + extra assertie voor 0.08 → fail.
+
+### Why
+Operator-rapport 2026-04-18 22:00 "de hele dag alleen Over 2.5 voetbal sinds begin middag". Diagnose via git log: v11.1.2 + v11.2.1 beide vanochtend gepusht, eerste operationele scan op 14:00. Over 2.5 voetbal had al v11.1.2 gate vóór v11.2.1, en heeft de laagste signal-push (Poisson + tsAdj + weather ≤ 3pp gecombineerd) → enige markt die de 4pp gate passeerde. Bug was een **overreactie** op Bart's 's ochtends-rapport "Sandefjord BTTS Nee 34pp fake edge". Originele Sandefjord was een **dun-H2H** probleem (n=2 samples zonder shrinkage), geen generieke "signal-push te hard". 4pp was te bot; 7pp blokkeert nog steeds Sandefjord-class (≥15pp) maar laat 5-7pp legitieme signal-combinatie door.
+
+### Tests
+634 passed, 0 failed.
+
+---
+
 ## [11.3.27] - 2026-04-18
 
 **Phase 10 · reviewer follow-up fixes (second-pass closure)**
