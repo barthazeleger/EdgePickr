@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.18] - 2026-04-18
+
+**Phase 6.2a · polling + heartbeat schedulers**
+
+### Added
+
+- **[claude] `lib/runtime/polling-schedulers.js`** — 4 schedulers via één factory:
+  - `scheduleKickoffWindowPolling` — t-6h/1h/15m odds-snapshots per fixture (5 min loop).
+  - `scheduleFixtureSnapshotPolling` — 90 min doorlopende odds-snapshots van upcoming fixtures.
+  - `scheduleOddsMonitor` — 60 min drift-check over open bets, drift-alerts met persistent dedup in calib.
+  - `scheduleScanHeartbeatWatcher` — 14u-silence alert als scheduler stil ligt.
+- Deps inject: supabase, afGet, sleep, notify, normalizeSport, getSportApiConfig, loadCalibAsync, saveCalib, readBets, getAdminUserId.
+- `_lastHeartbeatAlertAt` state nu module-scoped (was module-level in server.js).
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-303 regels** (9123 → 8820).
+- Totaal shrinkage sinds v11.0.0 baseline: **-3717 regels**.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde intervals, zelfde MAX_CHECKS (15 voor odds, 30 voor snapshot, 80 voor kickoff), zelfde alert-dedup logica, zelfde 14u heartbeat window.
+
 ## [11.3.17] - 2026-04-18
 
 **Phase 6.1 · runtime helpers (checkOpenBetResults + live-scan)**
