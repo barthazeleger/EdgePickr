@@ -57,6 +57,7 @@ const createInfoRouter = require('./lib/routes/info');
 const createPicksRouter = require('./lib/routes/picks');
 const createAnalyticsRouter = require('./lib/routes/analytics');
 const createAdminObservabilityRouter = require('./lib/routes/admin-observability');
+const createAdminControlsRouter = require('./lib/routes/admin-controls');
 const {
   epBucketKey, calcKelly, kellyToUnits, kellyScore, KELLY_FRACTION,
   poisson, poissonOver, poisson3Way,
@@ -2407,7 +2408,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.1');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4986,6 +4987,26 @@ test('user router: construct met valid deps + 2 routes', () => {
   });
   const routes = router.stack.filter(l => l.route).map(l => l.route.path);
   assert.ok(routes.includes('/user/settings'));
+});
+
+test('admin-controls router: throws bij missing deps', () => {
+  assert.throws(() => createAdminControlsRouter({}), /missing required dep/);
+});
+
+test('admin-controls router: construct met valid deps + 5 routes', () => {
+  const router = createAdminControlsRouter({
+    requireAdmin: (req, res, next) => next(),
+    killSwitch: { enabled: true, set: new Set(), thresholds: {}, lastRefreshed: null },
+    refreshKillSwitch: async () => {},
+    operator: { master_scan_enabled: true, panic_mode: false },
+    saveOperatorState: async () => {},
+    loadCalib: () => ({}),
+    saveCalib: async () => {},
+  });
+  const routes = router.stack.filter(l => l.route).map(l => l.route.path);
+  assert.ok(routes.includes('/admin/v2/kill-switch'));
+  assert.ok(routes.includes('/admin/v2/upgrade-ack'));
+  assert.ok(routes.includes('/admin/v2/operator'));
 });
 
 test('admin-observability router: throws bij missing deps', () => {

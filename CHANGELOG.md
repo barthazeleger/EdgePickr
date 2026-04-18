@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.2] - 2026-04-18
+
+**Phase 5.4j · server.js extraction · admin-controls cluster (kill-switch, operator, upgrade-ack)**
+
+### Added
+
+- **[claude] `lib/routes/admin-controls.js`** — 5 admin endpoints in één cluster:
+  - `GET /api/admin/v2/kill-switch` — huidige state (enabled, activeKills, thresholds).
+  - `POST /api/admin/v2/kill-switch` — toggle enabled, manual add/remove keys, refresh.
+  - `POST /api/admin/v2/upgrade-ack` — dismiss `upgrade_api` / `upgrade_unit` aanbevelingen.
+  - `GET /api/admin/v2/operator` — OPERATOR failsafe-state + kill-switch count.
+  - `POST /api/admin/v2/operator` — toggle failsafe-flags (master_scan_enabled, panic_mode, max_picks_per_day, etc.).
+- Shared state (KILL_SWITCH object + OPERATOR object) expliciet inject als deps ipv direct module-state access. Makes mocking testable.
+- 2 nieuwe tests.
+
+### Changed
+
+- server.js netto **-48 regels** (11913 → 11865).
+- Totaal shrinkage sinds v11.0.0 (12537 baseline): **-672 regels** via 12 extracted route modules.
+
+### Tests
+
+605 passed · 0 failed.
+
 ## [11.3.1] - 2026-04-18
 
 **Phase 5.4i · server.js extraction · admin-observability routes**

@@ -7446,30 +7446,17 @@ app.get('/api/admin/v2/clv-stats', requireAdmin, async (req, res) => {
 });
 
 // GET /api/admin/v2/kill-switch — huidige status + actieve killed markten
-app.get('/api/admin/v2/kill-switch', requireAdmin, (req, res) => {
-  res.json({
-    enabled: KILL_SWITCH.enabled,
-    activeKills: [...KILL_SWITCH.set],
-    thresholds: KILL_SWITCH.thresholds,
-    lastRefreshed: KILL_SWITCH.lastRefreshed ? new Date(KILL_SWITCH.lastRefreshed).toISOString() : null,
-  });
-});
-
-// POST /api/admin/v2/kill-switch — admin override (toggle enabled, manual add/remove)
-app.post('/api/admin/v2/kill-switch', requireAdmin, async (req, res) => {
-  try {
-    const { enabled, addKey, removeKey, refresh } = req.body || {};
-    if (typeof enabled === 'boolean') KILL_SWITCH.enabled = enabled;
-    if (typeof addKey === 'string' && addKey) KILL_SWITCH.set.add(addKey);
-    if (typeof removeKey === 'string' && removeKey) KILL_SWITCH.set.delete(removeKey);
-    if (refresh) await refreshKillSwitch();
-    res.json({
-      enabled: KILL_SWITCH.enabled,
-      activeKills: [...KILL_SWITCH.set],
-      lastRefreshed: KILL_SWITCH.lastRefreshed ? new Date(KILL_SWITCH.lastRefreshed).toISOString() : null,
-    });
-  } catch (e) { res.status(500).json({ error: 'Interne fout' }); }
-});
+// v11.3.2 Phase 5.4j: kill-switch / operator / upgrade-ack endpoints verhuisd
+// naar lib/routes/admin-controls.js.
+const createAdminControlsRouter = require('./lib/routes/admin-controls');
+app.use('/api', createAdminControlsRouter({
+  requireAdmin,
+  killSwitch: KILL_SWITCH,
+  refreshKillSwitch,
+  operator: OPERATOR,
+  saveOperatorState,
+  loadCalib, saveCalib,
+}));
 
 // GET /api/admin/v2/walkforward?sport=hockey&days=30
 // Walk-forward evaluatie: voor elke historische pick_candidate die settled is,
@@ -7544,25 +7531,6 @@ app.get('/api/admin/v2/walkforward', requireAdmin, async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: (e && e.message) || 'Interne fout' });
-  }
-});
-
-// v10.9.6: POST /api/admin/v2/upgrade-ack — permanent dismiss een
-// upgrade-aanbeveling-type (upgrade_api / upgrade_unit) zodat die niet opnieuw
-// vuurt. Body: { type: 'upgrade_api', dismissed: true }.
-app.post('/api/admin/v2/upgrade-ack', requireAdmin, async (req, res) => {
-  try {
-    const valid = new Set(['upgrade_api', 'upgrade_unit']);
-    const type = String(req.body?.type || '');
-    if (!valid.has(type)) return res.status(400).json({ error: 'unknown type; allowed: upgrade_api, upgrade_unit' });
-    const dismissed = req.body?.dismissed !== false;
-    const cs = loadCalib();
-    cs.upgrades_dismissed = cs.upgrades_dismissed || {};
-    cs.upgrades_dismissed[type] = dismissed;
-    await saveCalib(cs);
-    res.json({ ok: true, type, dismissed });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
   }
 });
 
@@ -7650,22 +7618,6 @@ app.post('/api/admin/v2/scrape-sources', requireAdmin, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: 'scrape-sources update failed', detail: e.message });
   }
-});
-
-// GET/POST /api/admin/v2/operator — minimal failsafe-toggles
-app.get('/api/admin/v2/operator', requireAdmin, (req, res) => {
-  res.json({ ...OPERATOR, kill_switch_active_count: KILL_SWITCH.set.size });
-});
-app.post('/api/admin/v2/operator', requireAdmin, async (req, res) => {
-  const allowed = ['master_scan_enabled', 'market_auto_kill_enabled', 'signal_auto_kill_enabled', 'panic_mode', 'max_picks_per_day', 'scraping_enabled'];
-  for (const k of allowed) {
-    if (req.body && req.body[k] !== undefined) {
-      OPERATOR[k] = (k === 'max_picks_per_day') ? Math.max(1, Math.min(10, parseInt(req.body[k]) || 5)) : !!req.body[k];
-    }
-  }
-  KILL_SWITCH.enabled = OPERATOR.market_auto_kill_enabled;
-  await saveOperatorState();
-  res.json({ ...OPERATOR, kill_switch_active_count: KILL_SWITCH.set.size });
 });
 
 // POST /api/admin/v2/training-examples-build — schrijf training_examples voor settled bets
