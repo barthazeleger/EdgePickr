@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.11] - 2026-04-18
+
+**Phase 5.4s · analyze + POTD cluster**
+
+### Added
+
+- **[claude] `lib/routes/analyze.js`** — 2 endpoints extracted uit server.js:
+  - `GET /api/potd` — Pick-of-the-Day post generator voor Reddit + X formats, met W/L/P-record + last-5 + current-pick highlight.
+  - `POST /api/analyze` — natural-language match lookup (NL/EN), multi-sport fuzzy resolver, preferred-bookie filter met "buiten-prefs" waarschuwing, fallback naar upcoming fixture search over hockey/basketball/baseball/NFL/handball/football.
+- Deps inject: rateLimit, requireAdmin, getLastPrematchPicks, getLastLivePicks, loadScanHistoryFromSheets, loadScanHistory, getUserMoneySettings, readBets, loadUsers, afGet, getSportApiConfig.
+- teamMatchScore geimporteerd uit lib/model-math.js binnen de module (geen duplicaat in server.js).
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-373 regels** (10576 → 10203).
+- Totaal shrinkage sinds v11.0.0 baseline: **-2330 regels** via 21 extracted route modules.
+- Dead require opgeruimd: `safePick/safePicksList/PUBLIC_PICK_FIELDS` werden sinds v11.2.8 al niet meer gebruikt in server.js; POTD/analyze gebruiken inline `projectPick`.
+- Comment-docstring bij picks-mount bijgewerkt (verwijst nu naar analyze.js).
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging — zelfde regex-parser, zelfde market detection, zelfde filter/fallback flow.
+
 ## [11.3.10] - 2026-04-18
 
 **Phase 5.4r · bets-write cluster (POST/PUT/recalculate/current-odds)**
