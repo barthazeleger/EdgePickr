@@ -6735,188 +6735,40 @@ app.use('/api', createNotificationsRouter({
 // INCLUSIEF de multi-sport scans en de notify() notificatie. Voorheen deed de
 // cron alleen runPrematch() (football, geen notificatie) — verklaarde de
 // missende 14:00 push.
-async function runFullScan({ emit = () => {}, prefs = null, isAdmin = true, triggerLabel = 'manual' } = {}) {
-  const scanStartedAt = Date.now();
-  try {
-    setPreferredBookies(prefs);
-    if (prefs?.length) emit({ log: `🏦 Edge-evaluatie op jouw bookies: ${prefs.join(', ')}` });
-    // v10.9.9: refresh admin's actieve unit/bankroll zodat pick-ranking en
-    // expectedEur-display meeschalen met compounding-updates (admin-settings).
-    await refreshActiveUnitEur();
-    if (_activeUnitEur !== UNIT_EUR || _activeStartBankroll !== START_BANKROLL) {
-      emit({ log: `💰 Actieve unit: €${_activeUnitEur} · bankroll: €${_activeStartBankroll}` });
-    }
-    // v10.12.23 Phase C.10 live-wiring: herbereken stake-regime uit live
-    // bets. Kelly-fraction + unit-multiplier worden door deze regime-output
-    // bepaald voor de rest van de scan.
-    await recomputeStakeRegime();
-    if (_currentStakeRegime) {
-      const r = _currentStakeRegime;
-      emit({ log: `🎚️ Stake-regime: ${r.regime} · Kelly ${r.kellyFraction} · unit ×${r.unitMultiplier}` });
-    }
-
-    const footballPicks = await runPrematch(emit);
-
-    emit({ log: '🏀🏒⚾🏈🤾 Multi-sport scans starten...' });
-    const [nbaPicks, nhlPicks, mlbPicks, nflPicks, handballPicks] = await Promise.all([
-      runBasketball(emit).catch(err => { emit({ log: `⚠️ Basketball scan mislukt: ${err.message}` }); return []; }),
-      runHockey(emit).catch(err => { emit({ log: `⚠️ Hockey scan mislukt: ${err.message}` }); return []; }),
-      runBaseball(emit).catch(err => { emit({ log: `⚠️ Baseball scan mislukt: ${err.message}` }); return []; }),
-      runFootballUS(emit).catch(err => { emit({ log: `⚠️ NFL scan mislukt: ${err.message}` }); return []; }),
-      runHandball(emit).catch(err => { emit({ log: `⚠️ Handball scan mislukt: ${err.message}` }); return []; }),
-    ]);
-
-    let allPicks = [...footballPicks, ...nbaPicks, ...nhlPicks, ...mlbPicks, ...nflPicks, ...handballPicks];
-
-    // Kill-switch enforcement
-    const beforeKill = allPicks.length;
-    const killedPicks = allPicks.filter(p => isMarketKilled(p.sport, p.label));
-    allPicks = allPicks.filter(p => !isMarketKilled(p.sport, p.label));
-    const killedCount = beforeKill - allPicks.length;
-    if (killedCount > 0) {
-      emit({ log: `🛑 Kill-switch: ${killedCount} pick(s) geblokkeerd op markt-CLV regels` });
-      try {
-        const sample = killedPicks.slice(0, 3).map(p => `${p.match} (${p.label})`).join('; ');
-        await supabase.from('notifications').insert({
-          type: 'kill_switch',
-          title: `🛑 ${killedCount} pick(s) geblokkeerd door kill-switch`,
-          body: `${killedCount} potentiële picks vielen weg omdat de markt structureel negatieve CLV heeft.\nVoorbeelden: ${sample}${killedPicks.length > 3 ? ` (+${killedPicks.length - 3} meer)` : ''}`,
-          read: false, user_id: null,
-        });
-      } catch { /* swallow */ }
-    }
-
-    // v10.10.18: correlatie-demping op league-day clusters + same-fixture.
-    // Sterkste pick in elk cluster behoudt volle kelly, rest wordt gedempt.
-    const preDampCount = allPicks.filter(p => p.correlationAudit).length;
-    applyCorrelationDamp(allPicks);
-    const dampedCount = allPicks.filter(p => p.correlationAudit && p.correlationAudit.dampFactor < 1.0).length;
-    if (dampedCount > 0) emit({ log: `📉 Correlatie-demping: ${dampedCount} pick(s) gedempt (zelfde league/dag of wedstrijd)` });
-
-    allPicks.sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0));
-
-    // Diversification
-    const MAX_PICKS = OPERATOR.panic_mode ? Math.min(2, OPERATOR.max_picks_per_day) : OPERATOR.max_picks_per_day;
-    const MAX_PER_MATCH = 1;
-    // v10.8.16: refresh per-sport caps (cache TTL 10min). Non-blocking op cache
-    // miss, gebruikt dan default 2 per sport tot de eerstvolgende scan.
-    if (Date.now() - _sportCapCache.at > SPORT_CAP_TTL_MS) {
-      await refreshSportCaps().catch(() => {});
-    }
-    if (OPERATOR.panic_mode) {
-      const beforePanic = allPicks.length;
-      allPicks = allPicks.filter(p => {
-        const key = `${normalizeSport(p.sport)}_${detectMarket(p.label)}`;
-        return (_marketSampleCache.data[key] || 0) >= 100;
-      });
-      const panicSkipped = beforePanic - allPicks.length;
-      if (panicSkipped) emit({ log: `🚨 Panic mode: ${panicSkipped} pick(s) geskipt (alleen PROVEN markten)` });
-    }
-    const seenMatches = new Map();
-    const seenSports = new Map();
-    const topPicks = [];
-    const skippedReasons = { same_match: 0, same_sport_cap: 0 };
-    for (const p of allPicks) {
-      if (topPicks.length >= MAX_PICKS) break;
-      const matchKey = (p.match || '').toLowerCase().trim();
-      const sportKey = normalizeSport(p.sport || 'unknown');
-      const sportCap = getSportCap(sportKey);
-      if (matchKey && (seenMatches.get(matchKey) || 0) >= MAX_PER_MATCH) { skippedReasons.same_match++; continue; }
-      if ((seenSports.get(sportKey) || 0) >= sportCap) { skippedReasons.same_sport_cap++; continue; }
-      topPicks.push(p);
-      if (matchKey) seenMatches.set(matchKey, (seenMatches.get(matchKey) || 0) + 1);
-      seenSports.set(sportKey, (seenSports.get(sportKey) || 0) + 1);
-    }
-    const droppedCount = allPicks.length - topPicks.length;
-
-    emit({ log: `🌐 Totaal: ${footballPicks.length} voetbal + ${nbaPicks.length} basketball + ${nhlPicks.length} hockey + ${mlbPicks.length} baseball + ${nflPicks.length} NFL + ${handballPicks.length} handball = ${beforeKill} kandidaten` });
-    const provenSports = Object.entries(_sportCapCache.stats || {})
-      .filter(([, s]) => s.cap === 3)
-      .map(([k, s]) => `${k}(n=${s.n}, ROI ${s.roi > 0 ? '+' : ''}${s.roi}%)`);
-    if (provenSports.length) emit({ log: `🏆 Bewezen sporten (cap=3): ${provenSports.join(', ')}` });
-    if (skippedReasons.same_match) emit({ log: `🎯 ${skippedReasons.same_match} pick(s) geskipt: zelfde wedstrijd al in selectie (correlatie)` });
-    if (skippedReasons.same_sport_cap) emit({ log: `🎯 ${skippedReasons.same_sport_cap} pick(s) geskipt: per-sport cap bereikt (default 2, bewezen sport 3)` });
-    if (droppedCount > 0) emit({ log: `🎯 ${topPicks.length}/${MAX_PICKS} picks geselecteerd (${droppedCount} weggelaten door diversification + ranking)` });
-
-    if (topPicks.length === 0) {
-      emit({ log: `✋ Geen picks vandaag — ons systeem zag te weinig value. Dat is goed: niet elke dag is een edge-dag.` });
-    } else if (topPicks.length <= 2) {
-      emit({ log: `✋ ${topPicks.length} pick(s) — kwaliteit boven volume. Strenge filters hebben hun werk gedaan.` });
-    }
-
-    const topSet = new Set(topPicks);
-    for (const p of allPicks) p.selected = topSet.has(p);
-
-    // v10.9.7: combi-alternatieven. Combis (isCombi:true) die niet in top-5
-    // singles landen worden hier apart opgepakt — user ziet de hoogste-EV
-    // 2/3-bener als alternatief voor wie variance accepteert voor hoger EV.
-    // Max 3 getoond. Elke combi heeft stake-cap 0.5U via makeCombi, dus zelfs
-    // bij grote rally's aan legs wordt geen onverantwoord exposed.
-    const topCombis = allPicks
-      .filter(p => p.isCombi && !topSet.has(p))
-      .sort((a, b) => (b.expectedEur || 0) - (a.expectedEur || 0))
-      .slice(0, 3);
-    for (const p of topCombis) p.combiAlternative = true;
-
-    saveScanEntry(allPicks, 'prematch', beforeKill);
-
-    // v10.8.17/22: audit — flag picks waar de base-model (pre-signalen) ver
-    // van markt afwijkt EN signalen dat niet wegduwen. Dat signaleert een
-    // base-calc-driven claim die we extra willen controleren (bv. calcBTTSProb
-    // met weinig H2H samples, of fpHome-derivering op dunne bookie-consensus).
-    // v10.9.4: audit-inbox-notificatie verwijderd. De suspicious-flag werkt
-    // nu DOOR in de stake (hk × 0.6) — geen aparte notificatie meer nodig.
-    // Pick met damping = lagere stake + lagere score, user ziet het direct
-    // zonder dat inbox-flag tegenstrijdig voelt met de 1.5U badge.
-
-    // Web-push + inbox notificatie
-    if (topPicks.length > 0) {
-      const sportEmoji = { football: '⚽', basketball: '🏀', hockey: '🏒', baseball: '⚾', 'american-football': '🏈', handball: '🤾' };
-      const todayLabel = new Date().toLocaleDateString('nl-NL', { day: '2-digit', month: 'long', year: 'numeric' });
-      let msg = `🎯 EDGEPICKR DAILY SCAN\n📅 ${todayLabel}\n📊 ${allPicks.length} kandidaten uit 6 sporten\n✅ TOP ${topPicks.length} PICKS\n\n`;
-      topPicks.forEach((p, i) => {
-        const icon = sportEmoji[p.sport] || '🏆';
-        const star = i === 0 ? '⭐' : i === 1 ? '🔵' : '•';
-        msg += `${star} ${icon} ${p.match}\n${p.league}\n📌 ${p.label}\n💰 Odds: ${p.odd} | ${p.units}\n📈 Kans: ${p.prob}%\n\n`;
-      });
-      notify(msg).catch(() => {});
-    } else {
-      const todayLabel = new Date().toLocaleDateString('nl-NL', { day: '2-digit', month: 'long', year: 'numeric' });
-      notify(`🎯 EDGEPICKR DAILY SCAN\n📅 ${todayLabel}\n\n🚫 Geen picks met voldoende edge gevonden.`).catch(() => {});
-    }
-
-    const toSafe = (p) => {
-      const hk = p.kelly || 0;
-      const score = kellyScore(hk);
-      const pick = {
-        match: p.match, league: p.league, label: p.label, odd: p.odd,
-        prob: p.prob, units: p.units, edge: p.edge, score,
-        kickoff: p.kickoff, scanType: p.scanType, bookie: p.bookie,
-        sport: p.sport || 'football', audit: p.audit || null,
-        isCombi: p.isCombi === true, legs: p.legs || null,
-      };
-      if (isAdmin) { pick.reason = p.reason; pick.kelly = p.kelly; pick.ep = p.ep; pick.strength = p.strength; pick.expectedEur = p.expectedEur; pick.signals = p.signals || []; }
-      return pick;
-    };
-    const safePicks = topPicks.map(toSafe);
-    // v10.9.7: combi-alternatieven meegeven zodat UI een apart paneel rendert.
-    const safeCombis = topCombis.map(toSafe);
-
-    // v11.0.0: altijd scan_end notifie schrijven zodat heartbeat-watcher weet
-    // dat de scheduler leeft, ook bij 0 picks of manual scans.
-    await logScanEnd(supabase, {
-      triggerLabel,
-      picksCount: topPicks.length,
-      candidatesCount: beforeKill,
-      durationMs: Date.now() - scanStartedAt,
-      sports: ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'],
+// v11.3.26 Phase 9.2: runFullScan orchestrator verhuisd naar lib/scan/orchestrator.js.
+// Per-sport scan bodies (runPrematch, runBasketball, runHockey, runBaseball,
+// runFootballUS, runHandball) blijven in server.js — die hebben dense business-
+// logic die eerst per-sport integration-tests verdient voor veilige extractie.
+const createScanOrchestrator = require('./lib/scan/orchestrator');
+let _scanOrchestrator = null;
+function getRunFullScan() {
+  if (!_scanOrchestrator) {
+    _scanOrchestrator = createScanOrchestrator({
+      runPrematch, runBasketball, runHockey, runBaseball, runFootballUS, runHandball,
+      setPreferredBookies, refreshActiveUnitEur, recomputeStakeRegime,
+      getActiveUnitEur: () => _activeUnitEur,
+      getActiveStartBankroll: () => _activeStartBankroll,
+      getCurrentStakeRegime: () => _currentStakeRegime,
+      defaultUnitEur: UNIT_EUR,
+      defaultStartBankroll: START_BANKROLL,
+      isMarketKilled, applyCorrelationDamp,
+      refreshSportCaps, getSportCap,
+      getSportCapCache: () => _sportCapCache,
+      sportCapTtlMs: SPORT_CAP_TTL_MS,
+      getMarketSampleCache: () => _marketSampleCache,
+      normalizeSport, detectMarket,
+      operator: OPERATOR,
+      saveScanEntry, notify, logScanEnd,
+      kellyScore,
+      supabase,
     });
-
-    return { safePicks, safeCombis, topPicks, topCombis, allPicks, beforeKill };
-  } finally {
-    setPreferredBookies(null);
   }
+  return _scanOrchestrator.runFullScan;
 }
+async function runFullScan(opts) {
+  return getRunFullScan()(opts);
+}
+
 
 // v11.3.16 Phase 5.4x: POST /api/prematch + POST /api/live (SSE scan streams)
 // verhuisd naar lib/routes/scan-stream.js via factory-pattern. scanRunning

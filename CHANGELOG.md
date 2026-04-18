@@ -2,6 +2,27 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.26] - 2026-04-18
+
+**Phase 9.1 + 9.2 · frontend DOM hardening + scan-orchestrator extractie**
+
+### Fixed
+
+- **[P1 Codex #1]** `index.html` analyze error-suggestions: gemigreerd van inline `onclick="...${escHtml(m.match...)}..."` naar DOM nodes + event-delegation via `data-match` attribuut. De inline-handler-met-string-concat was de specifieke XSS-fragile path die reviewer #1 als P1 flagde. Andere innerHTML-paths met geëscapete vars blijven (niet exploitabel met huidige escHtml).
+
+### Added
+
+- **`lib/scan/orchestrator.js`** — `runFullScan` orchestrator extracted uit server.js (182 regels). Coördineert pre-scan prep (setPreferredBookies, refreshActiveUnitEur, recomputeStakeRegime) + multi-sport scan (football via runPrematch + NBA/NHL/MLB/NFL/handball in Promise.all) + kill-switch + correlatie-damping + diversification + saveScanEntry + notify + logScanEnd. Factory met ~25 deps (getter-pattern voor alle mutable state: `_activeUnitEur`, `_activeStartBankroll`, `_currentStakeRegime`, `_sportCapCache`, `_marketSampleCache`). Lazy-init om hoisting-issues met later-declared helpers te vermijden.
+- De per-sport scan bodies (runPrematch, runBasketball, runHockey, runBaseball, runFootballUS, runHandball) blijven in server.js. Ze bevatten dense business-logic (3-4k regels) die eerst per-sport integration-tests verdient vóór veilige extractie — dat is het correcte volgende stuk voor Phase 10 na deze test-infra.
+
+### Changed
+
+- server.js netto **-148 regels** (7783 → 7635).
+
+### Tests
+
+632 passed · 0 failed. Server boot groen. Gedrag identiek — lift-and-shift met getter-pattern voor mutable state.
+
 ## [11.3.25] - 2026-04-18
 
 **Phase 8.1 + 8.2 · route integration tests + empirical pick-distribution**

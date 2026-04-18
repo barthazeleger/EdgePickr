@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.3.25</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.3.26</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -636,7 +636,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.3.25</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.3.26</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -3561,18 +3561,38 @@ async function runAnalysis() {
     const d = await r.json();
     if (!d) return;
     if (d.error) {
-      let errHtml = '<div class="card"><div style="color:var(--red);padding:12px">' + escHtml(d.error) + '</div>';
+      // v11.3.26 Phase 9.1: migrated from inline onclick (XSS-fragile pattern
+      // met string-concat van user-match-text naar JS-source) naar DOM nodes
+      // + event-delegation via data-match attribuut. Reviewer Codex #1 P1.
+      result.textContent = '';
+      const card = document.createElement('div');
+      card.className = 'card';
+      const err = document.createElement('div');
+      err.style.cssText = 'color:var(--red);padding:12px';
+      err.textContent = d.error;
+      card.appendChild(err);
       if (d.matches && d.matches.length) {
-        errHtml += '<div style="margin-top:8px;font-size:13px">';
+        const list = document.createElement('div');
+        list.style.cssText = 'margin-top:8px;font-size:13px';
         d.matches.forEach(m => {
-          errHtml += '<div style="padding:6px 0;border-top:1px solid var(--border);cursor:pointer" onclick="document.getElementById(\'analyze-input\').value=\'' +
-            escHtml(m.match.replace(/'/g, "\\'")) + '\';runAnalysis()">' +
-            escHtml(m.match) + ' <span style="color:var(--muted)">' + escHtml(m.league) + ' - ' + escHtml(m.kickoff) + '</span></div>';
+          const row = document.createElement('div');
+          row.style.cssText = 'padding:6px 0;border-top:1px solid var(--border);cursor:pointer';
+          row.dataset.match = m.match || '';
+          row.addEventListener('click', () => {
+            const input = document.getElementById('analyze-input');
+            if (input) { input.value = row.dataset.match; runAnalysis(); }
+          });
+          const matchSpan = document.createTextNode((m.match || '') + ' ');
+          const meta = document.createElement('span');
+          meta.style.color = 'var(--muted)';
+          meta.textContent = (m.league || '') + ' - ' + (m.kickoff || '');
+          row.appendChild(matchSpan);
+          row.appendChild(meta);
+          list.appendChild(row);
         });
-        errHtml += '</div>';
+        card.appendChild(list);
       }
-      errHtml += '</div>';
-      result.innerHTML = errHtml;
+      result.appendChild(card);
       return;
     }
     if (d.multi && d.results) {
