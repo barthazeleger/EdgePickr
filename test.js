@@ -36,7 +36,7 @@ const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
 const walkForward = require('./lib/walk-forward');
 const scanGate = require('./lib/runtime/scan-gate');
-const { evaluateStakeRegime } = require('./lib/stake-regime');
+const { evaluateStakeRegime, computeBankrollMetrics } = require('./lib/stake-regime');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const dailyResults = require('./lib/runtime/daily-results');
 const liveBoard = require('./lib/runtime/live-board');
@@ -6029,6 +6029,94 @@ test('evaluateStakeRegime: reasons array bevat regime + details', () => {
   });
   assert.ok(Array.isArray(r.reasons));
   assert.ok(r.reasons.some(rs => rs.startsWith('scale_up:')), 'reasons bevat scale_up: prefix');
+});
+
+// ── COMPUTE-BANKROLL-METRICS (v11.0.0): drawdown anker op echte bankroll ────
+test('computeBankrollMetrics: lege input returnt defaults (startBankroll anchor)', () => {
+  const m = computeBankrollMetrics([], 100);
+  assert.strictEqual(m.totalSettled, 0);
+  assert.strictEqual(m.bankrollPeak, 100);
+  assert.strictEqual(m.currentBankroll, 100);
+  assert.strictEqual(m.drawdownPct, 0);
+  assert.strictEqual(m.consecutiveLosses, 0);
+});
+
+test('computeBankrollMetrics: drawdown op echte bankroll, niet NET P/L', () => {
+  // Voorbeeld uit operator-report: peak €88.72 NET P/L, nu €38.72 NET P/L.
+  // Op NET-P/L basis: drawdown = (88.72 - 38.72) / 88.72 = 56.4% → TRIGGER.
+  // Op echte-bankroll basis (start €500): peak €588.72, nu €538.72 → 8.5%.
+  const bets = [
+    { uitkomst: 'W', wl: 88.72, datum: '01-04-2026', clv_pct: 1, inzet: 10 },
+    { uitkomst: 'L', wl: -50.00, datum: '02-04-2026', clv_pct: -1, inzet: 10 },
+  ];
+  const m = computeBankrollMetrics(bets, 500);
+  assert.strictEqual(m.bankrollPeak, 588.72);
+  assert.strictEqual(m.currentBankroll, 538.72);
+  const pct = +(m.drawdownPct * 100).toFixed(1);
+  assert.ok(pct > 8 && pct < 9, `expected ~8.5%, got ${pct}%`);
+});
+
+test('computeBankrollMetrics: startBankroll=0 skips drawdown trigger (fallback)', () => {
+  const bets = [
+    { uitkomst: 'W', wl: 100, datum: '01-04-2026', clv_pct: 1, inzet: 10 },
+    { uitkomst: 'L', wl: -50, datum: '02-04-2026', clv_pct: -1, inzet: 10 },
+  ];
+  const m = computeBankrollMetrics(bets, 0);
+  assert.strictEqual(m.drawdownPct, 0, 'drawdown disabled wanneer startBankroll ontbreekt');
+});
+
+test('computeBankrollMetrics: sorts chronologisch via dd-mm-yyyy parsing', () => {
+  const bets = [
+    { uitkomst: 'L', wl: -10, datum: '03-04-2026' },
+    { uitkomst: 'W', wl: +20, datum: '01-04-2026' },
+    { uitkomst: 'L', wl: -5, datum: '02-04-2026' },
+  ];
+  const m = computeBankrollMetrics(bets, 100);
+  // Order: +20 (120) → -5 (115) → -10 (105). Peak=120, end=105.
+  assert.strictEqual(m.bankrollPeak, 120);
+  assert.strictEqual(m.currentBankroll, 105);
+});
+
+test('computeBankrollMetrics: consecutive losses at tail', () => {
+  const bets = [
+    { uitkomst: 'W', wl: 10, datum: '01-04-2026' },
+    { uitkomst: 'L', wl: -5, datum: '02-04-2026' },
+    { uitkomst: 'L', wl: -5, datum: '03-04-2026' },
+    { uitkomst: 'L', wl: -5, datum: '04-04-2026' },
+  ];
+  const m = computeBankrollMetrics(bets, 100);
+  assert.strictEqual(m.consecutiveLosses, 3);
+});
+
+test('computeBankrollMetrics: CLV averages per rolling window (30 + 200)', () => {
+  // 40 bets verspreid over unieke dagen. Eerste 10 hebben clv=1.0, laatste 30
+  // hebben clv=4.0. recentClvPct moet 4.0 zijn, longTermClvPct het gewogen gem.
+  const bets = Array.from({ length: 40 }, (_, i) => {
+    const d = new Date(Date.UTC(2026, 0, i + 1));
+    const datum = `${String(d.getUTCDate()).padStart(2, '0')}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${d.getUTCFullYear()}`;
+    return {
+      uitkomst: i % 2 === 0 ? 'W' : 'L',
+      wl: i % 2 === 0 ? 10 : -5,
+      clv_pct: i < 10 ? 1.0 : 4.0,
+      inzet: 10,
+      datum,
+    };
+  });
+  const m = computeBankrollMetrics(bets, 100);
+  assert.strictEqual(m.recentClvPct, 4.0, 'last-30 avg = 4.0 (allemaal in tweede helft)');
+  const expectedLong = +((10 * 1.0 + 30 * 4.0) / 40).toFixed(3);
+  assert.strictEqual(m.longTermClvPct, expectedLong, 'long-term (laatste 200, hier 40) = gewogen gem.');
+});
+
+test('computeBankrollMetrics: bets zonder datum worden genegeerd (chrono-filter)', () => {
+  const bets = [
+    { uitkomst: 'W', wl: 10 }, // geen datum
+    { uitkomst: 'L', wl: -5, datum: 'garbage' }, // ongeldig
+    { uitkomst: 'W', wl: 10, datum: '01-04-2026' }, // valid
+  ];
+  const m = computeBankrollMetrics(bets, 100);
+  assert.strictEqual(m.bankrollPeak, 110, 'alleen de valid bet telt mee');
+  assert.strictEqual(m.currentBankroll, 110);
 });
 
 // ── BOOKIE CONCENTRATION (v10.12.16 Phase C.9) ────────────────────────────
