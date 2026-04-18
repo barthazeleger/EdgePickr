@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.9] - 2026-04-18
+
+**Phase 5.4q · admin model-eval cluster (walkforward + training-examples-build + drift + why-this-pick)**
+
+### Added
+
+- **[claude] `lib/routes/admin-model-eval.js`** — 4 model/calibration/attribution endpoints:
+  - `GET /api/admin/v2/walkforward?sport=X&days=30` — Brier score + log-loss + calibration buckets over settled bets (impliciete prob uit logged odds als baseline tot pick_candidates ≥500 per markt).
+  - `POST /api/admin/v2/training-examples-build` — schrijf training_examples rows voor settled bets.
+  - `GET /api/admin/v2/drift` — windowed CLV drift (25/50/100 vs all-time) per markt/signaal/bookie; alert alleen bij ≥10 in window én ≥30 totaal.
+  - `GET /api/admin/v2/why-this-pick?bet_id=X` — attribution: baseline/delta/signals/features/consensus + execution-quality replay uit snapshots (point-in-time anchor).
+- Deps inject: supabase, requireAdmin, loadUsers, normalizeSport, detectMarket, normalizeBookmaker, summarizeExecutionQuality, writeTrainingExamplesForSettled.
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-241 regels** (11044 → 10803).
+- Totaal shrinkage sinds v11.0.0 baseline: **-1734 regels** via 19 extracted route modules.
+- Opgeruimd: dubbele blanks + overbodige comment-fragment tussen admin-sources en admin-signals mounts.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging.
+
 ## [11.3.8] - 2026-04-18
 
 **Phase 5.4p · admin-timeline cluster (calibration-monitor + line-timeline-preview)**
