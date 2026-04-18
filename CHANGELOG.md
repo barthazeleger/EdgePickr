@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.7] - 2026-04-18
+
+**Phase 5.4o · admin-quality cluster (execution/data quality + odds-drift + per-bookie + market-thresholds)**
+
+### Added
+
+- **[claude] `lib/routes/admin-quality.js`** — 5 admin observability/analytics endpoints:
+  - `GET /api/admin/v2/execution-quality` — punt-in-tijd execution analyse per fixture × markt × selection (via `summarizeExecutionQuality`).
+  - `GET /api/admin/v2/data-quality?hours=24` — feature_snapshots freshness + issue-counts + consensus-health.
+  - `GET /api/admin/odds-drift?days=14&scope=mine|all` — odds drift per (sport, market_type, hours-before-kick) bucket; research tool voor entry-timing.
+  - `GET /api/admin/v2/per-bookie-stats` — ROI + CLV + win-rate per bookmaker uit settled bets (executable edge).
+  - `GET /api/admin/v2/market-thresholds` — huidige adaptive MIN_EDGE per markt tier (BOOTSTRAP/PROVEN/EARLY/UNPROVEN).
+- Deps inject: supabase, requireAdmin, loadUsers, summarizeExecutionQuality, normalizeSport, getMarketSampleCache (getter), refreshMarketSampleCounts, MARKET_SAMPLE_TTL_MS, BOOTSTRAP_MIN_TOTAL_BETS.
+- Factory pattern met fail-fast dep-validation.
+
+### Changed
+
+- server.js netto **-296 regels** (11457 → 11161).
+- Totaal shrinkage sinds v11.0.0 baseline: **-1376 regels** via 17 extracted route modules.
+
+### Tests
+
+609 passed · 0 failed. Lift-and-shift zonder gedragswijziging; bestaande summarizeExecutionQuality + market-thresholds tests dekken de kernlogica.
+
 ## [11.3.6] - 2026-04-18
 
 **Phase 5.4n · admin-sources cluster (scrape-diagnose + scrape-sources GET/POST)**
