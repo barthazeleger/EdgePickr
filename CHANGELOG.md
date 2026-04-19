@@ -2,6 +2,35 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.32] - 2026-04-19
+
+**Hotfix · stale-scan UI + NHL TT settlement-scope mismatch**
+
+Twee onafhankelijke bugs die Codex vond in aparte review-passes. Beide verklaarden waarom eerdere scan-output contradictoir leek: scan-log zei "0 voetbal picks" maar UI toonde nog 2 oude NHL TT picks.
+
+### Fixed
+
+- **[P0]** **Stale-scan UI bug** (index.html:5523, :5607, :5627): frontend-filter `h.type === 'prematch' && h.picks?.length` verborg scans met 0 picks → UI bleef de laatste niet-lege prematch-scan tonen terwijl de echte nieuwste scan 0 picks had. Operator-symptoom: *"scan-log zegt 0 voetbal, ik zie toch nog dezelfde 2 oude bet365 picks, near-miss spreekt elkaar tegen"*. Fix: filter `&& h.picks?.length` weggehaald op 3 plekken (initial load, refresh handler, _lastScanTs init). `renderPicks()` toont al netjes "🚫 Geen picks in deze scan" bij lege array — dus na fix krijgt operator correcte realtime status.
+
+- **[P0]** **NHL Team Total settlement-scope mismatch** (server.js:3585-3587): Unibet/Toto/BetCity/Ladbrokes settelen NHL team-totals op **60-min regular time** (zonder OT), terwijl onze λ-berekening (`expHome + 0.023`) en Poisson-output **full-game inclusief OT** zijn. Zonder filter liepen beide scopes door elkaar in `parsed.teamTotals` → Unibet's 60-min `Under 3.5 @ 1.92` kwam in dezelfde pool als Bet365's full-game `Under 3.5 @ 1.86` → `bestFromArr()` kon verkeerde bookie picken met verkeerde scope-match. Hockey ML deed dit onderscheid al via `HOCKEY_60MIN_BOOKIES` blacklist (server.js:3354); nu doet TT hetzelfde. Operator-symptoom: *"op Unibet is Under 3.5 regular time hoger dan wat EdgePickr als Bet365-pick toont"*. Fix: `parsed.teamTotals.filter(o => isOTBookieHockey(o.bookie))` sluit 60-min-only bookies uit bij pick-odds selectie.
+
+### Why
+
+v11.3.31 release-cycle toonde hockey-TT picks voor het eerst na dagen. Operator ontdekte dat die TT-picks op Unibet tegen betere odds beschikbaar waren. Codex tracede dat naar de settlement-scope mismatch: onze model-prob hoort bij full-game, maar pool van quotes bevatte beide scopes. En Codex vond parallel de stale-scan UI bug die verklaarde waarom eerder diagnose zo verwarrend was — scan-log zei één ding, UI toonde ander.
+
+Beide bugs zijn runtime-bugs, geen doctrine-issues.
+
+### Niet in deze release (follow-up)
+
+- **Parser-level scope-detection**: Codex-advies in brief was om `bet.name` te checken op "Regular Time" / "Incl OT" labels en een `scope` veld toe te voegen aan `teamTotals[]`. Dat is methodologisch strakker dan bookie-blacklist. Nu nog niet gedaan omdat (a) het meer callsite-wijzigingen vereist (basketball/baseball/NFL/handball TT pools), (b) huidige bookie-blacklist aanpak is al proven voor hockey ML. Follow-up als blijkt dat api-sports inderdaad `bet.name` varianten per bookmaker teruggeeft.
+- **Football 1X2/O/U/DNB/DC sanity-gate rollback**: Codex identificeerde deze als nog-live-suppressors maar liet de beslissing aan operator. Niet in deze release — wacht op scan-output na v11.3.32 om te zien of BTTS/hockey fixes + UI correctie genoeg zijn.
+- **writePickCandidate voor BTTS/DNB/DC/O/U**: near-miss UI blijft voor die markten blind. Nodig voor echte observability.
+
+### Tests
+637 passed, 0 failed (UI fix geen nieuwe test; hockey TT bookie-filter-toevoeging is consistent met bestaande `HOCKEY_60MIN_BOOKIES` logica die al getest is via ML-paden).
+
+---
+
 ## [11.3.31] - 2026-04-19
 
 **Hotfix · methodologie-mismatch sanity-gates + sanity_fail observability**

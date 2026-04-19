@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.3.31</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">11.3.32</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -636,7 +636,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.3.31</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 11.3.32</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -5519,8 +5519,13 @@ async function loadScanHistory() {
     // v10.8.2: filter op type='prematch' (= merged multi-sport result) zodat
     // we niet de per-sport sub-entries (mlb/nhl/nba) als latest tonen die
     // maar 1 of 0 picks bevatten.
+    // v11.3.32 (Codex-finding): eerdere filter `&& h.picks?.length` verborg
+    // scans met 0 picks → UI bleef een oudere non-lege scan tonen terwijl de
+    // echte laatste scan 0 picks had. Dat verklaart operator-verwarring
+    // "scan zegt 0 voetbal maar ik zie nog de oude 2 picks". Fix: pak altijd
+    // de nieuwste prematch-entry; renderPicks toont netjes "🚫 picks_none".
     const pEl = document.getElementById('picks-prematch');
-    const latestPrematch = (scanHistory || []).find(h => h.type === 'prematch' && h.picks?.length);
+    const latestPrematch = (scanHistory || []).find(h => h.type === 'prematch');
     if (pEl && !pEl._picks?.length && latestPrematch) {
       const ago = formatAgo(latestPrematch.ts);
       renderPicks(pEl, latestPrematch.picks);
@@ -5604,7 +5609,9 @@ async function refreshScanHistory(force) {
     // terug ondanks /api endpoints normaal niet gecached worden.
     const hist = await api('/api/scan-history?_=' + Date.now()).then(r => r?.json()) || [];
     if (!hist.length) return;
-    const latest = hist.find(h => h.type === 'prematch' && h.picks?.length);
+    // v11.3.32: filter `&& h.picks?.length` weggehaald — nieuwste scan altijd
+    // tonen, ook bij 0 picks (anders blijft UI een oudere non-lege scan tonen).
+    const latest = hist.find(h => h.type === 'prematch');
     if (!latest) return;
     scanHistory = hist;
     if (_lastScanTs === null) { _lastScanTs = latest.ts; return; }
@@ -5624,7 +5631,9 @@ async function refreshScanHistory(force) {
 Promise.resolve().then(async () => {
   for (let i = 0; i < 20; i++) { // max 10s wachten
     if (scanHistory && scanHistory.length) {
-      const latest = scanHistory.find(h => h.type === 'prematch' && h.picks?.length);
+      // v11.3.32: filter `&& h.picks?.length` weggehaald — init op nieuwste
+      // prematch-entry, ook bij 0 picks.
+      const latest = scanHistory.find(h => h.type === 'prematch');
       if (latest) { _lastScanTs = latest.ts; return; }
     }
     await new Promise(r => setTimeout(r, 500));

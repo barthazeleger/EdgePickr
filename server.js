@@ -3575,8 +3575,16 @@ async function runHockey(emit) {
         if (parsed.teamTotals && parsed.teamTotals.length) {
           const lambdaHome = expHome + 0.023; // kleine bump voor incl-OT scoring
           const lambdaAway = expAway + 0.023;
-          const homeTT = parsed.teamTotals.filter(o => o.team === 'home');
-          const awayTT = parsed.teamTotals.filter(o => o.team === 'away');
+          // v11.3.32 (Codex-finding): NHL TT scope-mismatch. Unibet/Toto/BetCity/
+          // Ladbrokes settelen team-totals op 60-min regular time (geen OT), terwijl
+          // onze lambda + Poisson full-game incl OT is (lambda = expHome + 0.023).
+          // Zonder filter kwam Unibet's 60-min "Under 3.5" prijs in dezelfde pool
+          // als Bet365's full-game prijs → `bestFromArr()` kon verkeerde bookie
+          // picken en de model-prob matcht niet met de settlement-scope. Zelfde
+          // aanpak als bij hockey ML (regel 3354): sluit 60-min bookies uit zodat
+          // alleen OT-inclusieve bookies door gaan.
+          const homeTT = parsed.teamTotals.filter(o => o.team === 'home' && isOTBookieHockey(o.bookie));
+          const awayTT = parsed.teamTotals.filter(o => o.team === 'away' && isOTBookieHockey(o.bookie));
           const linesHome = [...new Set(homeTT.map(o => o.point))];
           const linesAway = [...new Set(awayTT.map(o => o.point))];
 
