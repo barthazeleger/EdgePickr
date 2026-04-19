@@ -6829,6 +6829,9 @@ function getRunFullScan() {
       saveScanEntry, notify, logScanEnd,
       kellyScore,
       supabase,
+      // v12.0.2: orchestrator overschrijft na multi-sport merge de module-
+      // state zodat /api/picks (= analyse-tab) de volledige set toont.
+      setLastPrematchPicks: _atomicSetPrematch,
     });
   }
   return _scanOrchestrator.runFullScan;

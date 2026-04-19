@@ -2,6 +2,19 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.0.2] - 2026-04-19
+
+**Bugfix · analyse-tab toont nu alle picks (multi-sport) i.p.v. alleen voetbal**
+
+### Fixed
+
+- **[P1]** Operator-rapport na v12.0.1: scans-tab toonde 2 picks (BTTS voetbal + hockey TT Under), analyse-tab toonde er maar 1 (alleen BTTS). Root cause: `_atomicSetPrematch(finalPicks)` werd alleen door `runPrematch()` (football-slot) aangeroepen met alleen football picks. `/api/picks` (= analyse-tab source) leest die module-state → alleen football. De orchestrator merged wel alle sports maar schreef de gemergde set niet terug. SSE-stream naar scans-tab gebruikte een andere code-path en had de volledige set dus wel. Fix: orchestrator krijgt nu een `setLastPrematchPicks` dep en schrijft na merge `allPicks` terug, zodat scans-tab en analyse-tab consistent dezelfde set tonen.
+
+### Tests
+638 passed, 0 failed.
+
+---
+
 ## [12.0.1] - 2026-04-19
 
 **P0 hotfix · absurde 1H Over odds (bv. 34.0) geblokkeerd**
