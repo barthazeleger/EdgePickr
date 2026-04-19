@@ -26,7 +26,7 @@ const {
   buildSpreadFairProbFns,
   convertAfOdds,
 } = require('./lib/odds-parser');
-const { createPickContext, buildPickFactory, calcBTTSProb, bestOdds } = require('./lib/picks');
+const { createPickContext, buildPickFactory, calcBTTSProb, bestOdds, analyseTotal } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/integrations/nhl-goalie-preview');
 const lineTimeline = require('./lib/line-timeline');
@@ -2296,6 +2296,94 @@ test('buildPickFactory: adaptiveMinEdge kan pick uit singles en combiPool weren'
   assert.strictEqual(combiPool.length, 0);
 });
 
+// v11.3.29 P0 regressietests (Codex-finding): analyseTotal() moet EXACTE
+// line matchen, niet "dichtbij" via < 0.6 tolerantie. Pre-fix kon een
+// outcomes-array `[Over 3.0, Over 2.5]` ertoe leiden dat analyseTotal(2.5)
+// de 3.0-prijs teruggaf via find() op de eerste match.
+test('analyseTotal: exact line match — 2.5 pakt NIET 3.0 prijs', () => {
+  const bookmakers = [
+    {
+      title: 'Bet365',
+      markets: [{
+        key: 'totals',
+        outcomes: [
+          // volgorde: 3.0 eerst, dan 2.5 — pre-fix zou 3.0 pakken
+          { name: 'Over', price: 2.55, point: 3.0 },
+          { name: 'Over', price: 1.92, point: 2.5 },
+        ],
+      }],
+    },
+  ];
+  const r = analyseTotal(bookmakers, 'Over', 2.5);
+  assert.strictEqual(r.best.price, 1.92, `moet Over 2.5 @ 1.92 pakken, kreeg ${r.best.price}`);
+  assert.strictEqual(r.best.bookie, 'Bet365');
+});
+
+test('analyseTotal: exact line match — 2.5 pakt NIET 2.0 prijs', () => {
+  const bookmakers = [
+    {
+      title: 'Bet365',
+      markets: [{
+        key: 'totals',
+        outcomes: [
+          { name: 'Over', price: 1.50, point: 2.0 },
+          { name: 'Over', price: 1.95, point: 2.5 },
+        ],
+      }],
+    },
+  ];
+  const r = analyseTotal(bookmakers, 'Over', 2.5);
+  assert.strictEqual(r.best.price, 1.95, `moet Over 2.5 @ 1.95 pakken, kreeg ${r.best.price}`);
+});
+
+test('analyseTotal: line die niet bestaat → geen match', () => {
+  const bookmakers = [
+    {
+      title: 'Bet365',
+      markets: [{
+        key: 'totals',
+        outcomes: [
+          { name: 'Over', price: 1.50, point: 2.0 },
+          { name: 'Over', price: 2.55, point: 3.0 },
+        ],
+      }],
+    },
+  ];
+  const r = analyseTotal(bookmakers, 'Over', 2.5);
+  assert.strictEqual(r.best.price, 0, 'geen 2.5 line → best.price blijft 0');
+  assert.strictEqual(r.avgIP, 0, 'geen matches → avgIP = 0');
+});
+
+test('analyseTotal: meerdere bookies met exact 2.5 → beste prijs wint + consensus correct', () => {
+  const bookmakers = [
+    {
+      title: 'Bet365',
+      markets: [{
+        key: 'totals',
+        outcomes: [{ name: 'Over', price: 1.85, point: 2.5 }],
+      }],
+    },
+    {
+      title: 'Unibet',
+      markets: [{
+        key: 'totals',
+        outcomes: [{ name: 'Over', price: 1.90, point: 2.5 }],
+      }],
+    },
+    {
+      title: 'NoiseBookie',
+      markets: [{
+        key: 'totals',
+        outcomes: [{ name: 'Over', price: 3.50, point: 3.5 }], // andere line, mag niet mee
+      }],
+    },
+  ];
+  const r = analyseTotal(bookmakers, 'Over', 2.5);
+  assert.strictEqual(r.best.price, 1.90, 'Unibet 1.90 > Bet365 1.85 op 2.5');
+  // avgIP over de 2 bookies op 2.5: (1/1.85 + 1/1.90) / 2 ≈ 0.5334
+  assert.ok(Math.abs(r.avgIP - 0.5334) < 0.01, `avgIP ≈ 0.5334, kreeg ${r.avgIP}`);
+});
+
 test('calcBTTSProb: dunne H2H sample wordt Bayesian geshrinkt', () => {
   const thin = calcBTTSProb({ h2hBTTS: 3, h2hN: 3, hmAvgGF: 1.8, awAvgGF: 1.8 });
   const thick = calcBTTSProb({ h2hBTTS: 20, h2hN: 25, hmAvgGF: 1.8, awAvgGF: 1.8 });
@@ -2426,7 +2514,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.28');
+  assert.strictEqual(appMeta.APP_VERSION, '11.3.29');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

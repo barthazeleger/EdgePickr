@@ -2,6 +2,31 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [11.3.29] - 2026-04-19
+
+**P0 hotfix · Codex finding: football totals line-matching bug**
+
+### Fixed
+
+- **[P0]** `lib/picks.js:240` `analyseTotal()` gebruikte `Math.abs((o.point||0) - point) < 0.6` voor line-matching. Voor `point=2.5` matchte dit óók `2.0` en `3.0` (alternate totals = aparte markten). Omdat `find()` de eerste hit in outcomes-volgorde pakt, kon Bet365's Over 3.0 prijs geretourneerd worden terwijl de pick hardcoded gelabeld werd als "Over 2.5 goals" + `_fixtureMeta.line=2.5`. Over 3.0 prijs is structureel hoger (~2.5 vs ~1.9) → false edge → pick kwam hoog in ranking → bezette de 2 topPicks slots → drukte BTTS/1X2/DNB/multi-sport picks uit de selection. Fix: tolerance naar `< 0.01` (exacte match). Codex reproductie: outcomes=`[Over 3.0, Over 2.5]` + point=2.5 → pre-fix retourneerde 3.0 prijs, post-fix retourneert 2.5 prijs.
+- 4 nieuwe regressietests: (1) `[Over 3.0, Over 2.5]` → pakt 2.5 prijs, niet 3.0. (2) `[Over 2.0, Over 2.5]` → pakt 2.5, niet 2.0. (3) alleen `[Over 2.0, Over 3.0]` → geen match (best.price=0, avgIP=0). (4) 2 preferred bookies met exact 2.5 + 1 noise-bookie met 3.5 → beste 2.5-prijs wint, consensus negeert 3.5.
+
+### Why
+
+Operator-rapport 2026-04-19 08:00: "Sinds 2026-04-18 09:33 alleen Over 2.5 Bet365 voetbal picks, elke scan 2 stuks, geen BTTS/1X2/DNB/ML." Mijn v11.3.28 hotfix (threshold 0.04 → 0.07) loste het patroon niet op. Codex second-opinion vond de echte P0 — in productie-code die al > 1 sprint live was, maar waarvan het effect pas sichtbaar werd toen de combinatie van (a) autotune `over × 1.09` kelly-multiplier + (b) signal-gates op andere markten toevalllig de nep-Over-2.5 picks tot top-2 maakte.
+
+Codex-aanbeveling: eerst P0 line-fix, daarna DB-check op `pick_candidates` sinds 09:33 voor BTTS/1X2/DNB rejection-reasons, pas dan eventuele gate-tuning (Optie A+C uit `docs/CODEX_BRIEF_2026-04-19_scan_pipeline.md`).
+
+### Follow-up (NIET in deze release)
+
+- Per-sport scans (basketball/hockey/baseball/NFL/handball) gebruiken ook `< 0.6` tolerance via `filter()`. Dat is design-intent (NBA 220/220.5/221 mogen als "gelijk" geteld). Blijft voor nu; revisit als gebruiksdata aantoont dat het ook daar fout is.
+- Sanity-gate herziening (BTTS/Poisson model-vs-markt mismatch) wacht op DB-rejection-data na deze fix live staat.
+
+### Tests
+638 passed, 0 failed (+4 regressietests voor analyseTotal).
+
+---
+
 ## [11.3.28] - 2026-04-18
 
 **Hotfix · sanity-gate threshold te strikt (operator-rapport 22:00)**
