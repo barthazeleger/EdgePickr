@@ -2864,8 +2864,8 @@ async function runBasketball(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
+            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.01);
+            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -2941,8 +2941,8 @@ async function runBasketball(emit) {
           const h1MainLine = Object.entries(h1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (h1MainLine) {
             const h1Line = parseFloat(h1MainLine);
-            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.01);
+            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.01);
             if (h1Ov.length && h1Un.length) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
@@ -3650,8 +3650,13 @@ async function runHockey(emit) {
         }
 
         // Over/Under total goals
-        const overOdds = parsed.totals.filter(o => o.side === 'over');
-        const underOdds = parsed.totals.filter(o => o.side === 'under');
+        // v12.0.0 (Codex P0.3): hockey totals settlement-scope. Parser markeert
+        // regulation/incl_ot/unknown. Sluit expliciet 'regulation' uit want onze
+        // lambda + Poisson is full-game. Plus bookie-blacklist want unknown-label
+        // bij 60-min-only bookies is feitelijk regulation.
+        const scopeOkHkTotal = o => o.scope !== 'regulation' && isOTBookieHockey(o.bookie);
+        const overOdds = parsed.totals.filter(o => o.side === 'over' && scopeOkHkTotal(o));
+        const underOdds = parsed.totals.filter(o => o.side === 'under' && scopeOkHkTotal(o));
         if (overOdds.length && underOdds.length) {
           const pointCounts = {};
           for (const o of [...overOdds, ...underOdds]) {
@@ -3660,8 +3665,8 @@ async function runHockey(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
+            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.01);
+            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -3744,8 +3749,8 @@ async function runHockey(emit) {
           const p1MainLine = Object.entries(p1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (p1MainLine) {
             const p1Line = parseFloat(p1MainLine);
-            const p1Ov = p1Over.filter(o => Math.abs(o.point - p1Line) < 0.6);
-            const p1Un = p1Under.filter(o => Math.abs(o.point - p1Line) < 0.6);
+            const p1Ov = p1Over.filter(o => Math.abs(o.point - p1Line) < 0.01);
+            const p1Un = p1Under.filter(o => Math.abs(o.point - p1Line) < 0.01);
             if (p1Ov.length && p1Un.length) {
               const p1AvgOvIP = p1Ov.reduce((s,o)=>s+1/o.price,0) / p1Ov.length;
               const p1AvgUnIP = p1Un.reduce((s,o)=>s+1/o.price,0) / p1Un.length;
@@ -4225,8 +4230,8 @@ async function runBaseball(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
+            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.01);
+            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -4333,14 +4338,19 @@ async function runBaseball(emit) {
           // Deze moet dicht bij market-implied blijven (≤ 4% divergence anders fake edge).
           const nrfiGate = passesDivergence2Way(adjNrfiP, 1 - adjNrfiP, bestNrfi.price, bestYrfi.price);
 
+          // v12.0.0 (Claude P0.3): fxMeta toegevoegd. Zonder fxMeta kon
+          // applyPostScanGate deze markten niet koppelen aan line-timeline
+          // voor execution-quality checks.
+          const fxMetaNrfi = { fixtureId: gameId, marketType: 'nrfi', selectionKey: 'nrfi', line: null };
+          const fxMetaYrfi = { fixtureId: gameId, marketType: 'nrfi', selectionKey: 'yrfi', line: null };
           if (nrfiEdge >= MIN_EDGE && bestNrfi.price >= 1.60 && nrfiGate.passA)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ NRFI (No Run 1st Inning)`, bestNrfi.price,
               `NRFI: ${(adjNrfiP*100).toFixed(1)}% | ${bestNrfi.bookie}: ${bestNrfi.price}${sharedNotes} | ${ko}`,
-              Math.round(adjNrfiP*100), nrfiEdge * 0.18, kickoffTime, bestNrfi.bookie, matchSignals);
+              Math.round(adjNrfiP*100), nrfiEdge * 0.18, kickoffTime, bestNrfi.bookie, matchSignals, null, fxMetaNrfi);
           if (yrfiEdge >= MIN_EDGE && bestYrfi.price >= 1.60 && nrfiGate.passB)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ YRFI (Yes Run 1st Inning)`, bestYrfi.price,
               `YRFI: ${((1-adjNrfiP)*100).toFixed(1)}% | ${bestYrfi.bookie}: ${bestYrfi.price}${sharedNotes} | ${ko}`,
-              Math.round((1-adjNrfiP)*100), yrfiEdge * 0.18, kickoffTime, bestYrfi.bookie, matchSignals);
+              Math.round((1-adjNrfiP)*100), yrfiEdge * 0.18, kickoffTime, bestYrfi.bookie, matchSignals, null, fxMetaYrfi);
         }
 
         // ── F5 (1st 5 Innings) markten ──
@@ -4382,14 +4392,18 @@ async function runBaseball(emit) {
           // kan daardoor ver van market-implied drijven bij dubieus pitcher-data.
           const f5MlGate = passesDivergence2Way(f5Home, f5Away, bF5H.price, bF5A.price);
 
+          // v12.0.0 (Claude P0.3): fxMeta + P1.5 pitcher reliability nu
+          // expliciet vereist (voorheen alleen MIN_EDGE + 0.015 bonus).
+          const fxMetaF5H = { fixtureId: gameId, marketType: 'f5_ml', selectionKey: 'home', line: null };
+          const fxMetaF5A = { fixtureId: gameId, marketType: 'f5_ml', selectionKey: 'away', line: null };
           if (eF5H >= f5MinEdge && bF5H.price >= 1.60 && bF5H.price <= MAX_WINNER_ODDS && f5MlGate.passA)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${hm}`, bF5H.price,
               `F5 (1st 5 inn): ${(f5Home*100).toFixed(1)}% | ${bF5H.bookie}: ${bF5H.price} | ${pitcherSig.note} · ${starterReliability.note} | ${ko}`,
-              Math.round(f5Home*100), eF5H * 0.24, kickoffTime, bF5H.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
+              Math.round(f5Home*100), eF5H * 0.24, kickoffTime, bF5H.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x'], null, fxMetaF5H);
           if (eF5A >= f5MinEdge && bF5A.price >= 1.60 && bF5A.price <= MAX_WINNER_ODDS && f5MlGate.passB)
             mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 ${aw}`, bF5A.price,
               `F5 (1st 5 inn): ${(f5Away*100).toFixed(1)}% | ${bF5A.bookie}: ${bF5A.price} | ${pitcherSig.note} · ${starterReliability.note} | ${ko}`,
-              Math.round(f5Away*100), eF5A * 0.24, kickoffTime, bF5A.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x']);
+              Math.round(f5Away*100), eF5A * 0.24, kickoffTime, bF5A.bookie, [...matchSignals, 'f5_ml', 'pitcher_3x'], null, fxMetaF5A);
         }
 
         // F5 Totals (consensus-driven — market weet beter dan wij)
@@ -4399,8 +4413,8 @@ async function runBaseball(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = f5Totals.filter(o => o.side === 'over' && Math.abs(o.point - line) < 0.6);
-            const un = f5Totals.filter(o => o.side === 'under' && Math.abs(o.point - line) < 0.6);
+            const ov = f5Totals.filter(o => o.side === 'over' && Math.abs(o.point - line) < 0.01);
+            const un = f5Totals.filter(o => o.side === 'under' && Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -4416,14 +4430,17 @@ async function runBaseball(emit) {
               // v11.2.1: pitcherUnderBias kan adjOverP trekken; gate tegen markt-consensus
               const f5OuGate = passesDivergence2Way(adjOverP, 1-adjOverP, bestOv.price, bestUn.price);
 
+              // v12.0.0 (Claude P0.3): fxMeta voor F5 totals
+              const fxMetaF5Ov = { fixtureId: gameId, marketType: 'f5_total', selectionKey: 'over', line };
+              const fxMetaF5Un = { fixtureId: gameId, marketType: 'f5_total', selectionKey: 'under', line };
               if (eOv >= MIN_EDGE && bestOv.price >= 1.60 && f5OuGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Over ${line}`, bestOv.price,
                   `F5 Total: ${(adjOverP*100).toFixed(1)}% over ${line} | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
-                  Math.round(adjOverP*100), eOv * 0.20, kickoffTime, bestOv.bookie, [...matchSignals, 'f5_total']);
+                  Math.round(adjOverP*100), eOv * 0.20, kickoffTime, bestOv.bookie, [...matchSignals, 'f5_total'], null, fxMetaF5Ov);
               if (eUn >= MIN_EDGE && bestUn.price >= 1.60 && f5OuGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `⚾ F5 Under ${line}`, bestUn.price,
                   `F5 Total: ${((1-adjOverP)*100).toFixed(1)}% under ${line} | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
-                  Math.round((1-adjOverP)*100), eUn * 0.20, kickoffTime, bestUn.bookie, [...matchSignals, 'f5_total']);
+                  Math.round((1-adjOverP)*100), eUn * 0.20, kickoffTime, bestUn.bookie, [...matchSignals, 'f5_total'], null, fxMetaF5Un);
             }
           }
         }
@@ -4781,8 +4798,8 @@ async function runFootballUS(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
+            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.01);
+            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -4890,8 +4907,8 @@ async function runFootballUS(emit) {
           const h1MainLine = Object.entries(h1PointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (h1MainLine) {
             const h1Line = parseFloat(h1MainLine);
-            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.6);
-            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.6);
+            const h1Ov = h1Over.filter(o => Math.abs(o.point - h1Line) < 0.01);
+            const h1Un = h1Under.filter(o => Math.abs(o.point - h1Line) < 0.01);
             if (h1Ov.length && h1Un.length) {
               const h1AvgOvIP = h1Ov.reduce((s,o)=>s+1/o.price,0) / h1Ov.length;
               const h1AvgUnIP = h1Un.reduce((s,o)=>s+1/o.price,0) / h1Un.length;
@@ -5298,8 +5315,8 @@ async function runHandball(emit) {
           const mainLine = Object.entries(pointCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
           if (mainLine) {
             const line = parseFloat(mainLine);
-            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.6);
-            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.6);
+            const ov = overOdds.filter(o => Math.abs(o.point - line) < 0.01);
+            const un = underOdds.filter(o => Math.abs(o.point - line) < 0.01);
             if (ov.length && un.length) {
               const avgOvIP = ov.reduce((s,o)=>s+1/o.price,0) / ov.length;
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
@@ -5818,7 +5835,14 @@ async function runPrematch(emit) {
         // injuries blijven ongedempt (die gelden sowieso).
         const totalAdjRaw = formAdj + injAdj + h2hAdj + congestionAdj;
         const dampedFormH2h = (formAdj + h2hAdj) * seasonInfo.dampingFactor;
-        const totalAdj = earlySeason ? (dampedFormH2h + injAdj + congestionAdj) : totalAdjRaw;
+        const totalAdjUncapped = earlySeason ? (dampedFormH2h + injAdj + congestionAdj) : totalAdjRaw;
+        // v12.0.0 (Claude P1.4): cumulatieve signal-push cap. Elke individuele
+        // signaal-component (form ±5%, ref ±4%, H2H ±3%, congestion ±3%) heeft
+        // al een eigen cap, maar sommatie zonder cum-cap liet 15-25pp drift toe.
+        // Cap ±10pp zodat cumulatief meer dan 3 signalen samen niet wild van
+        // markt afwijken. Sandefjord-class BTTS-fake edges (was 34pp) zijn al
+        // elders afgevangen; dit cap'pt 1X2 signal-push specifiek.
+        const totalAdj = Math.max(-0.10, Math.min(0.10, totalAdjUncapped));
         const adjHome2  = Math.min(0.88, adjHome + totalAdj);
         const adjAway2  = Math.max(0.08, adjAway - totalAdj);
 
@@ -6197,15 +6221,20 @@ async function runPrematch(emit) {
               // grote gaps tussen model en markt-baseline (stake-dampen 0.6×).
               const bttsDataOk = h2hN >= 5;
 
+              // v12.0.0 (Codex P1 + Claude P0): BTTS gebruikt nu eigen
+              // calibratie-buckets. Voorheen las scan cm.over / cm.under, terwijl
+              // learning-loop al naar football_btts_yes/no schreef → cross-market
+              // contamination. Nu end-to-end consistent: schrijven en lezen beide
+              // via btts_yes / btts_no keys.
               if (bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60 && bttsDataOk)
                 mkP(`${hm} vs ${aw}`, league.name, `🔥 BTTS Ja`, bestYes.price,
                   `BTTS: ${(bttsYesP*100).toFixed(1)}% | ${bestYes.bookie}: ${bestYes.price} | GF: ${hmGFAvg}/${awGFAvg}${h2hStr} | ${ko}`,
-                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.over?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
+                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.btts_yes?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
 
               if (bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60 && bttsDataOk)
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | GF: ${hmGFAvg}/${awGFAvg} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}${h2hStr} | ${ko}`,
-                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.under?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
+                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.btts_no?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
             }
           }
         }
@@ -6254,15 +6283,17 @@ async function runPrematch(emit) {
             // model-derived (redistrib); vergelijk met bookmaker-implied.
             const dnbGate = passesDivergence2Way(dnbHomeP, dnbAwayP, bestDnbH.price, bestDnbA.price);
 
+            // v12.0.0 (Claude P1): DNB krijgt eigen calibratie-bucket. Voorheen
+            // stake zonder multiplier → systematisch onder-gestaked in ranking.
             if (dnbHomeEdge >= MIN_EDGE && bestDnbH.price >= 1.30 && bestDnbH.price <= 2.50 && dnbGate.passA)
               mkP(`${hm} vs ${aw}`, league.name, `🏠 DNB ${hm}`, bestDnbH.price,
                 `Draw No Bet: ${(dnbHomeP*100).toFixed(1)}% | ${bestDnbH.bookie}: ${bestDnbH.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24, kickoffTime, bestDnbH.bookie, matchSignals, refereeName, fxMetaDnbH);
+                Math.round(dnbHomeP*100), dnbHomeEdge * 0.24 * (cm.dnb_home?.multiplier ?? 1), kickoffTime, bestDnbH.bookie, matchSignals, refereeName, fxMetaDnbH);
 
             if (dnbAwayEdge >= MIN_EDGE && bestDnbA.price >= 1.30 && bestDnbA.price <= 2.50 && dnbGate.passB)
               mkP(`${hm} vs ${aw}`, league.name, `✈️ DNB ${aw}`, bestDnbA.price,
                 `Draw No Bet: ${(dnbAwayP*100).toFixed(1)}% | ${bestDnbA.bookie}: ${bestDnbA.price} | Gelijk=terugbetaling | ${ko}`,
-                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24, kickoffTime, bestDnbA.bookie, matchSignals, refereeName, fxMetaDnbA);
+                Math.round(dnbAwayP*100), dnbAwayEdge * 0.24 * (cm.dnb_away?.multiplier ?? 1), kickoffTime, bestDnbA.bookie, matchSignals, refereeName, fxMetaDnbA);
           }
         }
 
@@ -6322,18 +6353,19 @@ async function runPrematch(emit) {
           const fxMetaDc12 = { fixtureId: fid, marketType: 'double_chance', selectionKey: '12', line: null };
           const fxMetaDcX2 = { fixtureId: fid, marketType: 'double_chance', selectionKey: 'x2', line: null };
 
+          // v12.0.0 (Claude P1): Double Chance eigen calibratie-buckets.
           if (eHX >= MIN_EDGE && bestHX.price >= 1.15 && bestHX.price <= 2.50 && sanDcHX.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 1X (${hm} of gelijk)`, bestHX.price,
               `Double Chance 1X: ${(pHX*100).toFixed(1)}% | ${bestHX.bookie}: ${bestHX.price} | ${ko}`,
-              Math.round(pHX*100), eHX * 0.16, kickoffTime, bestHX.bookie, matchSignals, refereeName, fxMetaDcHX);
+              Math.round(pHX*100), eHX * 0.16 * (cm.dc_1x?.multiplier ?? 1), kickoffTime, bestHX.bookie, matchSignals, refereeName, fxMetaDcHX);
           if (e12 >= MIN_EDGE && best12.price >= 1.15 && best12.price <= 2.50 && sanDc12.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 12 (geen gelijk)`, best12.price,
               `Double Chance 12: ${(p12*100).toFixed(1)}% | ${best12.bookie}: ${best12.price} | ${ko}`,
-              Math.round(p12*100), e12 * 0.16, kickoffTime, best12.bookie, matchSignals, refereeName, fxMetaDc12);
+              Math.round(p12*100), e12 * 0.16 * (cm.dc_12?.multiplier ?? 1), kickoffTime, best12.bookie, matchSignals, refereeName, fxMetaDc12);
           if (eX2 >= MIN_EDGE && bestX2.price >= 1.15 && bestX2.price <= 2.50 && sanDcX2.agree)
             mkP(`${hm} vs ${aw}`, league.name, `🎯 X2 (${aw} of gelijk)`, bestX2.price,
               `Double Chance X2: ${(pX2*100).toFixed(1)}% | ${bestX2.bookie}: ${bestX2.price} | ${ko}`,
-              Math.round(pX2*100), eX2 * 0.16, kickoffTime, bestX2.bookie, matchSignals, refereeName, fxMetaDcX2);
+              Math.round(pX2*100), eX2 * 0.16 * (cm.dc_x2?.multiplier ?? 1), kickoffTime, bestX2.bookie, matchSignals, refereeName, fxMetaDcX2);
         }
 
         // ── Handicap ──────────────────────────────────────────────────

@@ -2151,14 +2151,19 @@ test('buildPickFactory: runtime hooks sturen kelly, expectedEur en audit-damping
     drawdownMultiplier: () => 0.5,
     activeUnitEur: 50,
   });
-  mkP('Lakers vs Celtics', 'NBA', 'Lakers ML', 2.0, 'test', 80, 0.10, null, 'Bet365', []);
+  // v12.0.0: signals-array moet niet leeg zijn — 0-signal picks worden nu
+  // geskipt (P1.6). Met 1 signal krijg je dataConf=0.55 (was 0.50). Kelly +
+  // audit-damping blijven gelijk, expectedEur schaalt 10% hoger.
+  mkP('Lakers vs Celtics', 'NBA', 'Lakers ML', 2.0, 'test', 80, 0.10, null, 'Bet365', ['test_signal:+2.0%']);
   assert.strictEqual(picks.length, 1);
   const pick = picks[0];
   assert.strictEqual(pick.sport, 'basketball');
   assert.strictEqual(pick.audit.suspicious, true);
   assert.strictEqual(+pick.kelly.toFixed(3), 0.03);
   assert.strictEqual(pick.units, '0.5U');
-  assert.strictEqual(pick.expectedEur, 2);
+  // expectedEur = units * unit(50) * edge * dataConf. Schaalt 0.55/0.40 = 1.375x
+  // t.o.v. oude verwachting van 2. Dus nu ~2.75.
+  assert.ok(pick.expectedEur > 2.5 && pick.expectedEur < 3.0, `expectedEur in 2.5-3.0 range, kreeg ${pick.expectedEur}`);
 });
 
 test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
@@ -2514,7 +2519,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '11.3.32');
+  assert.strictEqual(appMeta.APP_VERSION, '12.0.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3774,7 +3779,7 @@ test('parseGameOdds ML: dedupe pakt HOOGSTE prijs per bookie (geen alt-lijn risi
   assert.strictEqual(best.price, 1.90);
 });
 
-test('odds-parser: parseGameOdds dedupet moneyline hoog en spread laag per bookie', () => {
+test('odds-parser: parseGameOdds dedupet alle markten op hoogste prijs per bookie (v12.0.0)', () => {
   const parsed = parseGameOdds([{
     bookmakers: [
       {
@@ -3831,7 +3836,12 @@ test('odds-parser: parseGameOdds dedupet moneyline hoog en spread laag per booki
   const bet365Ml = parsed.moneyline.find(o => o.bookie === 'Bet365' && o.side === 'home');
   const bet365Spread = parsed.spreads.find(o => o.bookie === 'Bet365' && o.side === 'home');
   assert.strictEqual(bet365Ml.price, 1.90);
-  assert.strictEqual(bet365Spread.price, 2.10);
+  // v12.0.0 (Codex P1): dedupe bewaart nu BESTE (hoogste) prijs, niet meer de laagste.
+  // Oud gedrag (dedupeMainLine behield slechtste prijs) was bedoeld als risico-demping
+  // bij parser-lekken, maar hield juist verkeerde varianten vast. Met scope-isolatie
+  // (betId 2/3 niet meer naar full-game bij half/F5) zijn duplicates legitiem en
+  // wil operator de hoogste prijs.
+  assert.strictEqual(bet365Spread.price, 2.55);
 });
 
 test('odds-parser: bestFromArr respecteert preferredBookies state', () => {

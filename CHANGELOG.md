@@ -2,6 +2,53 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.0.0] - 2026-04-19
+
+**Foundational release · parser correctness + calibration integrity + signal discipline**
+
+Release na gecombineerde audits van Claude (Opus 4.7) en Codex (GPT-reviewer). Operator-directive: "v12.0.0 moet weken stabiel draaien, geen steeds gerepareerde release." Dekking: parser-laag bugs die tot valse picks leiden, calibratie cross-market contamination, learning-loop break-even fouten, signal-discipline.
+
+### Fixed — Parser correctness (Codex P0's)
+
+- **[P0]** `lib/odds-parser.js:129` — Scope-isolatie voor `betId === 2/3` full-game totals/spreads. Voorheen werden period/half/F5 bets **ook** naar full-game `tots`/`spr` gepusht als de betId 2 of 3 was, ongeacht bet.name. Codex reproduceerde: een payload met alleen "1st period over/under 1.5" leverde 1.5 op in zowel totals als halfTotals → scanner zag period-price als full-game value → false edges. Nu: `isHalfOrF5Bet` guard filtert half/period/F5/quarter-variant expliciet uit vóór full-game push.
+- **[P0]** `lib/odds-parser.js:218, 129` — Settlement-scope label (`regulation`/`incl_ot`/`unknown`) op totals + team-totals + spreads. Parser detecteert nu via `bet.name` of een quote expliciet "regulation", "60 min" of "incl OT/overtime" is. Downstream kan daarop filteren. Voor hockey totals: scope-filter `scope !== 'regulation'` + `isOTBookieHockey()` op bookie (server.js:3652). v11.3.32's smallere fix (alleen team-totals) is nu uitgebreid naar alle hockey totals.
+- **[P0]** `server.js:2867, 2944, 3663, 3747, 4228, 4402, 4784, 4893, 5301` — Exact line matching (`< 0.01` i.p.v. `< 0.6`) op alle non-football totals in basketball/hockey/baseball/NFL/handball. Zelfde bug-klasse als v11.3.29 op football Over 2.5: voorheen mixte `main line ±0.5` alternate lines (bv. 220 bij 220.5) zodat een 220 prijs kon winnen voor een pick gelabeld als "Over 220.5".
+- **[P1]** `lib/odds-parser.js:269` — `dedupeMainLine` bewaarde bij duplicates de laagste prijs ("risico-demping bij parser-lekken"). Dat hield juist de slechtste variant vast. Nu: alle dedupes gebruiken `dedupeBestPrice`. Dedupe-key voor totals/spreads/teamTotals inclusief `scope` zodat regulation/incl_ot niet meer elkaar overschrijven.
+
+### Fixed — Calibration integrity (Claude P0/P1 + Codex P1)
+
+- **[P0]** `server.js:6203, 6208` — BTTS kelly-multiplier leest nu `cm.btts_yes` / `cm.btts_no` in plaats van `cm.over` / `cm.under`. Voorheen: learning-loop schreef BTTS-resultaten naar `football_btts_yes/no` buckets (detectMarket+updateCalibration deden dit al correct), maar de scan consumeerde `cm.over/under.multiplier` — cross-market contamination. Over-performance-boost lekte 1:1 door naar BTTS-stakes zonder BTTS-eigen leerbasis. `lib/calibration-store.js:13` uitgebreid met `btts_yes`, `btts_no`, `dnb_home`, `dnb_away`, `dc_1x`, `dc_12`, `dc_x2` default-entries.
+- **[P1]** `server.js:6265, 6270, 6333, 6337, 6341` — DNB en Double Chance kregen nu een `cm.dnb_home/away?.multiplier ?? 1` en `cm.dc_1x/12/x2?.multiplier ?? 1` in de mkP stake-formule. Voorheen volledig zonder multiplier → systematisch onder-gestaked t.o.v. markten met wél multiplier → lagere `expectedEur` → dropped uit top-N ranking. Dat voedde het "altijd Over 2.5 Bet365" patroon.
+- **[P1]** `lib/learning-loop.js:62-68` — Autotune formule herschreven. Oud: `Math.max(0.70, Math.min(1.20, 0.70 + wr * 1.0))` → 50% winrate gaf MAX boost 1.20. Maar voor 1.90 odds is break-even 0.526 (1/1.90), dus 50% winrate = -5% ROI — formule beloonde onderperformance. Nu profit-gedreven: `delta = profitPerBet * 0.03`, `multiplier = 1.00 + delta` in range [0.70, 1.30]. Positieve winst per bet → boost proportioneel, negatief → demp.
+- **[P1]** `lib/learning-loop.js:62` — Sample-threshold verhoogd van `n >= 8` naar `n >= 20`. Bij n=8 en 1.90 odds is 95% CI van winrate ±18pp — multiplier-beweging op die schaal is noise, niet signal. 20 is pragmatisch minimum voor signal boven noise.
+
+### Fixed — Signal discipline (Claude P1)
+
+- **[P1]** `server.js:5823` — Cumulatieve signal-push cap van ±10pp op 1X2 voetbal. Individuele signalen (form ±5%, ref ±4%, H2H ±3%, congestion ±3%) hebben al caps, maar sommatie was uncapped en kon 15-25pp cumulatief worden. Sandefjord-class fake-edges van die omvang zijn nu structureel geblokkeerd zonder afhankelijkheid van één specifieke gate.
+- **[P1]** `lib/picks.js:74` — `dataConfidence` voor 0-signal picks: vanaf nu hard drop (`if (sigCount === 0) return;`). Voorheen 40% confidence = picks zonder inhoudelijke signal-basis kwamen door als pure markt-devig kopieën. Geen model-basis → geen pick.
+- **[P1]** `lib/model-math.js:414` — Pitcher reliability-factor wordt nu toegepast op `pitcherAdjustment.adj`. Voorheen: `pitcherReliabilityFactor()` retourneerde 0.7 voor rookies met <15 IP maar die factor werd nergens vermenigvuldigd met het adj. Rookie (3 starts) kreeg dezelfde ±6% gewicht als 20-start veteraan. Nu schaalt adj mee met reliability.
+- **[P1]** `lib/picks.js:102` — `auditSuspicious` OR-logic. Oud: `probGap > 15 AND baseGap > 15 AND signalContrib < baseGap*0.3`. Nieuw: `probGapSuspect (probGap > 15 EN signal < 25%) OR baseGapSuspect (baseGap > 12 EN signal < 30%)`. Vangt fake-edges met signalContrib net boven oude AND-drempel maar nog steeds disproportioneel.
+- **[P0]** `server.js:4338, 4343, 4389, 4393, 4424, 4429` — Baseball NRFI, F5 ML, F5 O/U kregen nu `_fixtureMeta` in de mkP-call. Voorheen missing → `applyPostScanGate` kon deze markten niet koppelen aan line-timeline voor execution-quality checks.
+
+### Breaking
+
+- Geen breaking changes voor callers van publieke `/api/*` endpoints.
+- `lib/picks.js mkP()` dropt nu 0-signal picks — scan-bodies moeten altijd minimaal 1 `matchSignals` entry meegeven. Alle huidige callers doen dat.
+- `calibration.json` persist gaat nu ook `btts_yes`/`btts_no`/`dnb_home`/`dnb_away`/`dc_1x`/`dc_12`/`dc_x2` keys schrijven. Bestaande persisted calib wordt bij eerste `saveCalib()` aangevuld met defaults.
+
+### Tests
+637 passed, 0 failed. Bestaande dedupe-test aangepast aan nieuwe semantiek (beste prijs ipv slechtste).
+
+### Niet in deze release (follow-up v12.1)
+
+Codex/Claude beide P1/P2: writePickCandidate logging voor football BTTS/O/U/DNB/DC + alle non-football secondary markets → near-miss UI volledig. mkP silent-drops aggregate emit. applyPostScanGate stats emit in orchestrator. Panic_mode trigger log. Baseball F5 ML `starterReliability.factor >= 0.85` hardcap. Hockey P1 O/U scope-filter indien api-sports dat labelt. Basketball/baseball/NFL/handball writePickCandidate toevoeging. Deze observability-uitbouw is mechanisch werk en geen correctness-bug — veilig als follow-up.
+
+### Doctrine-vrijwaring
+
+Stake-regime (drawdown_soft = Kelly 0.4), `MODEL_MARKET_DIVERGENCE_THRESHOLD = 0.07`, per-sport diversification cap, correlation-damping op league-day, `operator.max_picks_per_day` als user-setting, en het `HOCKEY_60MIN_BOOKIES` bookie-blacklist concept blijven ongewijzigd. Deze zijn eerder gevalideerd en werken zoals bedoeld.
+
+---
+
 ## [11.3.32] - 2026-04-19
 
 **Hotfix · stale-scan UI + NHL TT settlement-scope mismatch**
