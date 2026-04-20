@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7502,6 +7502,52 @@ test('PUBLIC_PATHS: /api/status is NOT public, /api/health IS public', () => {
   assert(!/['"]\/api\/status['"]/.test(block), '/api/status must NOT be in PUBLIC_PATHS');
   assert(/['"]\/api\/health['"]/.test(block), '/api/health MUST be in PUBLIC_PATHS for keep-alive');
   assert(/['"]\/api\/auth\/login['"]/.test(block), '/api/auth/login must be in PUBLIC_PATHS');
+});
+
+// v12.1.3: fallback-resolver vindt fixture_id voor pre-v12.1.1 bets via fixtures-tabel.
+test('resolveFixtureIdForBet: exact team-match returns fixture id', async () => {
+  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => Promise.resolve({ data: [
+          { id: 777, home_team_name: 'Lecce', away_team_name: 'Fiorentina', start_time: '2026-04-20T18:45:00Z' },
+          { id: 888, home_team_name: 'Milan', away_team_name: 'Inter',       start_time: '2026-04-20T20:00:00Z' },
+        ]}),
+      }),
+    }),
+  };
+  const bet = { datum: '20-04-2026', wedstrijd: 'Lecce vs Fiorentina', sport: 'football' };
+  const id = await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(id, 777);
+});
+
+test('resolveFixtureIdForBet: no unique match returns null', async () => {
+  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => Promise.resolve({ data: [] }),
+      }),
+    }),
+  };
+  const bet = { datum: '20-04-2026', wedstrijd: 'Onbekend vs Team', sport: 'football' };
+  const id = await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(id, null);
+});
+
+test('resolveFixtureIdForBet: malformed bet returns null (no crash)', async () => {
+  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const id1 = await resolveFixtureIdForBet({}, { datum: '', wedstrijd: 'A vs B', sport: 'football' });
+  const id2 = await resolveFixtureIdForBet({}, { datum: '20-04-2026', wedstrijd: 'Geen-vs-teken', sport: 'football' });
+  assert.strictEqual(id1, null);
+  assert.strictEqual(id2, null);
 });
 
 // v12.1.2: todayBets telt nu ook nachtwedstrijden die op morgen staan (kickoff < 06:00).

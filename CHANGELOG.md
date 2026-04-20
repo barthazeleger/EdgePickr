@@ -2,6 +2,19 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.3] - 2026-04-20
+
+**Fallback fixture_id-lookup voor pre-v12.1.1 bets**
+
+### Fixed
+
+- **[P2]** "🔄 Huidige odds ophalen" toonde "Geen fixture_id gekoppeld" voor alle bets die vóór v12.1.1 waren gelogd. Die hadden `fixture_id=NULL` in de DB en blokkeerden de odds-refresh hard. Fix: `/api/bets/:id/current-odds` probeert nu eerst een fallback-resolve via de `fixtures`-tabel (sport + datum-window ±36u + team-substring-match). Bij één unieke hit wordt `fixture_id` ook meteen teruggeschreven naar de bet-row, zodat volgende refreshes direct werken zonder fallback.
+
+### Tests
+643 passed, 0 failed. 3 nieuwe: `resolveFixtureIdForBet` exact match + geen match + malformed input.
+
+---
+
 ## [12.1.2] - 2026-04-20
 
 **Tracker UX · vandaag-teller + gisteren-filter**
