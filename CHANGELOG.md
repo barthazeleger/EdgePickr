@@ -2,6 +2,20 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.4] - 2026-04-20
+
+**Fixture-resolver matcht nu Dutch sport-labels + varianten in team-naam**
+
+### Fixed
+
+- **[P1]** v12.1.3 fallback-resolver vond nóg steeds geen match: `bet.sport` wordt als Dutch UI-label opgeslagen (`Voetbal`, `IJshockey`, ...) maar `fixtures.sport` = internal API-key (`football`, `hockey`, ...). De `.eq('sport', …)` filter matchte dus nooit. Toegevoegd: `SPORT_LABEL_TO_KEY`-mapping die zowel Dutch als English varianten accepteert.
+- **[P2]** Team-matching uitgebreid met first-word fallback: "Edmonton Oilers" ↔ "Edmonton" matcht nu via eerste-woord-vergelijking (mits ≥4 chars), naast de bestaande exact/substring match. Voorkomt missed lookups als fixtures-tabel afgekorte team-namen heeft.
+
+### Tests
+645 passed, 0 failed. 2 nieuwe: Dutch sport label mapping + first-word team match.
+
+---
+
 ## [12.1.3] - 2026-04-20
 
 **Fallback fixture_id-lookup voor pre-v12.1.1 bets**

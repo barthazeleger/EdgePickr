@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.3');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7523,6 +7523,46 @@ test('resolveFixtureIdForBet: exact team-match returns fixture id', async () => 
   const bet = { datum: '20-04-2026', wedstrijd: 'Lecce vs Fiorentina', sport: 'football' };
   const id = await resolveFixtureIdForBet(mockSupabase, bet);
   assert.strictEqual(id, 777);
+});
+
+test('resolveFixtureIdForBet: Dutch sport label maps to internal key (v12.1.4)', async () => {
+  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  let sportFilter = null;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function(_col, val) { sportFilter = val; return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => Promise.resolve({ data: [
+          { id: 123, home_team_name: 'Edmonton Oilers', away_team_name: 'Anaheim Ducks', start_time: '2026-04-21T02:00:00Z' },
+        ]}),
+      }),
+    }),
+  };
+  const bet = { datum: '21-04-2026', wedstrijd: 'Edmonton Oilers vs Anaheim Ducks', sport: 'IJshockey' };
+  const id = await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(sportFilter, 'hockey', 'IJshockey moet naar "hockey" mappen voor de fixtures-query');
+  assert.strictEqual(id, 123);
+});
+
+test('resolveFixtureIdForBet: first-word match werkt als fixture-naam afwijkt (v12.1.4)', async () => {
+  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => Promise.resolve({ data: [
+          { id: 555, home_team_name: 'Edmonton', away_team_name: 'Anaheim', start_time: '2026-04-21T02:00:00Z' },
+        ]}),
+      }),
+    }),
+  };
+  const bet = { datum: '21-04-2026', wedstrijd: 'Edmonton Oilers vs Anaheim Ducks', sport: 'hockey' };
+  const id = await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(id, 555);
 });
 
 test('resolveFixtureIdForBet: no unique match returns null', async () => {
