@@ -1383,6 +1383,11 @@ const notify = async (text, type = 'info', userId = null) => {
 const createLearningLoop = require('./lib/learning-loop');
 const learningLoop = createLearningLoop({
   loadCalib, saveCalib, getUsersCache, notify, getUserMoneySettings,
+  // v12.1.0: filter learning-data op preferred bookies. Bets op niet-actieve
+  // bookies (bv. niet-legaal in NL) vervuilen calibratie voor markten die
+  // operator nooit speelt. Door preferred-check te injecteren wordt de learning-
+  // loop operator-bookie-aware.
+  getPreferredBookies,
 });
 const updateCalibration = learningLoop.updateCalibration;
 const revertCalibration = learningLoop.revertCalibration;
