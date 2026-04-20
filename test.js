@@ -4157,10 +4157,21 @@ test('modal v10.8.11: origEdge niet aangeleverd → fallback naar bucket-inversi
   assert.ok(r.dampedEdge > 8 && r.dampedEdge < 10, `fallback expected ~9.2, got ${r.dampedEdge}`);
 });
 
-test('modal: hogere odds (+3%) → severity=better, rec gecapt op origUnits', () => {
+test('modal: hogere odds (+4.7%) → severity=better, 1 bucket omhoog (v12.1.0)', () => {
+  // v12.1.0: bij +4% of meer betere odds mag units 1 bucket omhoog (gecapt
+  // op pureRec). Voorheen altijd gecapt op origUnits, wat inconsistent was
+  // met de score die wel tot 10/10 klom.
   const r = computeModalAdvice({ origOdds: 1.91, newOdds: 2.00, prob: 0.62, origUnits: 0.75 });
   assert.strictEqual(r.severity, 'better');
-  assert.ok(r.recUnits <= 0.75, 'better rec gecapt op origUnits');
+  // origUnits=0.75 → idx=5, oneUp = 1.0. pureRec bij hk=0.12 = 2.0. rec = min(1.0, 2.0) = 1.0.
+  assert.strictEqual(r.recUnits, 1.0);
+});
+
+test('modal: licht hogere odds (+2.5%) → severity=better, blijft op origUnits', () => {
+  // Onder +4% blijft unit-advies op origUnits (conservatief).
+  const r = computeModalAdvice({ origOdds: 1.91, newOdds: 1.96, prob: 0.62, origUnits: 0.75 });
+  assert.strictEqual(r.severity, 'better');
+  assert.ok(r.recUnits <= 0.75, 'onder +4% blijft rec op origUnits');
 });
 
 test('modal: zero/invalid input → severity=invalid, rec=0', () => {
