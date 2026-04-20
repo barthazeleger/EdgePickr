@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.1');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7502,6 +7502,31 @@ test('PUBLIC_PATHS: /api/status is NOT public, /api/health IS public', () => {
   assert(!/['"]\/api\/status['"]/.test(block), '/api/status must NOT be in PUBLIC_PATHS');
   assert(/['"]\/api\/health['"]/.test(block), '/api/health MUST be in PUBLIC_PATHS for keep-alive');
   assert(/['"]\/api\/auth\/login['"]/.test(block), '/api/auth/login must be in PUBLIC_PATHS');
+});
+
+// v12.1.2: todayBets telt nu ook nachtwedstrijden die op morgen staan (kickoff < 06:00).
+test('calcStats.todayBetsCount includes tomorrow night-games (kickoff < 06:00)', () => {
+  const createBetsData = require('./lib/bets-data');
+  const bd = createBetsData({
+    supabase: { from: () => ({}) },
+    getUserMoneySettings: async () => ({ unitEur: 10, startBankroll: 500 }),
+    defaultStartBankroll: 500,
+    defaultUnitEur: 10,
+    revertCalibration: async () => {},
+    updateCalibration: async () => {},
+  });
+  const today = new Date();
+  const tomorrow = new Date(Date.now() + 86400000);
+  const dayAfter = new Date(Date.now() + 2 * 86400000);
+  const fmt = d => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
+  const bets = [
+    { datum: fmt(today),     tijd: '20:45', odds: 1.94, inzet: 12.50, units: 0.5, uitkomst: 'Open', wl: 0 },
+    { datum: fmt(tomorrow),  tijd: '04:00', odds: 1.95, inzet: 12.50, units: 0.5, uitkomst: 'Open', wl: 0 },
+    { datum: fmt(tomorrow),  tijd: '20:00', odds: 2.10, inzet: 12.50, units: 0.5, uitkomst: 'Open', wl: 0 },
+    { datum: fmt(dayAfter),  tijd: '03:00', odds: 2.00, inzet: 12.50, units: 0.5, uitkomst: 'Open', wl: 0 },
+  ];
+  const s = bd.calcStats(bets, 500, 25);
+  assert.strictEqual(s.todayBetsCount, 2, 'vandaag + morgen-nacht <06:00 = 2 bets');
 });
 
 // C3: writeBet retries on unique-violation (bet_id race).

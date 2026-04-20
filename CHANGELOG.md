@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.2] - 2026-04-20
+
+**Tracker UX · vandaag-teller + gisteren-filter**
+
+### Fixed
+
+- **[P2]** "Pot. profit today (N bets)" telde strikt `datum === vandaag` en miste daardoor nachtwedstrijden die op morgen-datum staan (bv. NHL 04:00). Tracker-tabel toonde wél beide bets onder "Vandaag" (from=vandaag, to=morgen), waardoor de kop-teller inconsistent was met de tabel. Fix: `calcStats.todayBets` telt nu ook bets met `datum = morgen` én `tijd < 06:00` mee — symmetrisch met de tracker-filter.
+
+### Added
+
+- **"Gisteren"-knop** in tracker periode-selector (tussen Vandaag en 7d). Strikt yesterday (from=gisteren, to=gisteren). `setPeriod(-1, …)` uitgebreid voor deze shortcut.
+
+### Tests
+640 passed, 0 failed. 1 nieuwe: `calcStats.todayBetsCount includes tomorrow night-games`.
+
+---
+
 ## [12.1.1] - 2026-04-19
 
 **Operator-rapport follow-up · William Hill + fixtureId-koppeling**
