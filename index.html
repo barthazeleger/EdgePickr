@@ -3077,12 +3077,43 @@ async function checkBetNotifications(events) {
     const prev = livePrevState.get(e.id) || {};
     const notified = prev.notified || new Set();
 
-    // Vind openstaande bet voor dit event
+    // v12.1.0 (operator-rapport 2026-04-19): strictere team-matching. Eerdere
+    // logic matchte op eerste-woord van teamnaam → "Tampa Bay Lightning" bet
+    // ging matchen met "Tampa Bay Rays" MLB fixture op het woord "tampa". Gevolg:
+    // live Under-gebroken notif op verkeerde wedstrijd. Nu vereist BEIDE teams
+    // matchen op meaningful substring (laatste woord = team-naam zonder city).
     const teams = [e.home.toLowerCase(), e.away.toLowerCase()];
-    const myBet = openBets.find(b =>
-      b.wedstrijd.split(' vs ').some(t => teams.some(tm => tm.includes(t.trim().toLowerCase().split(' ')[0])))
-    );
+    const betTeams = b => (b.wedstrijd || '').split(' vs ').map(t => t.trim().toLowerCase()).slice(0, 2);
+    const teamMatches = (betTeam, evTeam) => {
+      const bt = betTeam.trim();
+      const et = evTeam.trim();
+      if (!bt || !et) return false;
+      // Substring-containment beide richtingen + laatste-woord match (nickname).
+      // Minimum 4 chars om "Tampa Bay" vs "Tampa" alleen op stad te blokkeren.
+      if (bt.length < 4 || et.length < 4) return bt === et;
+      if (bt.includes(et) || et.includes(bt)) return true;
+      const btLast = bt.split(' ').pop();
+      const etLast = et.split(' ').pop();
+      return btLast.length >= 5 && etLast.length >= 5 && btLast === etLast;
+    };
+    const myBet = openBets.find(b => {
+      const [bh, ba] = betTeams(b);
+      if (!bh || !ba) return false;
+      const homeMatch = teamMatches(bh, teams[0]) || teamMatches(bh, teams[1]);
+      const awayMatch = teamMatches(ba, teams[0]) || teamMatches(ba, teams[1]);
+      // Eis BEIDE teams matchen — voorkomt dat "Tampa Bay Lightning vs
+      // Montreal" matcht met "Pittsburgh Pirates vs Tampa Bay Rays" (Montreal
+      // komt nergens voor → geen match). Ook sport-filter voor extra veiligheid.
+      if (!homeMatch || !awayMatch) return false;
+      if (b.sport && e.sport && b.sport !== e.sport) return false;
+      return true;
+    });
     if (!myBet) { livePrevState.set(e.id, { ...prev, notified }); continue; }
+
+    // v12.1.0: Team Total markten (TT Over/Under X.X) mogen NIET triggeren op
+    // game-total goals. TT meet één team's score, niet de som. Live-sync slaat
+    // deze markten over; backend results-checker (hockey-TT aware) doet settlement.
+    const isTeamTotal = /team\s*total|\bTT\b/i.test(myBet.markt || '');
 
     const sH = e.scoreH ?? 0, sA = e.scoreA ?? 0;
     const goals = sH + sA;
@@ -3115,7 +3146,8 @@ async function checkBetNotifications(events) {
     }
 
     // ── O/U lijn gepasseerd tijdens wedstrijd ─────────────────────────────────
-    const ouMatch = markt.match(/(over|boven)\s*([\d.]+)/);
+    // v12.1.0: skip voor Team Total — die vereist single-team score, niet som.
+    const ouMatch = !isTeamTotal && markt.match(/(over|boven)\s*([\d.]+)/);
     if (ouMatch && !notified.has('ou_hit')) {
       const line = parseFloat(ouMatch[2]);
       const prevGoals = (prev.scoreH ?? 0) + (prev.scoreA ?? 0);
@@ -3127,10 +3159,9 @@ async function checkBetNotifications(events) {
     }
 
     // v11.3.23 F4 (Codex #1): Under X.5 onomkeerbaar verloren tijdens live.
-    // Eerder: tracker wachtte tot full-time; now: als live totalGoals > line
-    // is de bet definitief L. Trigger sync direct zodat backend auto-settle
-    // kan vuren en CLV/bankroll meteen correct staat.
-    const underMatch = markt.match(/(under|onder)\s*([\d.]+)/);
+    // v12.1.0: skip voor Team Total markten — die meten één team's score, niet
+    // game-total. Voorheen triggerde TT Under bij game-total > line wat fout is.
+    const underMatch = !isTeamTotal && markt.match(/(under|onder)\s*([\d.]+)/);
     if (underMatch && !notified.has('under_lost')) {
       const line = parseFloat(underMatch[2]);
       if (Number.isFinite(line) && goals > line) {
