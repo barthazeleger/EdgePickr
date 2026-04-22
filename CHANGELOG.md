@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.7] - 2026-04-22
+
+**Scan-volume boost + hockey TT-parity**
+
+### Changed
+
+- **[P2]** `MIN_CONFIDENCE` voor voetbal picks van 0.025 → 0.015. Na v12.0.x stapeling van strengere sanity/divergence/parser gates kwamen er systematisch 0-1 picks per scan uit terwijl de v2 pipeline 60 kandidaten/48u accepteerde. 0.015 laat iets meer picks door zonder de quality-gates te raken (die hebben al hun eigen divergence + price-range + sigCount=0 checks).
+
+### Fixed
+
+- **[P2]** Hockey picks gingen niet door een strength-filter zoals voetbal. Gevolg: zwakke TT-edges kwamen altijd door terwijl hockey ML picks zelden doorkwamen (price_too_low op favorieten + edge_below_min). Gate-parity: hockey krijgt nu dezelfde `strength >= 0.015`-drempel. Logt `🏒 Confidence-filter: X van Y hockey picks < 0.015 strength` wanneer picks dropen.
+
+### Notes
+
+- Odds_snapshots (240MB = 83% van DB) is normaal: retention draait dagelijks (30 dagen TTL) via `lib/runtime/maintenance-schedulers.js:72`. 500MB Supabase free-tier limit → 48% gebruik, ruim.
+- DB-capacity alerts: Supabase zelf mailt bij 80%/100%. Inbox-alert in `notifications-feed.js:121` gebruikt bet-count × 0.002MB estimate (mist `odds_snapshots` compleet) — separaat fix-kandidaat, niet in deze release.
+
+---
+
 ## [12.1.6] - 2026-04-20
 
 **Fixture-resolver matcht team-naam varianten (club-prefix strip)**

@@ -3843,8 +3843,20 @@ async function runHockey(emit) {
   for (const p of picks)     { p.scanType = 'nhl'; p.sport = 'hockey'; }
   for (const p of combiPool) { p.scanType = 'nhl'; p.sport = 'hockey'; }
 
+  // v12.1.7: Strength-filter parity met voetbal. Voorheen sloeg hockey de
+  // MIN_CONFIDENCE-check over, waardoor TT-picks altijd doorkwamen terwijl
+  // voetbal 1x2-picks op strength >= 0.015 gedropt werden. Nu moeten hockey
+  // picks (ML én TT) dezelfde drempel halen — voorkomt TT-monopoli wanneer
+  // model zwakke TT-edges niet anders van sterke picks onderscheidt.
+  const HOCKEY_MIN_CONFIDENCE = 0.015;
+  const rawHockeyCount = picks.length;
+  const filteredHockeyPicks = picks.filter(p => p.strength >= HOCKEY_MIN_CONFIDENCE);
+  if (rawHockeyCount > filteredHockeyPicks.length) {
+    emit({ log: `🏒 Confidence-filter: ${rawHockeyCount - filteredHockeyPicks.length} van ${rawHockeyCount} hockey picks < 0.015 strength` });
+  }
+
   // v10.12.9 Phase A.1b: post-scan execution-gate pass (hockey ML)
-  let gatedHockeyPicks = picks;
+  let gatedHockeyPicks = filteredHockeyPicks;
   try {
     const { applyPostScanGate } = require('./lib/runtime/scan-gate');
     const { kellyToUnits } = require('./lib/model-math');
@@ -6502,7 +6514,10 @@ async function runPrematch(emit) {
   // ── SORT + DEDUP + CONFIDENCE FILTER ─────────────────────────────────────
   // Primair: ep (hitrate) aflopend. Bij gelijke hitrate: strength als tiebreaker.
   // MIN_CONFIDENCE bewaakt dat picks echt EV+ zijn, niet alleen hoge hitrate.
-  const MIN_CONFIDENCE = 0.025;
+  // v12.1.7: 0.025 → 0.015. Na de v12.0.x stapeling van strengere sanity/
+  // divergence/parser gates kwamen er systematisch 0-1 picks per scan uit.
+  // 0.015 laat iets meer picks door zonder de echte quality-gates aan te raken.
+  const MIN_CONFIDENCE = 0.015;
 
   const seen2 = new Set();
   let allCandidates = picks
