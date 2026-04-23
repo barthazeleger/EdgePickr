@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.9');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.10');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7891,6 +7891,111 @@ test('integration: DELETE /bets/:id rejects invalid id', async () => {
   assert.strictEqual(res.statusCode, 400);
 });
 
+test('integration: DELETE /bets/:id/clv wist CLV-velden voor één bet', async () => {
+  const createBetsWriteRouter = require('./lib/routes/bets-write');
+  let updatedPayload = null;
+  let updatedBetId = null;
+  let updatedUserId = null;
+  const router = createBetsWriteRouter({
+    supabase: {
+      from: (table) => {
+        assert.strictEqual(table, 'bets');
+        return {
+          update: (payload) => {
+            updatedPayload = payload;
+            return {
+              eq: (col, val) => {
+                if (col === 'bet_id') updatedBetId = val;
+                return {
+                  eq: (col2, val2) => {
+                    if (col2 === 'user_id') updatedUserId = val2;
+                    return Promise.resolve({ error: null });
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    },
+    rateLimit: () => false,
+    requireAdmin: makeNoopAuthMiddleware(),
+    readBets: async () => ({ bets: [{ id: 63, clvPct: null }], stats: { total: 1 } }),
+    writeBet: async () => {},
+    updateBetOutcome: async () => {},
+    getUserUnitEur: async () => 25,
+    loadUsers: async () => [],
+    calcStats: () => ({}),
+    defaultStartBankroll: 500,
+    defaultUnitEur: 25,
+    schedulePreKickoffCheck: async () => {},
+    scheduleCLVCheck: async () => {},
+    afGet: async () => [],
+    marketKeyFromBetMarkt: () => ({ market_type: 'total', selection_key: 'under' }),
+  });
+  const res = await callRoute(router, {
+    method: 'DELETE',
+    path: '/bets/63/clv',
+    params: { id: '63' },
+    user: { id: 'u1', role: 'user' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.deepStrictEqual(updatedPayload, {
+    clv_odds: null,
+    clv_pct: null,
+    sharp_clv_odds: null,
+    sharp_clv_pct: null,
+  });
+  assert.strictEqual(updatedBetId, 63);
+  assert.strictEqual(updatedUserId, 'u1');
+  assert.strictEqual(res.body.bets[0].id, 63);
+});
+
+test('integration: DELETE /inbox-notifications bewaart inbox-waardige meldingen', async () => {
+  let deletedIds = null;
+  const rows = [
+    { id: 1, type: 'scan_end' },
+    { id: 2, type: 'stake_regime_transition' },
+    { id: 3, type: 'cron_tick' },
+    { id: 4, type: 'odds_drift' },
+  ];
+  const router = createNotificationsRouter({
+    supabase: {
+      from: (table) => {
+        assert.strictEqual(table, 'notifications');
+        return {
+          select: () => ({
+            or: () => ({
+              limit: () => Promise.resolve({ data: rows, error: null }),
+            }),
+          }),
+          delete: () => ({
+            in: (col, ids) => {
+              assert.strictEqual(col, 'id');
+              deletedIds = ids;
+              return Promise.resolve({ error: null });
+            },
+          }),
+        };
+      },
+    },
+    isValidUuid: () => true,
+    rateLimit: () => false,
+    savePushSub: async () => {},
+    deletePushSub: async () => {},
+    vapidPublicKey: 'test-key',
+  });
+  const res = await callRoute(router, {
+    method: 'DELETE',
+    path: '/inbox-notifications',
+    user: { id: 'u1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.deepStrictEqual(deletedIds, [1, 3], 'alleen transient notifications mogen weg');
+  assert.strictEqual(res.body.deleted, 2);
+  assert.strictEqual(res.body.preserved, 2);
+});
+
 // Admin error-leak regressie: admin-controls upgrade-ack returnt géén raw error.
 test('integration: admin-controls 500-pad lekt geen raw error message', async () => {
   const createAdminControlsRouter = require('./lib/routes/admin-controls');
@@ -8057,6 +8162,52 @@ test('integration: GET /admin/v2/bookie-concentration uses `tip` column', async 
   assert.strictEqual(notNullCol, 'tip', 'must filter not-null on `tip`');
   assert.strictEqual(res.body.total, 80);
   assert.strictEqual(res.body.perBookie[0].bookie, 'Bet365');
+});
+
+test('integration: GET /model-feed filtert scan-ruis uit mirrored notifications', async () => {
+  const mockSupabase = {
+    from: (table) => {
+      if (table === 'notifications') {
+        return {
+          select: () => ({
+            order: () => ({
+              limit: () => ({
+                or: () => Promise.resolve({
+                  data: [
+                    { id: 1, type: 'scan_end', title: 'scan klaar', created_at: new Date().toISOString() },
+                    { id: 2, type: 'stake_regime_transition', title: 'Stake regime', created_at: new Date().toISOString() },
+                    { id: 3, type: 'cron_tick', title: 'cron', created_at: new Date().toISOString() },
+                    { id: 4, type: 'odds_drift', title: 'Odds drift', created_at: new Date().toISOString() },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({ not: () => ({ limit: async () => ({ data: [], error: null }) }), order: () => ({}) }),
+      };
+    },
+  };
+  const router = createAdminSignalsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    loadCalib: () => ({ markets: {}, modelLog: [], totalSettled: 59 }),
+    loadSignalWeights: () => ({}),
+    summarizeSignalMetrics: () => ({ signals: {} }),
+    parseBetSignals: () => [],
+    normalizeSport: (s) => s,
+    detectMarket: () => 'other',
+  });
+  const res = await callRoute(router, {
+    method: 'GET',
+    path: '/model-feed',
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.deepStrictEqual(res.body.notifications.map(n => n.type), ['stake_regime_transition', 'odds_drift']);
 });
 
 // Info route: GET /version returns app version (geen auth nodig — mounted elsewhere).

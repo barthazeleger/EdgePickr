@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.10] - 2026-04-23
+
+**Inbox cleanup + manual CLV clear**
+
+### Fixed
+
+- **[P1]** Tracker-bets met foutieve CLV kunnen nu handmatig worden opgeschoond via `DELETE /api/bets/:id/clv` en een directe `✕`-actie in de betstabel. Dit wist `clv_odds`, `clv_pct`, `sharp_clv_odds` en `sharp_clv_pct` voor precies één bet.
+- **[P1]** De Inbox-tab bewaart nu een eigen feed-state in plaats van te leunen op gedeelde `model-feed` state. Daardoor verdwijnen mirrored items niet meer na tab-wissels, filters of partiële refreshes.
+- **[P1]** Alleen inbox-waardige notification-types worden nog naar de Inbox gemirrord. Transient scan-ruis zoals `scan_end` en `cron_tick` verschijnt daar niet meer.
+- **[P2]** `Wis alles` in de notificatie-bel verwijdert nu alleen transient notifications en bewaart systeemkritische meldingen zoals `stake_regime_transition` en `odds_drift`, zodat de Inbox niet meer onbedoeld leeggetrokken wordt.
+
+### Tests
+
+654 passed, 0 failed.
+
+---
+
 ## [12.1.9] - 2026-04-23
 
 **Stake-regime UX + Inbox mirror**

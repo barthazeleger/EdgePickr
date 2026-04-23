@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.1.9</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.1.10</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -637,7 +637,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.1.9</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.1.10</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -2220,7 +2220,9 @@ function renderBetsTable(bets) {
         </select>
       </td>
       <td class="${wCls}">${b.wl !== 0 ? (b.wl>0?'+':'')+'€'+Number(b.wl).toFixed(2) : b.uitkomst==='Open' ? `<span style="color:var(--muted);font-size:11px" title="Potentiële winst">+€${+((b.odds-1)*b.inzet).toFixed(2)}</span>` : '—'}</td>
-      <td>${b.clvPct != null && !isNaN(b.clvPct) ? `<span style="font-size:11px;font-weight:700;color:${b.clvPct>0?'#34d399':b.clvPct<0?'#f87171':'#9ca3af'}">${b.clvPct>0?'+':''}${b.clvPct}%</span>` : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+      <td>${b.clvPct != null && !isNaN(b.clvPct)
+        ? `<div style="display:flex;align-items:center;gap:6px;justify-content:flex-start"><span style="font-size:11px;font-weight:700;color:${b.clvPct>0?'#34d399':b.clvPct<0?'#f87171':'#9ca3af'}">${b.clvPct>0?'+':''}${b.clvPct}%</span><button class="del-btn" onclick="clearBetClv(${parseInt(b.id)||0}, this)" title="Verwijder CLV" style="padding:1px 5px;font-size:11px">✕</button></div>`
+        : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
       <td style="min-width:64px">${b.uitkomst === 'Open'
         ? `<button class="del-btn" onclick="refreshCurrentOdds(${parseInt(b.id)||0}, this)" title="Huidige odds ophalen" style="padding:2px 6px;font-size:14px">🔄</button><span id="cur-${parseInt(b.id)||0}" style="margin-left:4px;font-size:11px;color:var(--muted)"></span>`
         : '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
@@ -2282,6 +2284,34 @@ async function refreshCurrentOdds(id, btn) {
     if (span) { span.textContent = '❌'; span.title = String(e?.message || e); }
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+async function clearBetClv(id, btn) {
+  if (!id) return;
+  if (!confirm(`CLV van bet #${id} verwijderen?`)) return;
+  const prev = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+  }
+  try {
+    const r = await api('/api/bets/' + id + '/clv', { method: 'DELETE' });
+    const d = await r?.json();
+    if (!d || d.error) {
+      alert(d?.error || 'CLV verwijderen mislukt');
+      return;
+    }
+    betData = d;
+    renderStats(d.stats);
+    refreshBets(d.bets);
+  } catch (e) {
+    alert(String(e?.message || e || 'CLV verwijderen mislukt'));
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = prev || '✕';
+    }
   }
 }
 
@@ -4580,23 +4610,35 @@ async function adminAction(userId, status) {
 }
 
 // ── INBOX — MODEL ACTIVITY FEED ───────────────────────────────────────────────
-let inboxData = null;
+let inboxState = null;
+let modelFeedData = null;
 let inboxFilter = 'all';
+
+function buildInboxFeedFromPayload(d) {
+  const notificationEntries = (d?.notifications || []).map(n => ({
+    type: n.type || 'system',
+    date: n.created_at,
+    note: `${n.title || 'Notificatie'}${n.body ? `\n${n.body}` : ''}`,
+    isNotification: true,
+    read: n.read,
+  }));
+  return [...notificationEntries, ...(d?.log || [])]
+    .filter(e => e && (e.note || e.type))
+    .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+}
 
 async function loadInbox() {
   try {
     const d = await api('/api/model-feed').then(r => r?.json());
     if (!d) return;
-    inboxData = d;
+    modelFeedData = d;
+    inboxState = {
+      totalSettled: d.totalSettled || 0,
+      feed: buildInboxFeedFromPayload(d),
+    };
     const setEl = document.getElementById('inbox-settled');
-    if (setEl) setEl.textContent = `${d.totalSettled} settled bets`;
-    renderInboxFeed([...(d.notifications || []).map(n => ({
-      type: n.type || 'system',
-      date: n.created_at,
-      note: `${n.title || 'Notificatie'}${n.body ? `\n${n.body}` : ''}`,
-      isNotification: true,
-      read: n.read,
-    })), ...(d.log || [])]);
+    if (setEl) setEl.textContent = `${inboxState.totalSettled} settled bets`;
+    renderInboxFeed(inboxState.feed);
   } catch {}
 }
 
@@ -4604,7 +4646,7 @@ async function loadModelTab() {
   try {
     const d = await api('/api/model-feed').then(r => r?.json());
     if (!d) return;
-    inboxData = d;
+    modelFeedData = d;
     renderInboxWeights(d.signalWeights);
     renderInboxPerSport(d.perSport);
     renderInboxMarkets(d.markets);
@@ -4656,7 +4698,7 @@ async function loadExperimentalSignals() {
     // v10.7.25 new-season
     { name: 'early_season', sport: '⚽ Voetbal', desc: 'Ronde 1-4: form/h2h gedempt op 60% (kleine sample)', since: 'v10.7.25', activationFormula: 'Direct dempt form+h2h × 0.6' },
   ];
-  const sw = (inboxData?.signalWeights) || {};
+  const sw = (modelFeedData?.signalWeights) || {};
   el.innerHTML = catalog.map(c => {
     const w = sw[c.name];
     const activated = typeof w === 'number' && w > 0;
@@ -4778,11 +4820,12 @@ function filterInbox(filter, btn) {
   inboxFilter = filter;
   document.querySelectorAll('.inbox-filter').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  if (inboxData) renderInboxFeed(inboxData.log);
+  if (inboxState) renderInboxFeed(inboxState.feed);
 }
 
 function renderInboxFeed(log) {
   const feed = document.getElementById('inbox-feed');
+  if (!feed) return;
   // Map oude types naar nieuwe categorieën voor filtering
   const typeCategory = t => {
     if (t === 'milestone') return 'milestone';
@@ -4790,7 +4833,7 @@ function renderInboxFeed(log) {
     if (t === 'action_required' || t === 'unit_increase' || t === 'bookie_diversify' || t === 'cashout_advice') return 'action';
     if (t === 'insight' || t === 'timing_insight' || t === 'clv_insight' || t === 'performance') return 'insight';
     if (t === 'recommendation' || t === 'upgrade_advice' || t === 'strategy') return 'recommendation';
-    if (t === 'system' || t === 'sheets_slow' || t === 'api_warning' || t === 'stake_regime_transition' || t === 'odds_drift' || t === 'heartbeat_miss' || t === 'clv_backfill') return 'system';
+    if (t === 'system' || t === 'sheets_slow' || t === 'api_warning' || t === 'stake_regime_transition' || t === 'odds_drift' || t === 'heartbeat_miss' || t === 'clv_backfill' || t === 'clv_milestone' || t === 'drift_alert' || t === 'drawdown_alert' || t === 'kill_switch' || t === 'check_failed' || t === 'autotune_run') return 'system';
     if (t === 'market_calibration' || t === 'ep_calibration' || t === 'signal_tuning') return 'calibration';
     return 'calibration'; // fallback
   };
@@ -4808,11 +4851,11 @@ function renderInboxFeed(log) {
   const icons = { market_calibration:'📊', ep_calibration:'🎯', signal_tuning:'🔧', milestone:'🏆',
     insight:'💡', timing_insight:'⏰', clv_insight:'📉', performance:'📈',
     recommendation:'🎯', upgrade_advice:'💰', strategy:'🧭',
-    system:'⚙️', sheets_slow:'🐌', api_warning:'⚠️', stake_regime_transition:'🎚️', odds_drift:'📈', heartbeat_miss:'🫀', clv_backfill:'📊' };
+    system:'⚙️', sheets_slow:'🐌', api_warning:'⚠️', stake_regime_transition:'🎚️', odds_drift:'📈', heartbeat_miss:'🫀', clv_backfill:'📊', clv_milestone:'🏁', drift_alert:'📉', drawdown_alert:'🩹', kill_switch:'🛑', check_failed:'🧪', autotune_run:'🧠' };
   const labels = { market_calibration:'Markt calibratie', ep_calibration:'EP herweging', signal_tuning:'Signal tuning', milestone:'Milestone',
     insight:'Inzicht', timing_insight:'Timing inzicht', clv_insight:'CLV inzicht', performance:'Prestatie analyse',
     recommendation:'Advies', upgrade_advice:'Upgrade advies', strategy:'Strategie',
-    system:'Systeem', sheets_slow:'Performance', api_warning:'API waarschuwing', stake_regime_transition:'Stake-regime', odds_drift:'Odds drift', heartbeat_miss:'Scanner heartbeat', clv_backfill:'CLV backfill' };
+    system:'Systeem', sheets_slow:'Performance', api_warning:'API waarschuwing', stake_regime_transition:'Stake-regime', odds_drift:'Odds drift', heartbeat_miss:'Scanner heartbeat', clv_backfill:'CLV backfill', clv_milestone:'CLV milestone', drift_alert:'Drift alert', drawdown_alert:'Drawdown alert', kill_switch:'Kill-switch', check_failed:'Dagelijkse check', autotune_run:'Autotune' };
 
   feed.innerHTML = filtered.map(e => {
     const icon = icons[e.type] || '🧠';
@@ -4894,7 +4937,7 @@ function renderInboxMarkets(markets) {
 
   // Laatst-gewijzigd map: uit modelLog (meest recente eerst)
   const lastUpdated = {};
-  const log = (inboxData?.log || []).filter(e => e.type === 'market_calibration' && e.market);
+  const log = (modelFeedData?.log || []).filter(e => e.type === 'market_calibration' && e.market);
   for (const e of log) {
     if (!lastUpdated[e.market]) lastUpdated[e.market] = e.date;
   }
@@ -4960,7 +5003,7 @@ function renderInboxMarkets(markets) {
 }
 function _setMarketTab(tab) {
   _marketTabActive = tab;
-  if (inboxData) renderInboxMarkets(inboxData.markets);
+  if (modelFeedData) renderInboxMarkets(modelFeedData.markets);
 }
 
 // v10.7.25: Signal Performance Dashboard (task D)
