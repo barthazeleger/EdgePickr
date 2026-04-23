@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.8');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.9');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6796,12 +6796,13 @@ test('evaluateStakeRegime: scale_up overruled door drawdown_hard (priority)', ()
   assert.strictEqual(r.regime, 'drawdown_hard', 'hard-drawdown beats scale_up');
 });
 
-test('evaluateStakeRegime: negative long-term CLV maar geen drawdown → fallback exploratory', () => {
+test('evaluateStakeRegime: 50+ settled zonder bewezen CLV → early_caution', () => {
   const r = evaluateStakeRegime({
     totalSettled: 120, longTermClvPct: -0.5, longTermRoi: -0.01,
     drawdownPct: 0.05,
   });
-  assert.strictEqual(r.regime, 'exploratory');
+  assert.strictEqual(r.regime, 'early_caution');
+  assert.strictEqual(r.kellyFraction, 0.35);
 });
 
 test('evaluateStakeRegime: reasons array bevat regime + details', () => {

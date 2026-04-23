@@ -2,6 +2,21 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.9] - 2026-04-23
+
+**Stake-regime UX + Inbox mirror**
+
+### Changed
+
+- **[P2]** Stake-regime fallback bij `50-99` settled bets heet nu `early_caution` in plaats van opnieuw `exploratory`. De sizing blijft bewust voorzichtig (`Kelly 0.35`, unit ×1.0), maar de naam/reason maakt nu duidelijk dat de teller niet fout is.
+- **[P2]** De Inbox-tab mixt nu ook recente rows uit de Supabase `notifications` tabel in de model-feed. Daardoor zijn `stake_regime_transition`, odds-drift, CLV-backfill en heartbeat/systemmeldingen zichtbaar in de Inbox-tab, niet alleen in de notificatie-bel.
+
+### Tests
+
+Zie release-run.
+
+---
+
 ## [12.1.8] - 2026-04-23
 
 **Hockey TT CLV + stake-regime consistency**

@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.1.8</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.1.9</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -637,7 +637,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.1.8</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.1.9</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -4590,7 +4590,13 @@ async function loadInbox() {
     inboxData = d;
     const setEl = document.getElementById('inbox-settled');
     if (setEl) setEl.textContent = `${d.totalSettled} settled bets`;
-    renderInboxFeed(d.log);
+    renderInboxFeed([...(d.notifications || []).map(n => ({
+      type: n.type || 'system',
+      date: n.created_at,
+      note: `${n.title || 'Notificatie'}${n.body ? `\n${n.body}` : ''}`,
+      isNotification: true,
+      read: n.read,
+    })), ...(d.log || [])]);
   } catch {}
 }
 
@@ -4784,7 +4790,7 @@ function renderInboxFeed(log) {
     if (t === 'action_required' || t === 'unit_increase' || t === 'bookie_diversify' || t === 'cashout_advice') return 'action';
     if (t === 'insight' || t === 'timing_insight' || t === 'clv_insight' || t === 'performance') return 'insight';
     if (t === 'recommendation' || t === 'upgrade_advice' || t === 'strategy') return 'recommendation';
-    if (t === 'system' || t === 'sheets_slow' || t === 'api_warning') return 'system';
+    if (t === 'system' || t === 'sheets_slow' || t === 'api_warning' || t === 'stake_regime_transition' || t === 'odds_drift' || t === 'heartbeat_miss' || t === 'clv_backfill') return 'system';
     if (t === 'market_calibration' || t === 'ep_calibration' || t === 'signal_tuning') return 'calibration';
     return 'calibration'; // fallback
   };
@@ -4802,11 +4808,11 @@ function renderInboxFeed(log) {
   const icons = { market_calibration:'📊', ep_calibration:'🎯', signal_tuning:'🔧', milestone:'🏆',
     insight:'💡', timing_insight:'⏰', clv_insight:'📉', performance:'📈',
     recommendation:'🎯', upgrade_advice:'💰', strategy:'🧭',
-    system:'⚙️', sheets_slow:'🐌', api_warning:'⚠️' };
+    system:'⚙️', sheets_slow:'🐌', api_warning:'⚠️', stake_regime_transition:'🎚️', odds_drift:'📈', heartbeat_miss:'🫀', clv_backfill:'📊' };
   const labels = { market_calibration:'Markt calibratie', ep_calibration:'EP herweging', signal_tuning:'Signal tuning', milestone:'Milestone',
     insight:'Inzicht', timing_insight:'Timing inzicht', clv_insight:'CLV inzicht', performance:'Prestatie analyse',
     recommendation:'Advies', upgrade_advice:'Upgrade advies', strategy:'Strategie',
-    system:'Systeem', sheets_slow:'Performance', api_warning:'API waarschuwing' };
+    system:'Systeem', sheets_slow:'Performance', api_warning:'API waarschuwing', stake_regime_transition:'Stake-regime', odds_drift:'Odds drift', heartbeat_miss:'Scanner heartbeat', clv_backfill:'CLV backfill' };
 
   feed.innerHTML = filtered.map(e => {
     const icon = icons[e.type] || '🧠';
@@ -5285,7 +5291,7 @@ async function loadStatus() {
     const regColor = reg
       ? (reg.regime === 'scale_up' ? '#34d399'
         : reg.regime === 'drawdown_hard' ? '#f87171'
-        : reg.regime === 'drawdown_soft' || reg.regime === 'regime_shift' || reg.regime === 'consecutive_l' ? '#fbbf24'
+        : reg.regime === 'drawdown_soft' || reg.regime === 'regime_shift' || reg.regime === 'consecutive_l' || reg.regime === 'early_caution' ? '#fbbf24'
         : 'var(--accent)')
       : 'var(--muted)';
     document.getElementById('status-model').innerHTML = `
