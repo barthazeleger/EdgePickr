@@ -6700,6 +6700,10 @@ const { runLive, getLivePicks } = createLiveScan({
 // deleteBet + getUserUnitEur via factory-pattern. revertCalibration +
 // updateCalibration blijven in server.js (learning-loop), worden geinject.
 const createBetsData = require('./lib/bets-data');
+// v12.2.0: per-bookie bankroll tracking. Store wordt ge-inject in betsData zodat
+// writeBet/updateBetOutcome/deleteBet auto-sync balances.
+const { createBookieBalanceStore } = require('./lib/bookie-balances');
+const bookieBalanceStore = createBookieBalanceStore({ supabase });
 const betsData = createBetsData({
   supabase,
   getUserMoneySettings,
@@ -6707,6 +6711,7 @@ const betsData = createBetsData({
   defaultUnitEur: UNIT_EUR,
   revertCalibration,
   updateCalibration,
+  bookieBalanceStore,
 });
 const calcStats = betsData.calcStats;
 const readBets = betsData.readBets;
@@ -7228,6 +7233,10 @@ app.use('/api', createBetsWriteRouter({
   afGet,
   marketKeyFromBetMarkt,
 }));
+
+// v12.2.0: per-bookie bankroll balances (lijst + manual set).
+const createBookieBalancesRouter = require('./lib/routes/bookie-balances');
+app.use('/api', createBookieBalancesRouter({ bookieBalanceStore, rateLimit }));
 
 // v11.2.2 Phase 5.2: CLV backfill + recompute + probe verhuisd naar
 // lib/routes/clv.js via factory-pattern. Handelt admin-only vul van

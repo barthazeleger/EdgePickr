@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.1.12</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.2.0</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -219,6 +219,22 @@
     <div class="stat-box"><div class="stat-val" id="s-net-units">—</div><div class="stat-lbl">Net Units</div></div>
     <div class="stat-box"><div class="stat-val" id="s-odds">—</div><div class="stat-lbl">Gem. odds</div></div>
     <div class="stat-box"><div class="stat-val green" id="s-pot-win">—</div><div class="stat-lbl" data-i18n="pot_win_today">Pot. winst vandaag</div></div>
+  </div>
+
+  <!-- v12.2.0: per-bookie bankroll tracking -->
+  <div class="card" id="bookie-balances-card" style="margin-bottom:14px;padding:14px 16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div>
+        <div class="card-title" style="margin-bottom:2px">💰 Bookie-bankroll</div>
+        <div style="font-size:12px;color:var(--muted)">Per bookie saldo · totaal = volledige bankroll · klik een bedrag om aan te passen</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div style="font-size:12px;color:var(--muted)">Totaal: <strong id="bookie-balance-total" style="color:var(--text);font-size:15px">—</strong></div>
+        <button class="btn btn-ghost btn-sm" id="btn-bb-refresh" onclick="refreshBookieBalances()">🔄</button>
+      </div>
+    </div>
+    <div id="bookie-balance-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div id="bookie-balance-alerts" style="margin-top:8px;display:none"></div>
   </div>
 
   <div class="card" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -637,7 +653,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.1.12</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.2.0</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -1376,7 +1392,7 @@ function go(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pageEl = document.getElementById('page-' + name);
   if (pageEl) pageEl.classList.add('active');
-  if (name === 'tracker') { loadBets().then(() => { setPeriodToday(); }); loadCorrelations(); }
+  if (name === 'tracker') { loadBets().then(() => { setPeriodToday(); refreshBookieBalances(); }); loadCorrelations(); }
   if (name === 'data')    loadBets().then(d => redrawCharts(d));
   if (name === 'live')    { requestNotifPermission(); if (!betData) loadBets().then(() => fetchLive()); else fetchLive(); }
   if (name === 'analyse') refreshAnalyse();
@@ -2159,8 +2175,74 @@ function refreshBets(bets) {
   if (bets) betData = { ...(betData || {}), bets };
   const fromVal = document.getElementById('f-from')?.value;
   const toVal = document.getElementById('f-to')?.value;
-  if (fromVal || toVal) { applyPeriodFilter(); return; }
-  renderBetsTable((betData && betData.bets) || bets || []);
+  if (fromVal || toVal) { applyPeriodFilter(); }
+  else renderBetsTable((betData && betData.bets) || bets || []);
+  // v12.2.0: sync balance-panel na elke bet-refresh (log/update/delete triggert dit).
+  if (typeof refreshBookieBalances === 'function' && document.getElementById('bookie-balances-card')) {
+    refreshBookieBalances();
+  }
+}
+
+// v12.2.0: per-bookie bankroll tracking UI.
+async function refreshBookieBalances() {
+  const listEl = document.getElementById('bookie-balance-list');
+  const totalEl = document.getElementById('bookie-balance-total');
+  const alertsEl = document.getElementById('bookie-balance-alerts');
+  if (!listEl) return;
+  try {
+    const r = await api('/api/bookie-balances');
+    if (!r.ok) throw new Error('fetch failed');
+    const j = await r.json();
+    const balances = Array.isArray(j.balances) ? j.balances : [];
+    const total = Number(j.total) || 0;
+    const low = Array.isArray(j.lowAlerts) ? j.lowAlerts : [];
+
+    if (!balances.length) {
+      listEl.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:6px 0">Nog geen bookies. Initialiseer door een balance in te vullen via je admin-tab of log een bet om de eerste entry aan te maken.</div>';
+    } else {
+      listEl.innerHTML = balances
+        .sort((a, b) => b.balance - a.balance)
+        .map(b => {
+          const cls = b.balance < 25 ? 'red' : b.balance < 50 ? 'yellow' : 'green';
+          return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:140px" onclick="editBookieBalance('${b.bookie.replace(/'/g, "\\'")}', ${b.balance})" role="button" style="cursor:pointer">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">${b.bookie}</div>
+            <div class="${cls}" style="font-size:17px;font-weight:700;cursor:pointer">€${b.balance.toFixed(2)}</div>
+          </div>`;
+        })
+        .join('');
+    }
+    totalEl.textContent = `€${total.toFixed(2)}`;
+
+    if (low.length) {
+      alertsEl.style.display = 'block';
+      alertsEl.innerHTML = `<div style="font-size:12px;color:var(--yellow);padding:8px 12px;background:var(--yellow-bg);border-radius:6px">⚠️ Onder 1 unit (€25): ${low.map(b => `${b.bookie} (€${b.balance.toFixed(2)})`).join(', ')} — oversluizen aanbevolen.</div>`;
+    } else {
+      alertsEl.style.display = 'none';
+    }
+  } catch (e) {
+    listEl.innerHTML = `<div style="font-size:12px;color:var(--red)">Fout bij laden: ${e.message}</div>`;
+  }
+}
+
+async function editBookieBalance(bookie, currentBalance) {
+  const raw = prompt(`Nieuw saldo voor ${bookie}:`, currentBalance.toFixed(2));
+  if (raw == null) return;
+  const val = parseFloat(String(raw).replace(',', '.'));
+  if (!Number.isFinite(val)) { alert('Ongeldig bedrag'); return; }
+  try {
+    const r = await api(`/api/bookie-balances/${encodeURIComponent(bookie)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance: val }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || 'update failed');
+    }
+    await refreshBookieBalances();
+  } catch (e) {
+    alert('Fout: ' + e.message);
+  }
 }
 
 function renderBetsTable(bets) {

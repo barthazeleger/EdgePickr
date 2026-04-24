@@ -2,6 +2,36 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.0] - 2026-04-24
+
+**Per-bookie bankroll tracking (🇳🇱 oversluis-radar)**
+
+### Added
+
+- **Nieuwe tabel `bookie_balances`** (zie `docs/migrations-archive/v12.2.0_bookie_balances.sql`). Eén rij per (user, bookie) met `balance`. Service-role RLS policy. Draai de migratie vóór deploy.
+- **Module `lib/bookie-balances.js`** — pure balance-math (`betBalanceImpact`, `transitionDelta`) + Supabase-store (`listBalances`, `setBalance`, `applyDelta`, hook-functies).
+- **Bet-flow hooks** in `lib/bets-data.js` (transparant, no-op als `bookieBalanceStore` niet ge-inject):
+  - `writeBet(Open)` → balance −= inzet
+  - `updateBetOutcome(W)` → balance += inzet × odd (payout)
+  - `updateBetOutcome(L)` → balance ongewijzigd (stake al afgeschreven)
+  - `deleteBet` → reverse de cumulatieve impact (stake teruggeven bij Open/L, winst teruggeven bij W)
+- **API-endpoints** (`lib/routes/bookie-balances.js`):
+  - `GET /api/bookie-balances` → `{ balances, total, lowAlerts }`
+  - `PUT /api/bookie-balances/:bookie` `{ balance }` → initialiseren of correctie
+- **UI-panel** op tracker-tab (tussen stats-grid en "Uitslagen ophalen"): kaartjes per bookie met kleur-indicatie (rood < €25, geel < €50, groen ≥ €50), totaal = bankroll, klik-to-edit bedrag, alert-banner als een bookie onder de 1-unit-drempel zakt. Auto-refresh na elke bet-wijziging.
+
+### Notes
+
+- Balances kunnen negatief worden (edge case: oude bets die niet via hooks zijn gelogd). Handmatige correctie via klik op het bedrag.
+- Bookie-naam in DB is lowercase-genormaliseerd (`Bet365` / `bet365` / `BET365` → `bet365`); UI toont de canonieke vorm zoals in `bets.tip`.
+- Initialiseer handmatig voor bestaande bookies: klik op ieder bookie-veld en vul het actuele saldo in. Bart's startstate (post-setup): Bet365 €101.95 · Unibet €109.95 · BetMGM €25 · Toto €25 · BetCity €25 · 888sport €41.37.
+
+### Tests
+
+674 passed, 0 failed. 11 nieuwe tests in bookie-balance suite: impact-berekening Open/W/L, alle 4 outcome-transitions, normalisatie, `applyDelta` cumulatief, `onBetWritten` + `onBetOutcomeChanged` hook-integratie.
+
+---
+
 ## [12.1.12] - 2026-04-24
 
 **NHL TT scope-based filter (ipv alleen bookie-blacklist)**

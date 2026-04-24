@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.12');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3929,6 +3929,140 @@ test('odds-parser: bestFromArr — preferred leeg, market wel → price=0 defaul
   assert.strictEqual(best.marketBookie, 'Pinnacle');
   assert.strictEqual(best.preferredPrice, 0);
   setPreferredBookies(null);
+});
+
+// v12.2.0: bookie-balance impact berekeningen
+const { betBalanceImpact, transitionDelta, createBookieBalanceStore, normalizeBookieKey } = require('./lib/bookie-balances');
+
+test('bookie-balance impact: Open = -inzet (stake held)', () => {
+  assert.strictEqual(betBalanceImpact({ inzet: 25, odds: 1.86, uitkomst: 'Open' }), -25);
+});
+
+test('bookie-balance impact: W = +winst (stake al ingebracht; payout = inzet × odd)', () => {
+  // inzet 25, odd 1.86 → cumulative = -25 + 46.50 = +21.50 (= winst)
+  assert.strictEqual(betBalanceImpact({ inzet: 25, odds: 1.86, uitkomst: 'W' }), 21.5);
+});
+
+test('bookie-balance impact: L = -inzet (stake verloren)', () => {
+  assert.strictEqual(betBalanceImpact({ inzet: 25, odds: 1.86, uitkomst: 'L' }), -25);
+});
+
+test('bookie-balance transition Open → W: delta = +payout', () => {
+  // from -25 to +21.50 → delta = +46.50 (payout)
+  const d = transitionDelta(
+    { inzet: 25, odds: 1.86, uitkomst: 'Open' },
+    { inzet: 25, odds: 1.86, uitkomst: 'W' },
+  );
+  assert.strictEqual(d, 46.5);
+});
+
+test('bookie-balance transition Open → L: delta = 0 (stake al afgetrokken)', () => {
+  const d = transitionDelta(
+    { inzet: 25, odds: 1.86, uitkomst: 'Open' },
+    { inzet: 25, odds: 1.86, uitkomst: 'L' },
+  );
+  assert.strictEqual(d, 0);
+});
+
+test('bookie-balance transition W → L: delta = -payout', () => {
+  const d = transitionDelta(
+    { inzet: 25, odds: 1.86, uitkomst: 'W' },
+    { inzet: 25, odds: 1.86, uitkomst: 'L' },
+  );
+  assert.strictEqual(d, -46.5);
+});
+
+test('bookie-balance transition L → W: delta = +payout', () => {
+  const d = transitionDelta(
+    { inzet: 25, odds: 1.86, uitkomst: 'L' },
+    { inzet: 25, odds: 1.86, uitkomst: 'W' },
+  );
+  assert.strictEqual(d, 46.5);
+});
+
+test('bookie-balance normalizeBookieKey: lowercase + trim', () => {
+  assert.strictEqual(normalizeBookieKey('Bet365'), 'bet365');
+  assert.strictEqual(normalizeBookieKey('  888sport  '), '888sport');
+  assert.strictEqual(normalizeBookieKey(null), '');
+});
+
+test('bookie-balance store: applyDelta autocreate + cumulative sum', async () => {
+  const balances = new Map();
+  const mockSupabase = {
+    from: (tbl) => ({
+      select: () => ({
+        eq: function(col, val) {
+          if (col === 'bookie') this._bookie = val;
+          if (col === 'user_id') this._uid = val;
+          return this;
+        },
+        limit: function() {
+          const key = (this._uid || 'null') + '|' + this._bookie;
+          const bal = balances.get(key);
+          return Promise.resolve({ data: bal != null ? [{ balance: bal }] : [], error: null });
+        },
+      }),
+      upsert: (row) => {
+        const key = (row.user_id || 'null') + '|' + row.bookie;
+        balances.set(key, row.balance);
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  const store = createBookieBalanceStore({ supabase: mockSupabase });
+  await store.applyDelta('u1', 'Bet365', 100);
+  await store.applyDelta('u1', 'Bet365', -25);
+  await store.applyDelta('u1', 'Unibet', 50);
+  assert.strictEqual(balances.get('u1|bet365'), 75);
+  assert.strictEqual(balances.get('u1|unibet'), 50);
+});
+
+test('bookie-balance store: onBetWritten past Open-impact toe (balance -= inzet)', async () => {
+  const balances = new Map();
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function(c, v) { if (c === 'bookie') this._b = v; if (c === 'user_id') this._u = v; return this; },
+        limit: function() {
+          const key = (this._u || 'null') + '|' + this._b;
+          const bal = balances.get(key);
+          return Promise.resolve({ data: bal != null ? [{ balance: bal }] : [], error: null });
+        },
+      }),
+      upsert: (row) => {
+        balances.set((row.user_id || 'null') + '|' + row.bookie, row.balance);
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  const store = createBookieBalanceStore({ supabase: mockSupabase });
+  balances.set('u1|bet365', 100);
+  await store.onBetWritten('u1', { tip: 'Bet365', inzet: 25, odds: 1.86, uitkomst: 'Open' });
+  assert.strictEqual(balances.get('u1|bet365'), 75);
+});
+
+test('bookie-balance store: onBetOutcomeChanged Open→W past payout bij', async () => {
+  const balances = new Map();
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function(c, v) { if (c === 'bookie') this._b = v; if (c === 'user_id') this._u = v; return this; },
+        limit: function() {
+          const key = (this._u || 'null') + '|' + this._b;
+          const bal = balances.get(key);
+          return Promise.resolve({ data: bal != null ? [{ balance: bal }] : [], error: null });
+        },
+      }),
+      upsert: (row) => {
+        balances.set((row.user_id || 'null') + '|' + row.bookie, row.balance);
+        return Promise.resolve({ error: null });
+      },
+    }),
+  };
+  const store = createBookieBalanceStore({ supabase: mockSupabase });
+  balances.set('u1|bet365', 75); // na Open-bet van €25
+  await store.onBetOutcomeChanged('u1', { bookie: 'Bet365', inzet: 25, odds: 1.86, prevOutcome: 'Open', newOutcome: 'W' });
+  assert.strictEqual(balances.get('u1|bet365'), 121.5); // 75 + 46.5
 });
 
 // v12.1.12: TT scope-detectie voor hockey team-totals (NL + EN labels).
