@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.1.11');
+  assert.strictEqual(appMeta.APP_VERSION, '12.1.12');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3929,6 +3929,99 @@ test('odds-parser: bestFromArr — preferred leeg, market wel → price=0 defaul
   assert.strictEqual(best.marketBookie, 'Pinnacle');
   assert.strictEqual(best.preferredPrice, 0);
   setPreferredBookies(null);
+});
+
+// v12.1.12: TT scope-detectie voor hockey team-totals (NL + EN labels).
+test('parseGameOdds TT scope: EN regulation labels → scope=regulation', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [{
+      name: 'TestBookie',
+      bets: [{
+        id: 999,
+        name: 'Home Team Total - Regulation',
+        values: [
+          { value: 'Over 3.5', odd: '1.83' },
+          { value: 'Under 3.5', odd: '1.97' },
+        ],
+      }],
+    }],
+  }]);
+  const tt = parsed.teamTotals.filter(o => o.team === 'home' && o.point === 3.5);
+  assert(tt.length >= 2, `expected >=2 TT entries, got ${tt.length}`);
+  assert.strictEqual(tt[0].scope, 'regulation');
+});
+
+test('parseGameOdds TT scope: EN incl-OT labels → scope=incl_ot', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [{
+      name: 'TestBookie',
+      bets: [{
+        id: 999,
+        name: 'Home Team Total - Overtime Included',
+        values: [
+          { value: 'Over 3.5', odd: '2.08' },
+          { value: 'Under 3.5', odd: '1.71' },
+        ],
+      }],
+    }],
+  }]);
+  const tt = parsed.teamTotals.filter(o => o.team === 'home' && o.point === 3.5);
+  assert(tt.length >= 2, `expected >=2 TT entries, got ${tt.length}`);
+  assert.strictEqual(tt[0].scope, 'incl_ot');
+});
+
+test('parseGameOdds TT scope: NL reguliere speeltijd → scope=regulation (v12.1.12)', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [{
+      name: 'Unibet',
+      bets: [{
+        id: 999,
+        name: 'Away Team Total - Reguliere Speeltijd',
+        values: [
+          { value: 'Under 3.5', odd: '1.85' },
+        ],
+      }],
+    }],
+  }]);
+  const tt = parsed.teamTotals.filter(o => o.team === 'away');
+  assert(tt.length >= 1);
+  assert.strictEqual(tt[0].scope, 'regulation');
+});
+
+test('parseGameOdds TT scope: NL inclusief verlenging → scope=incl_ot (v12.1.12)', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [{
+      name: 'Unibet',
+      bets: [{
+        id: 999,
+        name: 'Home Team Total - Inclusief Verlenging',
+        values: [
+          { value: 'Under 3.5', odd: '1.97' },
+        ],
+      }],
+    }],
+  }]);
+  const tt = parsed.teamTotals.filter(o => o.team === 'home');
+  assert(tt.length >= 1);
+  assert.strictEqual(tt[0].scope, 'incl_ot');
+});
+
+test('parseGameOdds TT scope: geen label → scope=unknown (valt terug op bookie-blacklist)', () => {
+  const parsed = parseGameOdds([{
+    bookmakers: [{
+      name: 'Bet365',
+      bets: [{
+        id: 999,
+        name: 'Home Team Total',
+        values: [
+          { value: 'Under 3.5', odd: '1.86' },
+        ],
+      }],
+    }],
+  }]);
+  const tt = parsed.teamTotals.filter(o => o.team === 'home');
+  assert(tt.length >= 1);
+  assert.strictEqual(tt[0].scope, 'unknown');
 });
 
 // v12.1.8: maxPrice cap in bestFromArr — voorkomt dat longshot-quote van nieuwe

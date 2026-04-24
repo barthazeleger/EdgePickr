@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.1.12] - 2026-04-24
+
+**NHL TT scope-based filter (ipv alleen bookie-blacklist)**
+
+### Fixed
+
+- **[P1]** Sommige bookies (o.a. Unibet NL) bieden hockey TT als twee aparte markten aan: "Reguliere Speeltijd" (60-min) én "Inclusief Verlenging" (incl-OT). De v11.3.32 bookie-blacklist gooide alle Unibet TT-entries weg, óók de legitieme incl-OT variant die wél met ons Poisson-model (lambda+0.023 OT-bump) matcht. Gevolg: operator zag Bet365 @ 1.86 terwijl Unibet's incl-OT @ 1.97 prijs beschikbaar was.
+- `parseGameOdds` detecteert nu NL labels (`reguliere speeltijd`, `inclusief verlenging`, `excl. ot`) naast EN labels en zet `teamTotals[].scope` op `'regulation'` / `'incl_ot'` / `'unknown'`.
+- Hockey TT scan-filter (`server.js:3609`) gebruikt nu een scope-first check:
+  - `scope === 'regulation'` → altijd weg (zeker fout)
+  - `scope === 'incl_ot'` → altijd houden (zeker goed)
+  - `scope === 'unknown'` → valt terug op `HOCKEY_60MIN_BOOKIES` blacklist als vangnet
+
+### Notes
+
+- Hockey ML blacklist blijft ongewijzigd: ML-settlement (push bij 60-min gelijkspel vs W/L incl-OT) is een ander risico en Bart heeft dat niet per bookie geverifieerd.
+- Bookie-blacklist voor Toto/BetCity/Ladbrokes blijft intact voor `scope='unknown'`. Toto labelt zelf expliciet "EXCL. OT" (dan pakt scope-filter 'm al).
+
+### Tests
+
+5 nieuwe tests voor `parseGameOdds` TT scope-detectie (EN regulation/incl-OT + NL reguliere/inclusief + unknown fallback).
+
+---
+
 ## [12.1.11] - 2026-04-24
 
 **Cap-bypass fix bij uitbreiden preferred-bookies**
