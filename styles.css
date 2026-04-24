@@ -71,12 +71,26 @@ nav::-webkit-scrollbar { display: none; }
 .bottom-nav { display: none; }
 @media (max-width: 680px) {
   nav { display: none; }
-  .bottom-nav { display: flex; position: fixed; bottom: 0; left: 0; right: 0; width: 100%;
-    background: color-mix(in srgb, var(--surface) 85%, transparent);
+  /* v12.2.1: iOS Safari hardening. Zonder GPU-layer (transform: translateZ(0))
+     kan de fixed-bottom nav tijdens momentum-scroll / address-bar toggle
+     kortstondig uit view verdwijnen. translate3d + will-change dwingen een
+     eigen composite layer af, wat Safari's scroll-repaint stabiliseert.
+     `env(safe-area-inset-bottom)` op `bottom` ipv padding zorgt ook dat de
+     nav correct op iPhone met home-indicator positioneert. */
+  .bottom-nav { display: flex; position: fixed;
+    bottom: env(safe-area-inset-bottom, 0); left: 0; right: 0; width: 100%;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
     border-top: 0.5px solid var(--border); z-index: 200;
-    padding: 6px 8px; padding-bottom: max(12px, calc(env(safe-area-inset-bottom) + 4px));
-    box-sizing: border-box; }
+    padding: 6px 8px 10px; box-sizing: border-box;
+    transform: translate3d(0, 0, 0);
+    will-change: transform;
+    -webkit-transform: translate3d(0, 0, 0); }
+  /* Fallback: geen backdrop-filter support → opaque achtergrond zodat
+     content er niet doorheen kan schemeren en rendering sneller is. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .bottom-nav { background: var(--surface); }
+  }
   .bnav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0;
     border: none; background: none; color: var(--muted); font-size: 10px; font-weight: 500; cursor: pointer; min-width: 0;
     -webkit-tap-highlight-color: transparent; }

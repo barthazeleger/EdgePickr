@@ -2,6 +2,17 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.1] - 2026-04-24
+
+**iOS Safari hardening voor bottom-nav**
+
+### Fixed
+
+- **[P2]** Op mobiel Safari bleef de `.bottom-nav` niet consistent aan de onderkant plakken tijdens momentum-scroll of address-bar toggle. Oorzaak: zonder eigen GPU-layer repainte Safari de fixed element onbetrouwbaar tijdens scroll.
+- Fix: `transform: translate3d(0,0,0)` + `will-change: transform` forceert een composite layer. `bottom: env(safe-area-inset-bottom, 0)` plaatst de nav correct boven de iPhone home-indicator ipv dat de padding dat moet opvangen. Fallback voor browsers zonder `backdrop-filter` (opaque background).
+
+---
+
 ## [12.2.0] - 2026-04-24
 
 **Per-bookie bankroll tracking (🇳🇱 oversluis-radar)**
