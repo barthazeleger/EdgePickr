@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.10');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.11');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3970,6 +3970,76 @@ test('formatDropReasons: returnt null als alle counts 0 of map leeg', () => {
   assert.strictEqual(_fmtDrops({}), null);
   assert.strictEqual(_fmtDrops({ no_signals: 0 }), null);
   assert.strictEqual(_fmtDrops(null), null);
+});
+
+// v12.2.11 (R1 spike): devig-algorithms — proportionele vs log-margin.
+const _devig = require('./lib/devig');
+
+test('devig: proportional 2-way 2.00/2.00 vig-loos → 0.5/0.5', () => {
+  const p = _devig.devigProportional([2.00, 2.00]);
+  assert.deepStrictEqual(p.map(v => +v.toFixed(4)), [0.5, 0.5]);
+});
+
+test('devig: proportional 2-way 1.91/1.91 (5% vig) → ~0.5/0.5', () => {
+  const p = _devig.devigProportional([1.91, 1.91]);
+  assert.strictEqual(+p[0].toFixed(3), 0.5);
+});
+
+test('devig: proportional 2-way 1.50/3.00 → 0.667/0.333 (na devig)', () => {
+  // 1/1.5 + 1/3 = 0.6667 + 0.3333 = 1.0 (vig-loos)
+  const p = _devig.devigProportional([1.50, 3.00]);
+  assert.strictEqual(+p[0].toFixed(3), 0.667);
+  assert.strictEqual(+p[1].toFixed(3), 0.333);
+});
+
+test('devig: log-margin convergent op vig-loos → identiek aan proportional', () => {
+  // Bij vig=0% moeten beide methoden identieke resultaten geven (Newton-Raphson convergeert k=1)
+  const odds = [1.50, 3.00]; // 0% vig
+  const prop = _devig.devigProportional(odds);
+  const logm = _devig.devigLogMargin(odds);
+  assert.strictEqual(+prop[0].toFixed(3), +logm[0].toFixed(3));
+  assert.strictEqual(+prop[1].toFixed(3), +logm[1].toFixed(3));
+});
+
+test('devig: log-margin op 5% vig 2-way → wijkt af van proportional bij asymmetrie', () => {
+  // 1.50/3.50: heavy favorite + 5% vig
+  const odds = [1.50, 3.50];
+  const prop = _devig.devigProportional(odds);
+  const logm = _devig.devigLogMargin(odds);
+  // Verwachting: log-margin geeft de favorite iets minder kans (steiler-correctie)
+  assert.notStrictEqual(+prop[0].toFixed(4), +logm[0].toFixed(4));
+  // Beide moeten optellen tot 1
+  const propSum = prop.reduce((a, b) => a + b, 0);
+  const logmSum = logm.reduce((a, b) => a + b, 0);
+  assert.strictEqual(+propSum.toFixed(5), 1);
+  assert.strictEqual(+logmSum.toFixed(5), 1);
+});
+
+test('devig: 3-way (Home/Draw/Away) 1.85/3.50/4.50 → fair probs sum 1', () => {
+  const odds = [1.85, 3.50, 4.50];
+  const prop = _devig.devigProportional(odds);
+  const logm = _devig.devigLogMargin(odds);
+  assert.ok(prop && prop.length === 3);
+  assert.ok(logm && logm.length === 3);
+  const propSum = prop.reduce((a, b) => a + b, 0);
+  const logmSum = logm.reduce((a, b) => a + b, 0);
+  assert.strictEqual(+propSum.toFixed(5), 1);
+  assert.strictEqual(+logmSum.toFixed(5), 1);
+});
+
+test('devig: ongeldig input (negatieve / <1.0 odds) → null', () => {
+  assert.strictEqual(_devig.devigProportional([0.5, 2.0]), null);
+  assert.strictEqual(_devig.devigLogMargin([0.5, 2.0]), null);
+  assert.strictEqual(_devig.devigProportional([2.0]), null); // 1 outcome
+});
+
+test('devig: compare returnt prop + logm + diff array', () => {
+  const r = _devig.devigCompare([1.50, 3.50]);
+  assert.ok(r);
+  assert.ok(Array.isArray(r.proportional));
+  assert.ok(Array.isArray(r.logMargin));
+  assert.ok(Array.isArray(r.diff));
+  assert.strictEqual(r.diff.length, 2);
 });
 
 // v12.2.10 (R7): regressie-tests voor outcome-flip + bet-flow hooks.

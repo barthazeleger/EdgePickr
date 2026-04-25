@@ -2,6 +2,29 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.11] - 2026-04-25
+
+**R1 spike · log-margin devigging als alternatief naast proportional**
+
+### Added
+
+- `lib/devig.js` met twee pure helpers:
+  - `devigProportional(odds[])` — huidige default-algoritme, simpele 1/odds normalisatie
+  - `devigLogMargin(odds[])` — alternative met Newton-Raphson `k` zodat `Σ ip^k = 1` (margin log-evenredig verdeeld; SOTA voor heavy-favorite/underdog markten)
+  - `devigCompare(odds[])` — analyse-helper, returnt beide outputs + per-outcome diff
+- 8 unit tests die equivalentie bij vig=0% verifiëren én divergentie bij asymmetrie.
+
+### Notes
+
+**Pipeline gebruikt log-margin niet automatisch**. Dit is een spike-deliverable voor toekomstige A/B-vergelijking via walk-forward backtest. Switch naar log-margin in productie pas wanneer Brier-improvement meetbaar is op ≥200 settled bets per markt.
+
+Verwacht effect bij asymmetrische markten: heavy favorite krijgt iets minder fair-prob, underdog iets meer (steiler ipv lineair gecorrigeerd). Voor symmetrische markten (1.91/1.91) is verschil ~ 0.
+
+### Tests
+696 passed, 0 failed.
+
+---
+
 ## [12.2.10] - 2026-04-25
 
 **R7 · regressie-tests voor outcome-flip + bet-flow**
