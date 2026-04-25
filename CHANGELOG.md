@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.49] - 2026-04-25
+
+**R8 step 2 · `lib/settled-bets-cache.js` extract uit server.js**
+
+### Changed
+
+- `lib/settled-bets-cache.js` (nieuw) — `createSettledBetsCache({supabase, ttlMs, select})` factory met `load()/invalidate()/peek()`. TTL-cache met "stale > leeg" fallback bij Supabase-error.
+- `server.js` `_settledBetsCache` global + `loadSettledBetsOnce()` weggehaald. Backwards-compat alias `loadSettledBetsOnce` blijft werken voor existing call-sites.
+
+### Why
+
+- R8 step 2: na kill-switch nu de cache zelf. Pure helper, lage coupling, hoge testbaarheid.
+
+### Tests
+
+- 4 unit tests: missing dep, TTL hergebruik, invalidate forceert refetch, error → stale cache behouden.
+
+### Impact
+
+- 766 → 770 tests passed.
+- Geen behavior-change.
+
 ## [12.2.48] - 2026-04-25
 
 **R8 step 1 · `lib/kill-switch.js` extract uit server.js**

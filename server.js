@@ -102,18 +102,10 @@ async function saveOperatorState() {
 //
 // v10.10.22 fase 3: gecombineerde bets-refresh — één Supabase query, drie
 // consumers (kill-switch, market-sample-counts, sport-caps).
-let _settledBetsCache = { rows: [], at: 0 };
-const SETTLED_BETS_TTL_MS = 5 * 60 * 1000;
-async function loadSettledBetsOnce() {
-  if (_settledBetsCache.rows.length && Date.now() - _settledBetsCache.at < SETTLED_BETS_TTL_MS) return _settledBetsCache.rows;
-  try {
-    const { data } = await supabase.from('bets')
-      .select('sport, markt, uitkomst, inzet, wl, clv_pct')
-      .in('uitkomst', ['W', 'L']);
-    _settledBetsCache = { rows: data || [], at: Date.now() };
-    return _settledBetsCache.rows;
-  } catch { return _settledBetsCache.rows; }
-}
+// v12.2.49 (R8 step 2): cache geëxtraheerd naar lib/settled-bets-cache.js.
+const { createSettledBetsCache } = require('./lib/settled-bets-cache');
+const _settledBetsCacheStore = createSettledBetsCache({ supabase });
+const loadSettledBetsOnce = () => _settledBetsCacheStore.load();
 
 const { createKillSwitch } = require('./lib/kill-switch');
 const KILL_SWITCH = createKillSwitch({

@@ -2065,6 +2065,69 @@ test('recordTotalsEvaluation: schrijft model_run + 2 pick_candidates (over/under
   assert.match(writes.cands[1].rejected_reason, /edge_below_min/);
 });
 
+// v12.2.49 (R8 step 2): settled-bets-cache factory tests
+const { createSettledBetsCache } = require('./lib/settled-bets-cache');
+
+test('createSettledBetsCache: throws bij missing supabase', () => {
+  assert.throws(() => createSettledBetsCache({}), /supabase/);
+});
+
+test('createSettledBetsCache: load() cachet en hergebruikt binnen TTL', async () => {
+  let queryCount = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        in: () => {
+          queryCount++;
+          return Promise.resolve({ data: [{ sport: 'football', uitkomst: 'W' }] });
+        },
+      }),
+    }),
+  };
+  const cache = createSettledBetsCache({ supabase: mockSupabase, ttlMs: 60000 });
+  const r1 = await cache.load();
+  const r2 = await cache.load();
+  assert.strictEqual(queryCount, 1, 'tweede load gebruikt cache');
+  assert.strictEqual(r1.length, 1);
+  assert.strictEqual(r2.length, 1);
+});
+
+test('createSettledBetsCache: invalidate forceert refetch', async () => {
+  let queryCount = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        in: () => { queryCount++; return Promise.resolve({ data: [{ sport: 'football', uitkomst: 'W' }] }); },
+      }),
+    }),
+  };
+  const cache = createSettledBetsCache({ supabase: mockSupabase, ttlMs: 60000 });
+  await cache.load();
+  cache.invalidate();
+  await cache.load();
+  assert.strictEqual(queryCount, 2);
+});
+
+test('createSettledBetsCache: bij query-error blijft oude cache (stale > leeg)', async () => {
+  let calls = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        in: () => {
+          calls++;
+          if (calls === 1) return Promise.resolve({ data: [{ sport: 'football', uitkomst: 'W' }] });
+          throw new Error('supabase down');
+        },
+      }),
+    }),
+  };
+  const cache = createSettledBetsCache({ supabase: mockSupabase, ttlMs: 1 });
+  await cache.load();
+  await new Promise(r => setTimeout(r, 5));
+  const stale = await cache.load();
+  assert.strictEqual(stale.length, 1, 'oude cache moet bewaard blijven bij error');
+});
+
 // v12.2.48 (R8): kill-switch factory tests
 const { createKillSwitch } = require('./lib/kill-switch');
 
@@ -2849,7 +2912,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.48');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.49');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
