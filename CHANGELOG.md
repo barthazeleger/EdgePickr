@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.9] - 2026-04-25
+
+**F6 · 2FA-codes persistent (Supabase + Map-cache)**
+
+### Added
+
+- `lib/auth-codes-store.js` factory met Map-shape interface (`set`/`get`/`delete`) + async `getAsync` voor verify-flow na restart. Mutaties syncen naar Supabase `auth_codes` tabel; reads gaan eerst naar in-memory cache, fallback naar DB.
+- Migratie: `docs/migrations-archive/v12.2.9_auth_codes.sql` (tabel `auth_codes` met TTL-cleanup index + service_role RLS).
+- `auth.js` `/auth/verify-code` gebruikt `getAsync` zodat na Render-restart een actieve code (binnen TTL) nog gevalideerd kan worden ipv "Ongeldige of verlopen code".
+
+### Fixed
+
+- **[P2]** 2FA-codes leefden alleen in-memory `Map`. Render-restart, free-tier spindown of crash → alle actieve codes weg, gebruiker moest opnieuw inloggen + nieuwe code aanvragen. Fixed: codes overleven nu restarts (5 min TTL blijft gehandhaafd).
+
+### Notes
+
+Backwards-compat: graceful als `auth_codes`-tabel ontbreekt (oude DB zonder migratie) — Map-only gedrag (huidig). Geen breaking change voor auth.js callers.
+
+---
+
 ## [12.2.8] - 2026-04-25
 
 **F5 · point-in-time was_preferred_at_log_time + v12.2.7 hotfix**

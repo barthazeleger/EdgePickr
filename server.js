@@ -484,15 +484,13 @@ async function sendEmail(to, subject, html) {
 }
 
 // ── 2FA LOGIN CODES ────────────────────────────────────────────────────────
-const loginCodes = new Map(); // email → { code, expiresAt }
+// v12.2.9 (F6): persistent store met Supabase + Map-cache. Bij Render-restart
+// blijven actieve codes geldig (5 min TTL) ipv direct verloren.
+const { createAuthCodesStore } = require('./lib/auth-codes-store');
+const loginCodes = createAuthCodesStore({ supabase });
 
-// Cleanup expired codes every 10 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [email, entry] of loginCodes) {
-    if (now > entry.expiresAt) loginCodes.delete(email);
-  }
-}, 10 * 60 * 1000);
+// Cleanup expired codes every 10 min — sweep cache + Supabase.
+setInterval(() => loginCodes.cleanup(), 10 * 60 * 1000);
 
 // Routes that don't require authentication (full paths)
 // v10.10.22 fase 2: UUID-validatie voor .or() interpolaties (defense-in-depth).
