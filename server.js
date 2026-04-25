@@ -6725,6 +6725,18 @@ const createBetsData = require('./lib/bets-data');
 // writeBet/updateBetOutcome/deleteBet auto-sync balances.
 const { createBookieBalanceStore } = require('./lib/bookie-balances');
 const bookieBalanceStore = createBookieBalanceStore({ supabase });
+
+// v12.2.14 (D1): persistent scheduled jobs voor pre-kickoff + CLV checks.
+// Bij Render-restart blijven pending jobs bewaard en worden ze automatisch
+// opnieuw gepland (rescheduleAllPending bij boot, periodieke sweep).
+const { createScheduledJobsStore } = require('./lib/scheduled-jobs');
+const scheduledJobs = createScheduledJobsStore({
+  supabase,
+  handlers: {
+    pre_kickoff: (payload) => _executePreKickoffCheck(payload),
+    clv_check:   (payload) => _executeCLVCheck(payload),
+  },
+});
 // v12.2.8 (F5): inline isPreferredBookie helper voor writeBet zodat per-bet
 // `was_preferred_at_log_time` point-in-time wordt vastgelegd. Mirror van
 // lib/learning-loop's interne isPreferredBookie maar met server-scope deps.
@@ -7128,122 +7140,158 @@ async function fetchCurrentOdds(sport, gameId, markt, bookmaker, opts = {}) {
   });
 }
 
+// v12.2.14 (D1): pre-kickoff handler — pure functie zonder setTimeout. Wordt
+// aangeroepen vanuit scheduledJobs store (DB-persistent) of bij re-schedule
+// na server-boot. Idempotent: meerdere keren callen = meerdere notify-msgs
+// maar geen state-mutatie. Acceptabel.
+async function _executePreKickoffCheck(payload) {
+  const bet = payload || {};
+  const tijdStr = bet.tijd || bet.time;
+  const kickoffMs = parseBetKickoff(bet.datum, tijdStr);
+  if (!Number.isFinite(kickoffMs)) return;
+  try {
+    const loggedOdds = parseFloat(bet.odds);
+    const matchName  = bet.wedstrijd || '';
+    const markt      = bet.markt || '';
+    const lines      = [];
+
+    const betSport = bet.sport || 'football';
+    let currentOdds = null;
+    try {
+      const fxId = bet.fixtureId || await findGameId(betSport, matchName);
+      currentOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip, { strictBookie: true, matchName });
+    } catch (e) {
+      console.warn(`Pre-kickoff odds fetch failed voor "${matchName}":`, e.message);
+    }
+
+    const time30 = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone:'Europe/Amsterdam' });
+    lines.push(`⏰ PRE-KICKOFF CHECK\n📌 ${matchName} (aftrap ~${time30})\n🎲 Markt: ${markt}`);
+
+    if (currentOdds) {
+      const drift = (currentOdds - loggedOdds) / loggedOdds;
+      const driftPct = (drift * 100).toFixed(1);
+      const driftStr = drift >= 0 ? `+${driftPct}%` : `${driftPct}%`;
+      if (Math.abs(drift) >= 0.08) {
+        lines.push(`\n⚠️ ODDS GEDRIFT: ${loggedOdds} → ${currentOdds} (${driftStr})`);
+        if (drift > 0.08) lines.push(`📈 Odds gestegen · markt twijfelt aan jouw kant. Overweeg cashout of annuleren.`);
+        else lines.push(`📉 Odds gedaald · markt bevestigt jouw kant. Bet ziet er goed uit.`);
+      } else {
+        lines.push(`\n✅ Odds stabiel: ${loggedOdds} → ${currentOdds} (${driftStr}) · geen significante marktbeweging.`);
+      }
+    } else {
+      lines.push(`\n⚠️ Kon geen huidige odds ophalen · controleer odds handmatig.`);
+      logCheckFailure('prematch', matchName, 'controleer handmatig').catch(() => {});
+    }
+    lines.push(`\n🟢 Succes! (automatische check 30 min voor aftrap)`);
+    await notify(lines.join('\n'));
+  } catch (err) {
+    console.error('Pre-kickoff check error:', err.message);
+    throw err; // re-throw zodat scheduledJobs.markError telt
+  }
+}
+
 async function schedulePreKickoffCheck(bet) {
   // Live bets zijn al bezig · geen pre-kickoff check nodig
   if (bet.scanType === 'live') return;
 
   // v11.3.23 C2: gebruik bet.datum + bet.tijd canonical via pure helper.
-  // Eerdere code gebruikte `nowAms` bij HH:MM → bets >1 dag vooruit verkeerd gepland.
   const tijdStr = bet.tijd || bet.time;
   if (!tijdStr) return;
   const kickoffMs = parseBetKickoff(bet.datum, tijdStr);
   if (!Number.isFinite(kickoffMs)) return;
 
-  const checkMs = kickoffMs - 30 * 60 * 1000; // 30 min voor aftrap
+  const checkMs = kickoffMs - 30 * 60 * 1000;
   const delayMs = checkMs - Date.now();
-  if (delayMs < 5000 || delayMs > 48 * 60 * 60 * 1000) return; // te laat of te ver weg
+  if (delayMs < 5000 || delayMs > 48 * 60 * 60 * 1000) return;
 
-  setTimeout(async () => {
-    try {
-      const loggedOdds = parseFloat(bet.odds);
-      const matchName  = bet.wedstrijd || '';
-      const markt      = bet.markt || '';
-      const lines      = [];
-
-      // Haal huidige odds op via de juiste sport API
-      const betSport = bet.sport || 'football';
-      let currentOdds = null;
-      try {
-        const fxId = bet.fixtureId || await findGameId(betSport, matchName);
-        // strictBookie:true → geen stille fallback naar Bet365 bij mismatch
-        currentOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip, { strictBookie: true, matchName });
-      } catch (e) {
-        console.warn(`Pre-kickoff odds fetch failed voor "${matchName}":`, e.message);
-      }
-
-      // Beoordeling
-      const time30 = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone:'Europe/Amsterdam' });
-      lines.push(`⏰ PRE-KICKOFF CHECK\n📌 ${matchName} (aftrap ~${time30})\n🎲 Markt: ${markt}`);
-
-      if (currentOdds) {
-        const drift = (currentOdds - loggedOdds) / loggedOdds;
-        const driftPct = (drift * 100).toFixed(1);
-        const driftStr = drift >= 0 ? `+${driftPct}%` : `${driftPct}%`;
-
-        if (Math.abs(drift) >= 0.08) {
-          lines.push(`\n⚠️ ODDS GEDRIFT: ${loggedOdds} → ${currentOdds} (${driftStr})`);
-          if (drift > 0.08) lines.push(`📈 Odds gestegen · markt twijfelt aan jouw kant. Overweeg cashout of annuleren.`);
-          else lines.push(`📉 Odds gedaald · markt bevestigt jouw kant. Bet ziet er goed uit.`);
-        } else {
-          lines.push(`\n✅ Odds stabiel: ${loggedOdds} → ${currentOdds} (${driftStr}) · geen significante marktbeweging.`);
-        }
-      } else {
-        lines.push(`\n⚠️ Kon geen huidige odds ophalen · controleer odds handmatig.`);
-        logCheckFailure('prematch', matchName, 'controleer handmatig').catch(() => {});
-      }
-
-      lines.push(`\n🟢 Succes! (automatische check 30 min voor aftrap)`);
-      await notify(lines.join('\n'));
-    } catch (err) {
-      console.error('Pre-kickoff check error:', err.message);
-    }
-  }, delayMs);
+  // v12.2.14 (D1): persist + setTimeout via scheduledJobs store. Bij Render-
+  // restart blijft de job behouden + wordt automatisch gerescheduuld.
+  if (scheduledJobs && typeof scheduledJobs.enqueue === 'function') {
+    await scheduledJobs.enqueue({
+      job_type: 'pre_kickoff',
+      bet_id: bet.id || null,
+      payload: {
+        id: bet.id, datum: bet.datum, tijd: tijdStr, odds: bet.odds,
+        wedstrijd: bet.wedstrijd, markt: bet.markt, sport: bet.sport,
+        tip: bet.tip, fixtureId: bet.fixtureId,
+      },
+      due_at: new Date(checkMs).toISOString(),
+    });
+  } else {
+    // Fallback: oude in-memory setTimeout (alleen als store niet ge-init is)
+    setTimeout(() => _executePreKickoffCheck(bet).catch(() => {}), delayMs);
+  }
 
   console.log(`⏱  Pre-kickoff check gepland voor "${bet.wedstrijd}" over ${Math.round(delayMs/60000)} min`);
 }
 
 // ── CLV CHECK · 2 min voor aftrap ─────────────────────────────────────────
 // Haalt slotlijn-odds op vlak voor kickoff en berekent CLV%.
+//
+// v12.2.14 (D1): handler-pattern voor scheduledJobs store. Idempotent.
+async function _executeCLVCheck(payload) {
+  const bet = payload || {};
+  try {
+    const loggedOdds = parseFloat(bet.odds);
+    const matchName  = bet.wedstrijd || '';
+    const markt      = bet.markt || '';
+
+    const betSport = bet.sport || 'football';
+    const fxId = bet.fixtureId || await findGameId(betSport, matchName);
+    const closingOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip, { strictBookie: true, matchName });
+    const usedBookie = bet.tip || 'onbekend';
+
+    if (!closingOdds) {
+      // 1× retry over 5 min via store (persistent — overleeft restart)
+      if (!bet._clvRetried && scheduledJobs?.enqueue) {
+        await scheduledJobs.enqueue({
+          job_type: 'clv_check',
+          bet_id: bet.id || null,
+          payload: { ...bet, _clvRetried: true },
+          due_at: new Date(Date.now() + 5 * 60000).toISOString(),
+        });
+        console.log(`[CLV] retry gepland over 5 min voor "${matchName}"`);
+        return;
+      }
+      logCheckFailure('clv', matchName, 'closing odds niet beschikbaar').catch(() => {});
+      return;
+    }
+
+    const clvPct = +((loggedOdds - closingOdds) / closingOdds * 100).toFixed(2);
+    const clvIcon = clvPct > 0 ? '✅' : '❌';
+    await supabase.from('bets').update({ clv_odds: closingOdds, clv_pct: clvPct }).eq('bet_id', bet.id);
+    await notify(`📊 CLV: ${matchName}\n🏦 ${usedBookie} | Gelogd: ${loggedOdds} → Slotlijn: ${closingOdds} | CLV: ${clvPct > 0 ? '+' : ''}${clvPct}% ${clvIcon}`).catch(() => {});
+  } catch (err) {
+    console.error('CLV check error:', err.message);
+    throw err;
+  }
+}
+
 async function scheduleCLVCheck(bet) {
   if (bet.scanType === 'live') return;
-
-  // v11.3.23 C2: gebruik bet.datum + bet.tijd canonical via pure helper.
   const tijdStr = bet.tijd || bet.time;
   if (!tijdStr) return;
   const kickoffMs = parseBetKickoff(bet.datum, tijdStr);
   if (!Number.isFinite(kickoffMs)) return;
 
-  const checkMs = kickoffMs - 2 * 60 * 1000; // 2 min voor aftrap
+  const checkMs = kickoffMs - 2 * 60 * 1000;
   const delayMs = checkMs - Date.now();
   if (delayMs < 3000 || delayMs > 48 * 60 * 60 * 1000) return;
 
-  setTimeout(async () => {
-    try {
-      const loggedOdds = parseFloat(bet.odds);
-      const matchName  = bet.wedstrijd || '';
-      const markt      = bet.markt || '';
-
-      // Gebruik sport-aware helpers voor alle sport APIs
-      const betSport = bet.sport || 'football';
-      const fxId = bet.fixtureId || await findGameId(betSport, matchName);
-      const closingOdds = await fetchCurrentOdds(betSport, fxId, markt, bet.tip, { strictBookie: true, matchName });
-      const usedBookie = bet.tip || 'onbekend';
-
-      if (!closingOdds) {
-        // 1x retry over 5 min als eerste poging faalt
-        if (!bet._clvRetried) {
-          bet._clvRetried = true;
-          setTimeout(() => {
-            scheduleCLVCheck({ ...bet, tijd: new Date(Date.now() + 3 * 60000).toISOString() });
-          }, 5 * 60000);
-          console.log(`[CLV] retry gepland over 5 min voor "${matchName}"`);
-          return;
-        }
-        logCheckFailure('clv', matchName, 'closing odds niet beschikbaar').catch(() => {});
-        return;
-      }
-
-      const clvPct = +((loggedOdds - closingOdds) / closingOdds * 100).toFixed(2);
-      const clvIcon = clvPct > 0 ? '✅' : '❌';
-
-      // Schrijf CLV naar Supabase
-      await supabase.from('bets').update({ clv_odds: closingOdds, clv_pct: clvPct }).eq('bet_id', bet.id);
-
-      await notify(`📊 CLV: ${matchName}\n🏦 ${usedBookie} | Gelogd: ${loggedOdds} → Slotlijn: ${closingOdds} | CLV: ${clvPct > 0 ? '+' : ''}${clvPct}% ${clvIcon}`).catch(() => {});
-    } catch (err) {
-      console.error('CLV check error:', err.message);
-    }
-  }, delayMs);
+  if (scheduledJobs && typeof scheduledJobs.enqueue === 'function') {
+    await scheduledJobs.enqueue({
+      job_type: 'clv_check',
+      bet_id: bet.id || null,
+      payload: {
+        id: bet.id, datum: bet.datum, tijd: tijdStr, odds: bet.odds,
+        wedstrijd: bet.wedstrijd, markt: bet.markt, sport: bet.sport,
+        tip: bet.tip, fixtureId: bet.fixtureId,
+      },
+      due_at: new Date(checkMs).toISOString(),
+    });
+  } else {
+    setTimeout(() => _executeCLVCheck(bet).catch(() => {}), delayMs);
+  }
 
   console.log(`📊 CLV check gepland voor "${bet.wedstrijd}" over ${Math.round(delayMs/60000)} min (2 min voor aftrap)`);
 }
@@ -7498,6 +7546,11 @@ app.listen(PORT, () => {
   scheduleScanHeartbeatWatcher();
   scheduleAutotune();
   scheduleBookieConcentrationWatcher();
+
+  // v12.2.14 (D1): rescheduleer pending pre-kickoff/CLV jobs uit DB en
+  // zet sweep-loop op (cleanup completed > 7d, mark overdue > 1u).
+  scheduledJobs.rescheduleAllPending().catch(e => console.warn('scheduledJobs reschedule:', e.message));
+  setInterval(() => scheduledJobs.sweep(), 10 * 60 * 1000);
 
   // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
   // reset elke deploy alle sources naar default off — operationeel irritant.

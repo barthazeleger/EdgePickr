@@ -2,6 +2,33 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.14] - 2026-04-25
+
+**D1 · persistent scheduled jobs (pre-kickoff + CLV checks)**
+
+### Added
+
+- Migratie: `docs/migrations-archive/v12.2.14_scheduled_jobs.sql` — nieuwe `scheduled_jobs` tabel met `id, user_id, job_type, bet_id, payload, due_at, attempts, last_error, completed_at`. RLS service_role.
+- `lib/scheduled-jobs.js` factory met `enqueue` / `rescheduleAllPending` / `sweep`. Hybrid setTimeout + DB persistence.
+- `schedulePreKickoffCheck` + `scheduleCLVCheck` gerefactord: setTimeout-callback uitgepakt naar `_executePreKickoffCheck` / `_executeCLVCheck` handlers. `schedule*` functies gebruiken nu `scheduledJobs.enqueue()` ipv directe `setTimeout`.
+- Bij server-boot: `rescheduleAllPending()` plant pending jobs uit DB opnieuw — overleeft Render restart / spindown.
+- Periodieke sweep elke 10 min: cleanup completed > 7d + markeer overdue > 1u.
+
+### Fixed
+
+- **[P3]** Pre-kickoff drift-alert (30 min vóór aftrap) en CLV-snapshot (2 min vóór aftrap) waren in-memory `setTimeout`. Bij Render free-tier spindown of crash gingen pending checks verloren — Bart kreeg geen drift-alert + CLV-data ontbrak. Met persistence overleven jobs nu een restart.
+
+### Notes
+
+Backwards-compat: graceful zonder migratie (in-memory fallback). Job-handlers zijn idempotent — bij race tussen setTimeout-fire en boot-rescan kan een job dubbel draaien (extra notify-msg, geen state-conflict).
+
+CLV retry-logic (`_clvRetried` na 5 min) gaat nu ook via `enqueue` ipv recursive setTimeout — overleeft eveneens een restart.
+
+### Tests
+701 passed, 0 failed.
+
+---
+
 ## [12.2.13] - 2026-04-25
 
 **R4 MVP · sharp-soft asymmetric edge detection helpers**
