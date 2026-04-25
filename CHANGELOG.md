@@ -2,6 +2,21 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.5] - 2026-04-25
+
+**F7 · current-odds bookie-specifieke lookup**
+
+### Fixed
+
+- **[P2]** "Nu"-knop in tracker (`/bets/:id/current-odds`) pakte voorheen de hoogste preferred-bookie odd, niet de bookie van de bet zelf. Drift-percentage was misleidend (bv. Unibet @ 1.97 wordt vergeleken met Bet365 @ 1.86 → -5.58% drift, terwijl Unibet vs Unibet eerlijker was).
+- Fix: lookup-volgorde is nu (1) exact match op `bet.tip`, (2) andere preferred bookies, (3) hele markt. Response bevat extra veld `priceSource: 'logged_bookie' | 'other_preferred' | 'market_best'`.
+- UI toont symbool naast drift-percentage: geen mark = eigen bookie (apples-to-apples), ⚡ = andere preferred (eigen bookie had geen prijs), ⚠️ = niet-preferred bookie. Tooltip beschrijft de bron expliciet.
+
+### Tests
+682 passed, 0 failed.
+
+---
+
 ## [12.2.4] - 2026-04-25
 
 **F1 · rate-limit + cache fixture-resolver fallback (P0 DoS-vector)**
