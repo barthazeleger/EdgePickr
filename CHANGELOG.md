@@ -2,6 +2,22 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.44] - 2026-04-25
+
+**Sessie-summary doc · finale handoff**
+
+### Added
+
+- `docs/SESSION_SUMMARY_2026-04-25.md` — consolidated overzicht van v12.2.5 → v12.2.43. Audit-roadmap, operator-feedback fixes, post-migratie features. Quick-reference voor wat geleverd is + wat resterend held is.
+
+### Why
+
+- 39 commits in 1 dag. Operator heeft 1 plek nodig om snel te zien wat er veranderd is + wat de volgende beslispunten zijn zonder door 39 changelog-entries te scrollen.
+
+### Notes
+
+- Doc-only, geen code-change. 752 tests passed.
+
 ## [12.2.43] - 2026-04-25
 
 **Tests · `/admin/v2/concept-drift` integration coverage**
