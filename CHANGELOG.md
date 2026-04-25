@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.50] - 2026-04-25
+
+**HOTFIX · server.js TDZ-error op Render boot (kritiek)**
+
+### Fixed
+
+- v12.2.49 introduceerde de `createSettledBetsCache({ supabase })` factory-call op regel 107, vóór `const supabase = createClient(...)` op regel 234. Module-load TDZ → `ReferenceError: Cannot access 'supabase' before initialization` → Render exit code 1, géén live deploy.
+- `server.js`: factory-init verplaatst naar **na** supabase + modelMath declaraties. Forward `let` declarations bovenaan zodat call-time references in upper-scope async functies (loadOperatorState, refreshKillSwitch alias) niet falen.
+- `lib/kill-switch.js` + `lib/settled-bets-cache.js`: lazy `getSupabase` overweging weggehaald — niet meer nodig na server.js fix, simpler API.
+
+### Why
+
+- v12.2.48-49 commits passed unit tests omdat tests supabase mocks injecteren — boot-volgorde werd nooit door de test-suite getriggerd. Render boot loopt door echte module-load → TDZ raakt.
+- Verbetering audit-doctrine: voortaan na elke server.js refactor handmatig `node -e "require('./server.js')"` smoke-test om module-load issues te catchen vóór deploy.
+
+### Impact
+
+- 770 tests passed (ongewijzigd).
+- Smoke-test: `SUPABASE_URL=... SUPABASE_KEY=... JWT_SECRET=... node -e "require('./server.js')"` boot OK.
+
 ## [12.2.49] - 2026-04-25
 
 **R8 step 2 · `lib/settled-bets-cache.js` extract uit server.js**

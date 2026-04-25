@@ -98,28 +98,14 @@ async function saveOperatorState() {
 
 // ── KILL-SWITCH (v12.2.48 R8: extracted naar lib/kill-switch.js) ────────────
 // Set van market-keys (sport_market) die geblokkeerd zijn op basis van
-// negatieve CLV. Refreshed elke 30 min via setInterval(refreshKillSwitch).
-//
-// v10.10.22 fase 3: gecombineerde bets-refresh — één Supabase query, drie
-// consumers (kill-switch, market-sample-counts, sport-caps).
-// v12.2.49 (R8 step 2): cache geëxtraheerd naar lib/settled-bets-cache.js.
-const { createSettledBetsCache } = require('./lib/settled-bets-cache');
-const _settledBetsCacheStore = createSettledBetsCache({ supabase });
-const loadSettledBetsOnce = () => _settledBetsCacheStore.load();
-
-const { createKillSwitch } = require('./lib/kill-switch');
-const KILL_SWITCH = createKillSwitch({
-  supabase,
-  loadSettledBets: loadSettledBetsOnce,
-  normalizeSport,
-  detectMarket,
-  supportsClvForBetMarkt,
-});
-
-// Backwards-compat aliassen voor server.js call-sites die nog top-level
-// functienamen gebruiken (refreshKillSwitch / isMarketKilled).
-const refreshKillSwitch = () => KILL_SWITCH.refresh();
-const isMarketKilled = (sport, markt) => KILL_SWITCH.isMarketKilled(sport, markt);
+// negatieve CLV. Factory-init is verplaatst naar AFTER supabase + modelMath
+// declaraties (zie verderop) zodat module-load TDZ wordt vermeden.
+// Forward declarations met `var` zodat upper scope (loadOperatorState etc)
+// die call-time gebruikt geen TDZ raakt:
+let KILL_SWITCH; // eslint-disable-line prefer-const
+let loadSettledBetsOnce; // eslint-disable-line prefer-const
+let refreshKillSwitch; // eslint-disable-line prefer-const
+let isMarketKilled; // eslint-disable-line prefer-const
 
 // Adaptive MIN_EDGE: voor markten met weinig settled bets vereisen we strenger
 // edge (8% i.p.v. 5.5%) zodat we niet vroeg te veel risico nemen op markten
@@ -232,6 +218,25 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('FATAL: SUPABASE_URL and SUPABASE_KEY required'); process.exit(1); }
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// v12.2.50 hotfix: kill-switch + settled-bets-cache factory-init verplaatst
+// naar HIER (post-supabase, post-modelMath destructure). Voorheen op regel
+// ~107 vóór deze const-declaraties → TDZ ReferenceError op Render boot.
+{
+  const { createSettledBetsCache } = require('./lib/settled-bets-cache');
+  const { createKillSwitch } = require('./lib/kill-switch');
+  const _settledBetsCacheStore = createSettledBetsCache({ supabase });
+  loadSettledBetsOnce = () => _settledBetsCacheStore.load();
+  KILL_SWITCH = createKillSwitch({
+    supabase,
+    loadSettledBets: loadSettledBetsOnce,
+    normalizeSport,
+    detectMarket,
+    supportsClvForBetMarkt,
+  });
+  refreshKillSwitch = () => KILL_SWITCH.refresh();
+  isMarketKilled = (sport, markt) => KILL_SWITCH.isMarketKilled(sport, markt);
+}
 
 const app = express();
 // v10.12.1 (security): trust the first proxy hop (Render's edge). Zonder dit
