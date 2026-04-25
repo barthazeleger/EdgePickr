@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.30] - 2026-04-25
+
+**Sport-distribution telemetrie · `/admin/v2/scan-by-sport`**
+
+### Added
+
+- `GET /api/admin/v2/scan-by-sport?hours=24` — beantwoord operator-vraag "waarom 2 hockey picks en 0 voetbal terwijl er honderden voetbalwedstrijden zijn?". Per sport: total candidates, accepted, rejected, acceptanceRate, top-5 reject-reasons, byMarket breakdown.
+- Joint pick_candidates → model_runs.fixture_id → fixtures.sport om sport-context te krijgen die in pick_candidates zelf ontbreekt.
+
+### Why
+
+- Bart's screenshot v12.2.29: 2 hockey TT picks + 0 voetbal terwijl voetbal-volume veel hoger is. Bestaande `/admin/v2/pick-distribution` groepeert per market×bookie maar niet per sport — operator zag niet WAAR voetbal afsneed.
+- Met sport-breakdown kan operator zien: kreeg voetbal wel candidates (= scan vond fixtures + odds) maar werden ze afgewezen op edge_below_min / sanity_fail / etc?
+
+### Notes
+
+- Endpoint pure read-only, geen behavior-change.
+- 739 tests passed (HTTP-route, geen unit test toegevoegd; integration via call-harness mogelijk in vervolg-sprint).
+
 ## [12.2.29] - 2026-04-25
 
 **UI fix · "✓ Gelogd" badge precieze matching**
