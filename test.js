@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.3');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7907,7 +7907,8 @@ test('PUBLIC_PATHS: /api/status is NOT public, /api/health IS public', () => {
 
 // v12.1.3: fallback-resolver vindt fixture_id voor pre-v12.1.1 bets via fixtures-tabel.
 test('resolveFixtureIdForBet: exact team-match returns fixture id', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const mockSupabase = {
     from: () => ({
       select: () => ({
@@ -7927,7 +7928,8 @@ test('resolveFixtureIdForBet: exact team-match returns fixture id', async () => 
 });
 
 test('resolveFixtureIdForBet: Dutch sport label maps to internal key (v12.1.4)', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   let sportFilter = null;
   const mockSupabase = {
     from: () => ({
@@ -7948,7 +7950,8 @@ test('resolveFixtureIdForBet: Dutch sport label maps to internal key (v12.1.4)',
 });
 
 test('resolveFixtureIdForBet: first-word match werkt als fixture-naam afwijkt (v12.1.4)', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const mockSupabase = {
     from: () => ({
       select: () => ({
@@ -7967,7 +7970,8 @@ test('resolveFixtureIdForBet: first-word match werkt als fixture-naam afwijkt (v
 });
 
 test('resolveFixtureIdForBet: club-prefix varianten matchen (US Lecce ↔ Lecce) (v12.1.6)', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const mockSupabase = {
     from: () => ({
       select: () => ({
@@ -7986,7 +7990,8 @@ test('resolveFixtureIdForBet: club-prefix varianten matchen (US Lecce ↔ Lecce)
 });
 
 test('resolveFixtureIdForBet: home/away swap fallback vindt fixture (v12.1.5)', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const mockSupabase = {
     from: () => ({
       select: () => ({
@@ -8006,7 +8011,8 @@ test('resolveFixtureIdForBet: home/away swap fallback vindt fixture (v12.1.5)', 
 });
 
 test('resolveFixtureIdForBet: no unique match returns null', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const mockSupabase = {
     from: () => ({
       select: () => ({
@@ -8023,11 +8029,63 @@ test('resolveFixtureIdForBet: no unique match returns null', async () => {
 });
 
 test('resolveFixtureIdForBet: malformed bet returns null (no crash)', async () => {
-  const { resolveFixtureIdForBet } = require('./lib/routes/bets-write');
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
   const id1 = await resolveFixtureIdForBet({}, { datum: '', wedstrijd: 'A vs B', sport: 'football' });
   const id2 = await resolveFixtureIdForBet({}, { datum: '20-04-2026', wedstrijd: 'Geen-vs-teken', sport: 'football' });
   assert.strictEqual(id1, null);
   assert.strictEqual(id2, null);
+});
+
+// v12.2.4 (F1): cache vermijdt herhaalde Supabase-queries voor zelfde bet-key
+test('resolveFixtureIdForBet: cache hergebruikt resultaat voor zelfde key', async () => {
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
+  let queryCount = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => {
+          queryCount++;
+          return Promise.resolve({ data: [
+            { id: 42, home_team_name: 'TeamA', away_team_name: 'TeamB', start_time: '2026-04-25T18:00:00Z' },
+          ]});
+        },
+      }),
+    }),
+  };
+  const bet = { datum: '25-04-2026', wedstrijd: 'TeamA vs TeamB', sport: 'football' };
+  const id1 = await resolveFixtureIdForBet(mockSupabase, bet);
+  const id2 = await resolveFixtureIdForBet(mockSupabase, bet);
+  const id3 = await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(id1, 42);
+  assert.strictEqual(id2, 42);
+  assert.strictEqual(id3, 42);
+  assert.strictEqual(queryCount, 1, 'verwacht 1 query, niet 3 — cache moet herhalingen besparen');
+});
+
+test('resolveFixtureIdForBet: cache slaat ook negatieve resultaten op (DoS-vector)', async () => {
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
+  let queryCount = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: () => { queryCount++; return Promise.resolve({ data: [] }); },
+      }),
+    }),
+  };
+  const bet = { datum: '25-04-2026', wedstrijd: 'GhostTeam vs UnknownTeam', sport: 'football' };
+  await resolveFixtureIdForBet(mockSupabase, bet);
+  await resolveFixtureIdForBet(mockSupabase, bet);
+  await resolveFixtureIdForBet(mockSupabase, bet);
+  assert.strictEqual(queryCount, 1, 'negatieve resultaten ook gecachet');
 });
 
 // v12.1.2: todayBets telt nu ook nachtwedstrijden die op morgen staan (kickoff < 06:00).

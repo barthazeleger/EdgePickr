@@ -2,6 +2,22 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.4] - 2026-04-25
+
+**F1 · rate-limit + cache fixture-resolver fallback (P0 DoS-vector)**
+
+### Fixed
+
+- **[P0]** Fallback `resolveFixtureIdForBet` in `lib/routes/bets-write.js` deed Supabase-query per call. Bulk-loop kon Supabase-quota uitputten (DoS-vector op availability). Toegevoegd:
+  - **In-memory LRU cache** (max 1000 entries, TTL 30 min, key=`sport|datum|wedstrijd`). Negatieve resultaten ook gecachet om herhaalde lookups voor onbekende teams direct af te vangen.
+  - **Per-user rate-limit** op de fallback-call (10/min/user). Bestaande `currentodds:`-limit (30/min) blijft gehandhaafd voor het hele endpoint.
+
+### Tests
+
+682 passed, 0 failed. 2 nieuwe: cache reuse + cache-of-null behavior.
+
+---
+
 ## [12.2.3] - 2026-04-25
 
 **Drop-reason telemetrie in mkP — diagnose 0-picks zaterdag**
