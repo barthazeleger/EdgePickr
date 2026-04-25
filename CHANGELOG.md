@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.32] - 2026-04-25
+
+**v2 coverage gap dichten · hockey TT → pick_candidates**
+
+### Added
+
+- `lib/snapshots.js` `recordTotalsEvaluation()` — high-level wrapper voor over/under-style markten met line. Schrijft model_run + 2 pick_candidates (over/under) per evaluatie. Werkt voor TT, F5 totals, main O/U.
+- Wired in voor hockey home + away team totals in server.js.
+
+### Why
+
+- Operator-data v12.2.30: `/admin/v2/scan-by-sport` toonde 18 hockey candidates (allemaal `moneyline_incl_ot`), 0 hockey TT. Yet UI toonde 2 hockey TT picks via v1 Poisson-pipeline. Reden: alleen `recordMl2WayEvaluation` schreef naar v2; TT/F5/O/U deden dat niet.
+- Effect: alle v2-dashboards (`scan-by-sport`, `model-brier`, `pick-distribution`) ondervatten reality voor non-ML markten substantieel. Nu vullen hockey TTs ook v2 → eerlijker beeld.
+
+### Notes
+
+- Wiring voor F5 totals en main O/U totals (voetbal/basketball/MLB) volgt in v12.2.33+. Gefaseerd om regressies klein te houden.
+- 740 tests passed.
+
 ## [12.2.31] - 2026-04-25
 
 **Pick-pipeline · extreme-divergence drempel 25pp → 20pp**

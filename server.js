@@ -3660,6 +3660,17 @@ async function runHockey(emit) {
                 `Team Total Home: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaHome.toFixed(2)}) | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
                 Math.round(pUnder*100), unEdge * 0.22, kickoffTime, bestUn.bookie, [...matchSignals, 'team_total_home'], null, fxMetaTtU);
             }
+            // v12.2.32: schrijf TT evaluatie ook naar v2 pick_candidates zodat
+            // /admin/v2/scan-by-sport en /admin/v2/model-brier hockey TT mee tellen.
+            if (_currentModelVersionId) {
+              snap.recordTotalsEvaluation({
+                supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+                marketType: 'team_total_home', line,
+                pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
+                matchSignals: [...matchSignals, 'team_total_home'],
+                debug: { sport: 'hockey', side: 'home', lambda: lambdaHome },
+              }).catch(() => {});
+            }
           }
           for (const line of linesAway) {
             if (!ttLambdaOk(lambdaAway)) continue;
@@ -3685,6 +3696,16 @@ async function runHockey(emit) {
               mkP(`${hm} vs ${aw}`, league.name, `📉 ${aw} TT Under ${line}`, bestUn.price,
                 `Team Total Away: ${(pUnder*100).toFixed(1)}% under ${line} (λ=${lambdaAway.toFixed(2)}) | ${bestUn.bookie}: ${bestUn.price} | ${ko}`,
                 Math.round(pUnder*100), unEdge * 0.22, kickoffTime, bestUn.bookie, [...matchSignals, 'team_total_away'], null, fxMetaTtU);
+            }
+            // v12.2.32: TT evaluatie naar v2.
+            if (_currentModelVersionId) {
+              snap.recordTotalsEvaluation({
+                supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+                marketType: 'team_total_away', line,
+                pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
+                matchSignals: [...matchSignals, 'team_total_away'],
+                debug: { sport: 'hockey', side: 'away', lambda: lambdaAway },
+              }).catch(() => {});
             }
           }
         }
