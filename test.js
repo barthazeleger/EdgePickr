@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.18');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.19');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4034,6 +4034,60 @@ test('market-keys: F5/1H asymmetrie is gedocumenteerd (regressie-trigger als per
   // herzien moeten worden (data-migratie nodig).
   const f5Bucket = _detectMarket('F5 Over 4.5');
   assert.strictEqual(f5Bucket, 'over', 'F5 wordt nog steeds in `over` bucket geplakt — als dit faalt, herzie F4 deferral');
+});
+
+// v12.2.19 (F4): canonical lib/market-keys.js — single-source met
+// asymmetrie-detectie. Test dat normalize beide shapes correct retournert
+// en dat detectMarketKeyDrift bekende asymmetrieën NIET als drift logt.
+const { normalizeMarketKey, detectMarketKeyDrift, KNOWN_ASYMMETRIC_MARKET_TYPES } = require('./lib/market-keys');
+
+test('market-keys canonical: normalizeMarketKey produceert composite output', () => {
+  const ml = normalizeMarketKey('🏠 Bayern wint');
+  assert(ml, 'ML moet niet null zijn');
+  assert.strictEqual(ml.clvShape.market_type, 'moneyline');
+  assert.strictEqual(ml.clvShape.selection_key, 'home');
+  assert.strictEqual(ml.learningBucket, 'home');
+  assert.strictEqual(ml.asymmetric, false);
+  assert.strictEqual(ml.canonical, 'moneyline/home');
+});
+
+test('market-keys canonical: F5 markt → asymmetric=true (bekende deferred)', () => {
+  const f5 = normalizeMarketKey('F5 Over 4.5 runs');
+  assert(f5, 'F5 moet niet null zijn');
+  assert.strictEqual(f5.clvShape.market_type, 'f5_total');
+  assert.strictEqual(f5.learningBucket, 'over');
+  assert.strictEqual(f5.asymmetric, true);
+  assert.strictEqual(f5.canonical, 'f5_total/over/4.5');
+});
+
+test('market-keys canonical: detectMarketKeyDrift skipt known-asymmetric F5', () => {
+  // Bekende asymmetrie mag GEEN drift-warning genereren — anders log-spam in CI.
+  const drift = detectMarketKeyDrift('F5 Over 4.5 runs');
+  assert.strictEqual(drift, null);
+});
+
+test('market-keys canonical: detectMarketKeyDrift accepteert valid moneyline mapping', () => {
+  // moneyline/home + 'home' bucket = consistent → null
+  assert.strictEqual(detectMarketKeyDrift('🏠 Bayern wint'), null);
+  // moneyline/home + 'home60' bucket (60-min markten) ook ok
+  assert.strictEqual(detectMarketKeyDrift('🕐 Bayern wint (60-min)'), null);
+});
+
+test('market-keys canonical: detectMarketKeyDrift logt geen drift voor totals + btts', () => {
+  assert.strictEqual(detectMarketKeyDrift('📈 Over 2.5'), null);
+  assert.strictEqual(detectMarketKeyDrift('BTTS Ja'), null);
+});
+
+test('market-keys canonical: KNOWN_ASYMMETRIC export is stabiel', () => {
+  assert.ok(KNOWN_ASYMMETRIC_MARKET_TYPES instanceof Set);
+  assert.ok(KNOWN_ASYMMETRIC_MARKET_TYPES.has('f5_total'));
+});
+
+test('market-keys canonical: invalid input → null', () => {
+  assert.strictEqual(normalizeMarketKey(''), null);
+  assert.strictEqual(normalizeMarketKey(null), null);
+  assert.strictEqual(normalizeMarketKey(undefined), null);
+  assert.strictEqual(normalizeMarketKey(123), null);
 });
 
 // v12.2.13 (R4 MVP): sharp-soft asymmetric edge detection.

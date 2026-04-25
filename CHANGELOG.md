@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.19] - 2026-04-25
+
+**F4 · canonieke lib/market-keys.js (single-source met asymmetry-detection)**
+
+### Added
+
+- `lib/market-keys.js` met `normalizeMarketKey(markt)` → composite output (clvShape + learningBucket + asymmetric flag + canonical key) en `detectMarketKeyDrift()` watchdog die ongedocumenteerde drift tussen calibration-bucket en CLV-shape detecteert.
+- `KNOWN_ASYMMETRIC_MARKET_TYPES` Set documenteert bewuste asymmetrieën (`f5_total`, `nrfi`) zodat CI niet in drift-warnings verzuipt voor known-deferred items.
+- 7 unit tests voor canonical: composite output, F5 asymmetric flag, drift-skip op known-asymmetric, valid moneyline/total/btts mappings, KNOWN_ASYMMETRIC export, invalid input.
+
+### Why
+
+- Audit-finding F4: `marketKeyFromBetMarkt` en `detectMarket` werkten parallel zonder consistency-check. F5-markten bewijzen het: CLV-key=`f5_total/over/4.5` maar calibration-bucket=`over` (vermengd met main O/U). Operator-zichtbare consequence: F5-picks polluten main O/U calibratie.
+- Volledige consolidatie (logica samenvouwen) blijft careful refactor; deze release levert single API + drift-watchdog. Alle bestaande consumers blijven werken — backwards compat behouden.
+
+### Notes
+
+- Wiring naar consumers (learning-loop, clv-match, admin-routes) volgt gefaseerd. Eerst single-source vastleggen, dan migrate.
+- 711 → 718 tests passed.
+
 ## [12.2.18] - 2026-04-25
 
 **R4 wiring · sharp-soft mirror-filter (default actionable kant)**
