@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.39] - 2026-04-25
+
+**Docs · `docs/ADMIN_ENDPOINTS.md` quick reference**
+
+### Added
+
+- `docs/ADMIN_ENDPOINTS.md` — operator quick reference voor alle admin endpoints + auto-alerts. Browser-console fetch-pattern, query-parameters, gebruiksdoel per endpoint.
+
+### Why
+
+- Sinds v12.2.27 zijn 6 nieuwe admin endpoints + 1 nieuwe cron-alert geland (sharp-soft, model-brier, devig-backtest, scan-by-sport, concept-drift, sharp-soft-windows). Operator had geen consolidated overzicht.
+
+### Notes
+
+- Geen code-change, alleen doc.
+- 743 tests passed.
+
 ## [12.2.38] - 2026-04-25
 
 **v2 BTTS coverage · `recordBttsEvaluation` + voetbal wiring**
