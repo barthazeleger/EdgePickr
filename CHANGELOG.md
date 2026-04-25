@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.47] - 2026-04-25
+
+**v2 Double Chance coverage · football DC**
+
+### Added
+
+- `lib/snapshots.js` `recordDoubleChanceEvaluation()` — 1X / 12 / X2 helper.
+- Football DC scan → v2.
+- 1 unit test.
+
+### Why
+
+- Sluit v2-coverage rollout af: alle voetbal-markten (1x2, O/U, BTTS, DC, totals, threeway, team_total) zijn nu in v2 pick_candidates zichtbaar.
+
+### Impact
+
+- 760 → 761 tests passed.
+
 ## [12.2.46] - 2026-04-25
 
 **v2 threeway coverage · hockey + handball 60-min ML**

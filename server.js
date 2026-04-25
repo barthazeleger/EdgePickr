@@ -6573,6 +6573,15 @@ async function runPrematch(emit) {
             mkP(`${hm} vs ${aw}`, league.name, `🎯 X2 (${aw} of gelijk)`, bestX2.price,
               `Double Chance X2: ${(pX2*100).toFixed(1)}% | ${bestX2.bookie}: ${bestX2.price} | ${ko}`,
               Math.round(pX2*100), eX2 * 0.16 * (cm.dc_x2?.multiplier ?? 1), kickoffTime, bestX2.bookie, matchSignals, refereeName, fxMetaDcX2);
+          // v12.2.47: DC → v2.
+          if (_currentModelVersionId) {
+            snap.recordDoubleChanceEvaluation({
+              supabase, modelVersionId: _currentModelVersionId, fixtureId: fid,
+              pHX, p12, pX2, bestHX, best12, bestX2,
+              eHX, e12, eX2, minEdge: MIN_EDGE,
+              matchSignals, debug: { sport: 'football' },
+            }).catch(() => {});
+          }
         }
 
         // ── Handicap ──────────────────────────────────────────────────
