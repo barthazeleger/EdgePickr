@@ -2,6 +2,29 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.16] - 2026-04-25
+
+**R7 · concurrency-tests + fixture-resolver inflight dedup**
+
+### Added
+
+- `lib/routes/bets-write.js`: inflight-promise Map naast bestaande TTL-cache. N parallelle calls op koude key triggeren nu 1 Supabase query ipv N (thundering-herd dichtgemaakt).
+- `test.js` · 4 nieuwe concurrency-tests:
+  - writeBet 5 parallelle inserts via DB-sequence → unieke bet_ids (geen collisions)
+  - bookie-balance 10 parallelle applyDelta → eindbalans = exacte som van deltas (atomic RPC validation)
+  - fixture-resolver 5 parallelle calls op koude key → 1 query (inflight dedup validation)
+  - updateBetOutcome onder Supabase-latency → restore-on-exception werkt ook bij delayed reject
+
+### Fixed
+
+- Race-gap in fixture-resolver cache: voorheen kon thundering herd op koude key alle parallelle calls in een full Supabase query laten landen vóór de eerste de cache vulde. Nu deelt elke wachter dezelfde inflight Promise.
+
+### Notes
+
+- F2 atomic-RPC pad was al race-vrij door Postgres-side atomicity; deze test bevestigt dat in unit-context.
+- F3 snapshot/restore was al async-safe; nieuwe test bevestigt dat ook delayed-reject correct rolt.
+- 703 → 707 tests passed.
+
 ## [12.2.15] - 2026-04-25
 
 **F4 lite · market-keys cross-consistency tests (no behavior change)**

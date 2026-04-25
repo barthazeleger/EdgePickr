@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.15');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.16');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4274,6 +4274,133 @@ test('calibration-store: restore zet calib terug naar snapshot-state', async () 
   assert.strictEqual(now.totalSettled, 42);
   assert.strictEqual(now.markets.home.n, 7);
   try { require('fs').unlinkSync(`/tmp/${fname}`); } catch (_) {}
+});
+
+// v12.2.16 (R7): concurrency-tests voor race-prone paden.
+// Audit-finding: er waren geen tests die hard valideren dat F1/F2/F3 fixes
+// onder gelijktijdige load correct blijven werken. Deze suite vult dat gat.
+
+// (a) writeBet: 5 parallelle inserts via Tier-1 sequence-pad → alle unieke ids.
+test('writeBet (concurrent): 5 parallelle inserts via DB-sequence krijgen unieke bet_ids', async () => {
+  const createBetsData = require('./lib/bets-data');
+  let nextSeq = 100;
+  const inserted = [];
+  const mockSupabase = {
+    from: () => ({
+      insert: (row) => ({
+        select: () => ({
+          single: () => {
+            const id = nextSeq++;
+            inserted.push(id);
+            return Promise.resolve({ data: { bet_id: id, ...row }, error: null });
+          },
+        }),
+      }),
+    }),
+  };
+  const bd = createBetsData({
+    supabase: mockSupabase,
+    getUserMoneySettings: async () => ({ unitEur: 25, startBankroll: 1000 }),
+    defaultStartBankroll: 1000, defaultUnitEur: 25,
+    revertCalibration: async () => {}, updateCalibration: async () => {},
+  });
+  const bets = Array.from({ length: 5 }, (_, i) => ({
+    units: 1, odds: 2.0, uitkomst: 'Open',
+    sport: 'football', wedstrijd: `A${i} vs B${i}`, markt: 'ML', datum: '01-01-2026', tijd: '19:00',
+  }));
+  await Promise.all(bets.map(b => bd.writeBet(b)));
+  const ids = bets.map(b => b.id);
+  assert.strictEqual(new Set(ids).size, 5, `expected 5 unieke bet_ids, kreeg ${ids.join(',')}`);
+  assert.deepStrictEqual([...ids].sort((a, b) => a - b), [100, 101, 102, 103, 104]);
+});
+
+// (b) bookie-balance: 10 parallelle applyDelta via atomic RPC → eindstand = som.
+test('bookie-balance (concurrent): 10 parallelle applyDelta calls eindigen op exacte som', async () => {
+  const balances = new Map();
+  let pending = 0; let maxPending = 0;
+  const mockSupabase = {
+    rpc: async (_fn, args) => {
+      pending++; maxPending = Math.max(maxPending, pending);
+      // Yield to scheduler om echte race te simuleren.
+      await new Promise(r => setImmediate(r));
+      const key = (args.p_user_id || 'null') + '|' + args.p_bookie;
+      const next = +(((balances.get(key) || 0) + Number(args.p_delta)).toFixed(2));
+      balances.set(key, next);
+      pending--;
+      return { data: next, error: null };
+    },
+    from: () => { throw new Error('legacy fallback should not fire'); },
+  };
+  const store = createBookieBalanceStore({ supabase: mockSupabase });
+  const deltas = [10, -3, 25, -7, 15, 5, -10, 20, -5, 8]; // som = 58
+  await Promise.all(deltas.map(d => store.applyDelta('u1', 'Bet365', d)));
+  // Mock RPC simuleert atomic via single-threaded JS event loop, MAAR het feit
+  // dat maxPending > 1 was, betekent dat er echt parallel gevuurd is.
+  assert(maxPending >= 2, `expected concurrent execution (maxPending=${maxPending})`);
+  assert.strictEqual(balances.get('u1|bet365'), 58, 'eindbalans moet exact som van deltas zijn');
+});
+
+// (c) fixture-resolver: N parallelle calls op koude key → 1 Supabase query (inflight dedup).
+test('fixture-resolver (concurrent): 5 parallelle lookups op koude key triggeren 1 query', async () => {
+  const { resolveFixtureIdForBet, _resetFixtureResolverCacheForTests } = require('./lib/routes/bets-write');
+  _resetFixtureResolverCacheForTests();
+  let queryCount = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        gte: function() { return this; },
+        lte: function() { return this; },
+        limit: async () => {
+          queryCount++;
+          await new Promise(r => setImmediate(r));
+          return { data: [{ id: 7777, home_team_name: 'Bayern', away_team_name: 'Dortmund' }] };
+        },
+      }),
+    }),
+  };
+  const bet = { datum: '25-04-2026', wedstrijd: 'Bayern vs Dortmund', sport: 'football' };
+  const results = await Promise.all([
+    resolveFixtureIdForBet(mockSupabase, bet),
+    resolveFixtureIdForBet(mockSupabase, bet),
+    resolveFixtureIdForBet(mockSupabase, bet),
+    resolveFixtureIdForBet(mockSupabase, bet),
+    resolveFixtureIdForBet(mockSupabase, bet),
+  ]);
+  assert.deepStrictEqual(results, [7777, 7777, 7777, 7777, 7777]);
+  assert.strictEqual(queryCount, 1, `verwacht 1 query (inflight dedup), kreeg ${queryCount}`);
+});
+
+// (d) outcome-flip onder Supabase-latency: snapshot/restore moet ook werken
+//      als updateCalibration na een echte delay faalt.
+test('updateBetOutcome (latent): restore-on-exception werkt ook bij delayed reject', async () => {
+  const createBetsData = require('./lib/bets-data');
+  let snapshots = 0; let restores = 0;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: function() { return this; },
+        single: () => Promise.resolve({ data: { bet_id: 1, odds: 2.0, units: 1, inzet: 25, uitkomst: 'Open', user_id: null, datum: '01-01-2026', wedstrijd: 'A vs B', markt: 'ML', sport: 'football', tip: 'Bet365', wl: 0 }, error: null }),
+      }),
+      update: () => ({ eq: function() { return this; } }),
+      limit: () => Promise.resolve({ data: [], error: null }),
+    }),
+  };
+  const bd = createBetsData({
+    supabase: mockSupabase,
+    getUserMoneySettings: async () => ({ unitEur: 25, startBankroll: 1000 }),
+    defaultStartBankroll: 1000, defaultUnitEur: 25,
+    revertCalibration: async () => {},
+    updateCalibration: async () => {
+      await new Promise(r => setTimeout(r, 5));
+      throw new Error('delayed supabase outage');
+    },
+    snapshotCalib: () => { snapshots++; return { totalSettled: 11 }; },
+    restoreCalib: async () => { restores++; },
+  });
+  await assert.rejects(() => bd.updateBetOutcome(1, 'W', null), /delayed/);
+  assert.strictEqual(snapshots, 1);
+  assert.strictEqual(restores, 1, 'restoreCalib moet ook bij async delay aangeroepen zijn');
 });
 
 // v12.2.0: bookie-balance impact berekeningen
