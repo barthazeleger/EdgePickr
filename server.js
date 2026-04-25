@@ -3608,6 +3608,18 @@ async function runHockey(emit) {
             mkP(`${hm} vs ${aw}`, league.name, `🕐 ${aw} wint (60-min)`, bA3.price,
               `3-way: ${(p3.pAway*100).toFixed(1)}% | Markt: ${marketFairReg ? (marketFairReg.away*100).toFixed(1)+'%' : 'n/a'} | ${bA3.bookie}: ${bA3.price}${threeNote} | ${ko}`,
               Math.round(p3.pAway*100), e3A * 0.26, kickoffTime, bA3.bookie, [...matchSignals, '3way_ml', 'sanity_ok']);
+          // v12.2.46: hockey threeway → v2.
+          if (_currentModelVersionId) {
+            snap.recordThreewayEvaluation({
+              supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+              marketType: 'threeway',
+              pHome: p3.pHome, pDraw: p3.pDraw, pAway: p3.pAway,
+              bestH: bH3, bestD: bD3, bestA: bA3,
+              homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
+              matchSignals: [...matchSignals, '3way_ml'],
+              debug: { sport: 'hockey', lambda_h: expHome, lambda_a: expAway },
+            }).catch(() => {});
+          }
         }
 
         // ── Team Totals (full game incl OT) via Poisson ──
@@ -5417,6 +5429,18 @@ async function runHandball(emit) {
             mkP(`${hm} vs ${aw}`, league.name, `🕐 ${aw} wint (60-min)`, bA3.price,
               `3-way: ${(p3.pAway*100).toFixed(1)}% | Markt: ${marketFairHb ? (marketFairHb.away*100).toFixed(1)+'%' : 'n/a'} | ${bA3.bookie}: ${bA3.price}${threeNote} | ${ko}`,
               Math.round(p3.pAway*100), e3A * 0.26, kickoffTime, bA3.bookie, [...matchSignals, '3way_ml', 'sanity_ok']);
+          // v12.2.46: handball threeway → v2.
+          if (_currentModelVersionId) {
+            snap.recordThreewayEvaluation({
+              supabase, modelVersionId: _currentModelVersionId, fixtureId: gameId,
+              marketType: 'threeway',
+              pHome: p3.pHome, pDraw: p3.pDraw, pAway: p3.pAway,
+              bestH: bH3, bestD: bD3, bestA: bA3,
+              homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
+              matchSignals: [...matchSignals, '3way_ml'],
+              debug: { sport: 'handball', lambda_h: expHome, lambda_a: expAway },
+            }).catch(() => {});
+          }
         }
 
         // v2: feature_snapshot + pick_candidates voor handbal ML

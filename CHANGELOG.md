@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.46] - 2026-04-25
+
+**v2 threeway coverage · hockey + handball 60-min ML**
+
+### Added
+
+- `lib/snapshots.js` `recordThreewayEvaluation()` — home/draw/away helper. Schrijft model_run + 3 pick_candidates.
+- Hockey 60-min threeway → v2.
+- Handball 60-min threeway → v2.
+- 1 unit test.
+
+### Why
+
+- Rondt v2-coverage rollout af voor alle 3-way ML markten.
+
+### Impact
+
+- 759 → 760 tests passed.
+
 ## [12.2.45] - 2026-04-25
 
 **Brier endpoint coverage breakdown · audit P2.4 fix**

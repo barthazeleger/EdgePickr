@@ -2065,6 +2065,42 @@ test('recordTotalsEvaluation: schrijft model_run + 2 pick_candidates (over/under
   assert.match(writes.cands[1].rejected_reason, /edge_below_min/);
 });
 
+test('recordThreewayEvaluation: schrijft model_run + 3 pick_candidates (home/draw/away)', async () => {
+  const writes = { runs: [], cands: [] };
+  const fakeSupabase = (table) => {
+    if (table === 'pick_candidates') {
+      return { insert: async (row) => { writes.cands.push(row); return { error: null }; } };
+    }
+    if (table === 'model_runs') {
+      return {
+        insert: (row) => ({ select: () => ({ single: async () => {
+          writes.runs.push(row);
+          return { data: { id: 3000 + writes.runs.length }, error: null };
+        }}) }),
+      };
+    }
+    return { insert: async () => ({ error: null }) };
+  };
+  await snap.recordThreewayEvaluation({
+    supabase: { from: fakeSupabase }, modelVersionId: 1, fixtureId: 77,
+    pHome: 0.45, pDraw: 0.27, pAway: 0.28,
+    bestH: { price: 2.30, bookie: 'Bet365' },
+    bestD: { price: 3.50, bookie: 'Bet365' },
+    bestA: { price: 3.20, bookie: 'Bet365' },
+    homeEdge: 0.035, drawEdge: -0.055, awayEdge: -0.104,
+    minEdge: 0.05,
+    matchSignals: ['3way_ml'],
+    debug: { sport: 'hockey' },
+  });
+  assert.strictEqual(writes.runs.length, 1);
+  assert.strictEqual(writes.runs[0].market_type, 'threeway');
+  assert.strictEqual(writes.cands.length, 3);
+  assert.deepStrictEqual(writes.cands.map(c => c.selection_key), ['home', 'draw', 'away']);
+  // home edge 3.5% < 5% min → rejected
+  assert.strictEqual(writes.cands[0].passed_filters, false);
+  assert.match(writes.cands[0].rejected_reason, /edge_below_min/);
+});
+
 test('recordBttsEvaluation: schrijft model_run + 2 pick_candidates (yes/no)', async () => {
   const writes = { runs: [], cands: [] };
   const fakeSupabase = (table) => {
@@ -2705,7 +2741,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.45');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.46');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
