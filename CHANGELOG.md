@@ -2,6 +2,28 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.28] - 2026-04-25
+
+**F5 calibration-bucket separation · audit P3 fix**
+
+### Changed
+
+- `lib/model-math.js` `detectMarket()`: F5 markten (baseball first 5 innings) krijgen eigen buckets `f5_over` / `f5_under` / `f5_home` / `f5_away` / `f5_other` ipv vermengd in main `over` / `under`.
+- `lib/calibration-store.js` `DEFAULT_CALIB.markets`: 5 nieuwe F5 buckets toegevoegd. Beginnen op `multiplier: 1.0`, tunen zich automatisch op via learning-loop.
+- `lib/market-keys.js` `KNOWN_ASYMMETRIC_MARKET_TYPES`: `f5_total` weggehaald — clvShape (`f5_total`) en learningBucket (`f5_over`/`f5_under`) zijn nu consistent.
+- `lib/market-keys.js` `detectMarketKeyDrift`: f5_total → f5_over/f5_under wordt nu als consistente mapping erkend.
+
+### Why
+
+- Audit v12.2.23 P3: F5 picks vermengden in main `over`/`under` calibratie-bucket. Effect: settled F5-resultaten contamineerden Kelly-stake multiplier voor MLB main O/U (en omgekeerd). Beide markten zijn substantieel verschillend (F5 is 5 innings zonder bullpen; main is 9 innings).
+- Going forward: nieuwe F5 picks bucketen apart, main O/U bucket convergeert naar correct multiplier zodra historische F5-pollutie uitwast.
+
+### Notes
+
+- Geen migratie nodig voor calibration JSON (DEFAULT_CALIB seed bevat de nieuwe buckets bij eerste read; bestaande JSON blijft werken want load-pad maakt missing buckets aan).
+- Bestaande historische F5-bets blijven in `over`-bucket geboekt (legacy). Decay over tijd terwijl nieuwe data correct gebucketed wordt.
+- 739 tests passed (1 bestaande F4-asymmetrie test omgegooid; 2 v12.2.28 tests toegevoegd).
+
 ## [12.2.27] - 2026-04-25
 
 **Calibration-monitor canonical wire-up via bet↔pick join (v12.2.21)**

@@ -2596,7 +2596,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.27');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.28');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4054,15 +4054,12 @@ const _MARKET_CONSISTENCY_CASES = [
   ['🛡️ BTTS Nee',                'btts_no',    'btts'],
   ['🕐 Bayern wint (60-min)',    'home60',     'threeway'],
   ['🕐 Gelijkspel (60-min)',     'draw60',     'threeway'],
-  // F5: detectMarket plat in 'over' (deferd), mkKey ziet f5_total. Bekende asymmetrie.
-  ['F5 Over 4.5 runs',           'over',       'f5_total'],
+  // v12.2.28: F5 krijgt nu eigen bucket → niet langer asymmetrisch.
+  ['F5 Over 4.5 runs',           'f5_over',    'f5_total'],
 ];
 
 test('market-keys consistency: detectMarket bucket en mkKey market_type aligneren op cat (bekende asymmetrieën expliciet)', () => {
-  const knownAsymmetries = new Set([
-    // F5 over → 'over' bucket (gemixt met game-over) maar f5_total clv-key
-    'F5 Over 4.5 runs',
-  ]);
+  const knownAsymmetries = new Set();
   for (const [markt, expectedBucket, expectedClvType] of _MARKET_CONSISTENCY_CASES) {
     const bucket = _detectMarket(markt);
     const clvKey = _mkKey(markt);
@@ -4082,6 +4079,8 @@ test('market-keys consistency: detectMarket bucket en mkKey market_type alignere
         (bucket === 'away' && clvKey.market_type === 'moneyline') ||
         (bucket === 'home60' && clvKey.market_type === 'threeway') ||
         (bucket === 'away60' && clvKey.market_type === 'threeway') ||
+        (bucket === 'f5_over' && clvKey.market_type === 'f5_total') ||
+        (bucket === 'f5_under' && clvKey.market_type === 'f5_total') ||
         (bucket === 'draw60' && clvKey.market_type === 'threeway') ||
         (bucket === 'over' && clvKey.market_type === 'total') ||
         (bucket === 'under' && clvKey.market_type === 'total') ||
@@ -4093,12 +4092,12 @@ test('market-keys consistency: detectMarket bucket en mkKey market_type alignere
   }
 });
 
-test('market-keys: F5/1H asymmetrie is gedocumenteerd (regressie-trigger als per ongeluk gefixed)', () => {
-  // Deze test SCHIET als detectMarket ooit F5 apart gaat handelen — dat is
-  // signaal dat we moeten reviewen of bestaande calibration-buckets
-  // herzien moeten worden (data-migratie nodig).
-  const f5Bucket = _detectMarket('F5 Over 4.5');
-  assert.strictEqual(f5Bucket, 'over', 'F5 wordt nog steeds in `over` bucket geplakt — als dit faalt, herzie F4 deferral');
+test('market-keys (v12.2.28): F5 heeft eigen bucket f5_over/f5_under — geen pollution main O/U meer', () => {
+  assert.strictEqual(_detectMarket('F5 Over 4.5'), 'f5_over');
+  assert.strictEqual(_detectMarket('F5 Under 4.5'), 'f5_under');
+  // Main O/U blijft 'over'/'under' (geen F5 marker)
+  assert.strictEqual(_detectMarket('Over 8.5'), 'over');
+  assert.strictEqual(_detectMarket('Under 8.5'), 'under');
 });
 
 // v12.2.19 (F4): canonical lib/market-keys.js — single-source met
@@ -4116,17 +4115,17 @@ test('market-keys canonical: normalizeMarketKey produceert composite output', ()
   assert.strictEqual(ml.canonical, 'moneyline/home');
 });
 
-test('market-keys canonical: F5 markt → asymmetric=true (bekende deferred)', () => {
+test('market-keys canonical (v12.2.28): F5 markt is niet langer asymmetric — buckets aligneren', () => {
   const f5 = normalizeMarketKey('F5 Over 4.5 runs');
   assert(f5, 'F5 moet niet null zijn');
   assert.strictEqual(f5.clvShape.market_type, 'f5_total');
-  assert.strictEqual(f5.learningBucket, 'over');
-  assert.strictEqual(f5.asymmetric, true);
+  assert.strictEqual(f5.learningBucket, 'f5_over');
+  assert.strictEqual(f5.asymmetric, false);
   assert.strictEqual(f5.canonical, 'f5_total/over/4.5');
 });
 
-test('market-keys canonical: detectMarketKeyDrift skipt known-asymmetric F5', () => {
-  // Bekende asymmetrie mag GEEN drift-warning genereren — anders log-spam in CI.
+test('market-keys canonical: detectMarketKeyDrift accepteert F5 als consistente mapping', () => {
+  // Met v12.2.28 moet F5 mapping geen drift-warning meer geven.
   const drift = detectMarketKeyDrift('F5 Over 4.5 runs');
   assert.strictEqual(drift, null);
 });
@@ -4143,9 +4142,10 @@ test('market-keys canonical: detectMarketKeyDrift logt geen drift voor totals + 
   assert.strictEqual(detectMarketKeyDrift('BTTS Ja'), null);
 });
 
-test('market-keys canonical: KNOWN_ASYMMETRIC export is stabiel', () => {
+test('market-keys canonical: KNOWN_ASYMMETRIC export is stabiel (v12.2.28: f5_total verwijderd)', () => {
   assert.ok(KNOWN_ASYMMETRIC_MARKET_TYPES instanceof Set);
-  assert.ok(KNOWN_ASYMMETRIC_MARKET_TYPES.has('f5_total'));
+  assert.ok(!KNOWN_ASYMMETRIC_MARKET_TYPES.has('f5_total'), 'f5_total niet langer asymmetric (heeft eigen bucket)');
+  assert.ok(KNOWN_ASYMMETRIC_MARKET_TYPES.has('nrfi'), 'nrfi blijft asymmetric');
 });
 
 test('market-keys canonical: invalid input → null', () => {
