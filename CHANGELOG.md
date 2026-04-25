@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.38] - 2026-04-25
+
+**v2 BTTS coverage · `recordBttsEvaluation` + voetbal wiring**
+
+### Added
+
+- `lib/snapshots.js` `recordBttsEvaluation()` — yes/no zonder line. Schrijft model_run + 2 pick_candidates (yes + no).
+- Wired in voor voetbal BTTS in server.js.
+- 1 unit test: schrijft model_run + pick_candidates met juiste shape.
+
+### Why
+
+- Bestaande v2 dashboards mistten BTTS volledig. Voetbal BTTS is significant deel van voetbal-pick-volume.
+
+### Notes
+
+- Threeway, DC, 1H/F5 splits nog niet in v2 (verschillende shapes, helper-rollout volgt indien nodig).
+- 742 → 743 tests passed.
+
 ## [12.2.37] - 2026-04-25
 
 **v2 totals coverage compleet · NBA + NFL + handball O/U toegevoegd**

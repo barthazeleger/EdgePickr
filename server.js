@@ -6408,6 +6408,16 @@ async function runPrematch(emit) {
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | GF: ${hmGFAvg}/${awGFAvg} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}${h2hStr} | ${ko}`,
                   Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.btts_no?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
+              // v12.2.38: BTTS → v2 pick_candidates.
+              if (_currentModelVersionId) {
+                snap.recordBttsEvaluation({
+                  supabase, modelVersionId: _currentModelVersionId, fixtureId: fid,
+                  pYes: bttsYesP, pNo: bttsNoP,
+                  bestYes, bestNo,
+                  yesEdge: bttsYesEdge, noEdge: bttsNoEdge, minEdge: MIN_EDGE,
+                  matchSignals: bttsSignals, debug: { sport: 'football', h2hN },
+                }).catch(() => {});
+              }
             }
           }
         }
