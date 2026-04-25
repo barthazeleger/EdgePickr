@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.40] - 2026-04-25
+
+**Tests · `/admin/v2/scan-by-sport` integration coverage**
+
+### Added
+
+- 2 integration tests via route-harness:
+  - happy-path: candidates joinen op fixtures.sport, breakdown per sport correct
+  - leeg: total=0, bySport={}
+
+### Why
+
+- Endpoint geland in v12.2.30 zonder unit-coverage. Defense tegen toekomstige refactors die joint-shape per ongeluk breken.
+
+### Impact
+
+- 743 → 745 tests passed.
+
 ## [12.2.39] - 2026-04-25
 
 **Docs · `docs/ADMIN_ENDPOINTS.md` quick reference**

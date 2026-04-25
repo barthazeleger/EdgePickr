@@ -2705,7 +2705,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.39');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.40');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9501,6 +9501,79 @@ test('integration: GET /admin/v2/bookie-concentration uses `tip` column', async 
   assert.strictEqual(notNullCol, 'tip', 'must filter not-null on `tip`');
   assert.strictEqual(res.body.total, 80);
   assert.strictEqual(res.body.perBookie[0].bookie, 'Bet365');
+});
+
+// v12.2.40: integration tests voor de admin endpoints uit deze sessie.
+test('integration: GET /admin/v2/scan-by-sport breakt down per fixtures.sport', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const mockCandidates = [
+    { passed_filters: true, rejected_reason: null, model_run_id: 1,
+      model_runs: { fixture_id: 100, market_type: 'moneyline' } },
+    { passed_filters: false, rejected_reason: 'edge_below_min', model_run_id: 2,
+      model_runs: { fixture_id: 200, market_type: '1x2' } },
+    { passed_filters: false, rejected_reason: 'edge_below_min', model_run_id: 3,
+      model_runs: { fixture_id: 200, market_type: '1x2' } },
+  ];
+  const mockFixtures = [
+    { id: 100, sport: 'hockey' },
+    { id: 200, sport: 'football' },
+  ];
+  const mockSupabase = {
+    from: (table) => ({
+      select: () => ({
+        gte: () => ({ limit: () => Promise.resolve({ data: table === 'pick_candidates' ? mockCandidates : [], error: null }) }),
+        in: () => Promise.resolve({ data: table === 'fixtures' ? mockFixtures : [], error: null }),
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}),
+    getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [],
+    normalizeSport: (s) => s,
+    detectMarket: () => 'other',
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/scan-by-sport',
+    query: { hours: '12' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.total, 3);
+  assert(res.body.bySport.hockey, 'hockey breakdown ontbreekt');
+  assert.strictEqual(res.body.bySport.hockey.total, 1);
+  assert.strictEqual(res.body.bySport.hockey.accepted, 1);
+  assert(res.body.bySport.football, 'football breakdown ontbreekt');
+  assert.strictEqual(res.body.bySport.football.total, 2);
+  assert.strictEqual(res.body.bySport.football.rejected, 2);
+  assert.strictEqual(res.body.bySport.football.topRejectReasons.edge_below_min, 2);
+});
+
+test('integration: GET /admin/v2/scan-by-sport leeg → bySport={}', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }),
+        in: () => Promise.resolve({ data: [], error: null }),
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/scan-by-sport',
+    query: { hours: '24' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.total, 0);
+  assert.deepStrictEqual(res.body.bySport, {});
 });
 
 test('integration: GET /model-feed filtert scan-ruis uit mirrored notifications', async () => {
