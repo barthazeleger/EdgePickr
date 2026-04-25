@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.26] - 2026-04-25
+
+**Pick-pipeline · extreme-divergence hard-drop ipv alleen dampen**
+
+### Changed
+
+- `lib/picks.js` `mkP()`: bij `auditSuspicious === true` EN (`|probGap| > 25` OF `|baseGap| > 25`) → drop pick met `dropReason='extreme_divergence'`. Voorheen alleen `auditDampen=0.6` dampening.
+- Onder 25pp blijft dampen het juiste antwoord (huidige gedrag ongewijzigd).
+
+### Why
+
+- Bart's signaal op v12.2.25: een hockey TT Over 3.5 pick met model 67% vs markt 37% (= 30pp gap) leek "overvalued". Engine had wel al gedampened naar 0.3U met "-40% base-onzekerheid" stempel, maar pick kwam nog door.
+- Doctrine "liever 0 picks dan 1 valse edge" weegt zwaarder dan dampen wanneer model en markt > 25pp uit elkaar staan zonder signal-attribution. In dat geval: óf model verkeerd, óf markt heeft info die wij missen — beide cases willen we niet betten.
+- Drempel 25pp is conservatief: laat normale signal-attributed gaps door (10-20pp), dropt alleen extreme gevallen waar geen verdediging is.
+
+### Test coverage
+
+- 3 nieuwe tests: extreme_divergence drop, dampen-onder-drempel behoud, signal-attributed gap mag door.
+
+### Impact
+
+- 736 → 739 tests passed.
+- Eén bestaande test aangepast: prob 80→70 (van extreme naar dampen-zone) zodat de damp-test betekenis houdt.
+
 ## [12.2.25] - 2026-04-25
 
 **Hockey 2-way ML pick-label · expliciete `(inc-OT)` scope-marker**

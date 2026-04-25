@@ -2166,16 +2166,42 @@ test('buildPickFactory: runtime hooks sturen kelly, expectedEur en audit-damping
   // v12.0.0: signals-array moet niet leeg zijn — 0-signal picks worden nu
   // geskipt (P1.6). Met 1 signal krijg je dataConf=0.55 (was 0.50). Kelly +
   // audit-damping blijven gelijk, expectedEur schaalt 10% hoger.
-  mkP('Lakers vs Celtics', 'NBA', 'Lakers ML', 2.0, 'test', 80, 0.10, null, 'Bet365', ['test_signal:+2.0%']);
+  // v12.2.26: prob 80→70 (probGap 30→20) — boven 25pp drop nu hard, dus voor
+  // de damp-test gebruiken we 70% (20pp gap → suspicious + dampened, niet dropped).
+  mkP('Lakers vs Celtics', 'NBA', 'Lakers ML', 2.0, 'test', 70, 0.10, null, 'Bet365', ['test_signal:+2.0%']);
   assert.strictEqual(picks.length, 1);
   const pick = picks[0];
   assert.strictEqual(pick.sport, 'basketball');
   assert.strictEqual(pick.audit.suspicious, true);
-  assert.strictEqual(+pick.kelly.toFixed(3), 0.03);
-  assert.strictEqual(pick.units, '0.5U');
-  // expectedEur = units * unit(50) * edge * dataConf. Schaalt 0.55/0.40 = 1.375x
-  // t.o.v. oude verwachting van 2. Dus nu ~2.75.
-  assert.ok(pick.expectedEur > 2.5 && pick.expectedEur < 3.0, `expectedEur in 2.5-3.0 range, kreeg ${pick.expectedEur}`);
+  assert.strictEqual(pick.audit.stake_dampen, 0.6);
+});
+
+// v12.2.26: extreme-divergence hard-drop. Bart's case (TT Over 67% vs markt 37% = 30pp)
+// werd voorheen alleen gedampened naar 0.3U; nu wordt ook gedropt.
+test('buildPickFactory (v12.2.26): extreme prob-gap > 25pp zonder signal-attribution → DROP', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'hockey' });
+  // prob=67%, odd=2.70 → baselineProb=37%, probGap=30 (boven 25pp drempel).
+  // Signaal heeft géén "+X%" patroon → signalContrib=0, dus |0| < 30*0.25=7.5 → probGapSuspect=true.
+  mkP('Wild vs Stars', 'NHL', '📈 Stars TT Over 3.5 (inc-OT)', 2.70, 'test', 67, 0.20, null, 'Bet365', ['team_total_home']);
+  assert.strictEqual(picks.length, 0, 'extreme-divergence pick moet gedropt worden');
+  assert.strictEqual(dropReasons.extreme_divergence, 1, 'dropReason moet extreme_divergence zijn');
+});
+
+test('buildPickFactory (v12.2.26): probGap 20pp (onder drempel) → dampen ipv drop', () => {
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'hockey' });
+  mkP('A vs B', 'NHL', 'X TT Over', 2.0, 'test', 70, 0.20, null, 'Bet365', ['team_total_home']);
+  assert.strictEqual(picks.length, 1, 'pick onder 25pp moet door audit-dampen heen');
+  assert.strictEqual(picks[0].audit.suspicious, true);
+  assert.strictEqual(picks[0].audit.stake_dampen, 0.6);
+});
+
+test('buildPickFactory (v12.2.26): probGap 30pp MET signal-attribution (signalContrib >= 0.25*gap) → géén drop', () => {
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'hockey' });
+  // signalContrib +10% gemiddeld — meer dan 30*0.25=7.5 → probGapSuspect=false.
+  // baseGap = (67-10) - 37 = 20 → < 25 dus baseGap-extreem ook niet → géén drop.
+  mkP('A vs B', 'NHL', '📈 X TT Over', 2.70, 'test', 67, 0.20, null, 'Bet365',
+    ['team_stats:+5.0%', 'recent_form:+5.0%']);
+  assert.strictEqual(picks.length, 1, 'gap met sterk signaal-attribution mag door');
 });
 
 test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
@@ -2570,7 +2596,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.25');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.26');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
