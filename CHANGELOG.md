@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.31] - 2026-04-25
+
+**Pick-pipeline · extreme-divergence drempel 25pp → 20pp**
+
+### Changed
+
+- `lib/picks.js` `mkP()`: `auditSuspicious + (probGap > 20 OR baseGap > 20)` → drop. Voorheen 25pp drempel.
+
+### Why
+
+- Operator-observatie v12.2.29 (Dallas Stars TT Over 2.5): probGap=24.5pp, signalContrib<5pp → leek subjectief overshoot maar viel net onder 25pp drempel. Nu wordt deze case gedropt.
+- 20pp blijft conservatief: het gate-pad vereist `auditSuspicious=true` wat impliceert `signalContrib < probGap*0.25`. Een legitieme 22pp pick met >5.5pp signal-attribution heeft suspicious=false en blijft door. Alleen 20pp+ gevallen ZONDER signal-verdediging worden gedropt — exact doctrine "0 picks > 1 valse edge".
+
+### Impact
+
+- 4 v12.2.31 tests vervangen oude v12.2.26 tests (zelfde gates, nieuwe drempel).
+- 740 tests passed (was 739; +1 voor expliciete Bart-case dekking).
+
 ## [12.2.30] - 2026-04-25
 
 **Sport-distribution telemetrie · `/admin/v2/scan-by-sport`**

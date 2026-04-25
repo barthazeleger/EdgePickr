@@ -2176,32 +2176,40 @@ test('buildPickFactory: runtime hooks sturen kelly, expectedEur en audit-damping
   assert.strictEqual(pick.audit.stake_dampen, 0.6);
 });
 
-// v12.2.26: extreme-divergence hard-drop. Bart's case (TT Over 67% vs markt 37% = 30pp)
-// werd voorheen alleen gedampened naar 0.3U; nu wordt ook gedropt.
-test('buildPickFactory (v12.2.26): extreme prob-gap > 25pp zonder signal-attribution → DROP', () => {
+// v12.2.26 + v12.2.31: extreme-divergence hard-drop op 20pp (was 25pp).
+test('buildPickFactory (v12.2.31): probGap > 20pp zonder signal-attribution → DROP', () => {
   const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'hockey' });
-  // prob=67%, odd=2.70 → baselineProb=37%, probGap=30 (boven 25pp drempel).
-  // Signaal heeft géén "+X%" patroon → signalContrib=0, dus |0| < 30*0.25=7.5 → probGapSuspect=true.
+  // prob=67%, odd=2.70 → baselineProb=37%, probGap=30 (ruim boven 20pp).
+  // Signaal heeft géén "+X%" → signalContrib=0, dus probGapSuspect=true.
   mkP('Wild vs Stars', 'NHL', '📈 Stars TT Over 3.5 (inc-OT)', 2.70, 'test', 67, 0.20, null, 'Bet365', ['team_total_home']);
   assert.strictEqual(picks.length, 0, 'extreme-divergence pick moet gedropt worden');
-  assert.strictEqual(dropReasons.extreme_divergence, 1, 'dropReason moet extreme_divergence zijn');
+  assert.strictEqual(dropReasons.extreme_divergence, 1);
 });
 
-test('buildPickFactory (v12.2.26): probGap 20pp (onder drempel) → dampen ipv drop', () => {
+test('buildPickFactory (v12.2.31): Bart-case probGap=24.5pp (Dallas TT 2.5) → nu DROP (was dampen op 25pp)', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'hockey' });
+  // prob=84%, odd=1.68 → baselineProb=59.5%, probGap=24.5 (boven 20pp drempel).
+  // Géén %-signaal → signalContrib=0 → probGapSuspect=true.
+  mkP('Wild vs Stars', 'NHL', '📈 Dallas Stars TT Over 2.5 (inc-OT)', 1.68, 'test', 84, 0.20, null, 'Bet365', ['team_total_home']);
+  assert.strictEqual(picks.length, 0, '24.5pp gap zonder signal-attribution moet gedropt worden');
+  assert.strictEqual(dropReasons.extreme_divergence, 1);
+});
+
+test('buildPickFactory (v12.2.31): probGap 18pp (onder 20pp) → dampen ipv drop', () => {
   const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'hockey' });
-  mkP('A vs B', 'NHL', 'X TT Over', 2.0, 'test', 70, 0.20, null, 'Bet365', ['team_total_home']);
-  assert.strictEqual(picks.length, 1, 'pick onder 25pp moet door audit-dampen heen');
+  // prob=68%, odd=2.0 → baselineProb=50%, probGap=18 (onder 20pp drempel).
+  mkP('A vs B', 'NHL', 'X TT Over', 2.0, 'test', 68, 0.20, null, 'Bet365', ['team_total_home']);
+  assert.strictEqual(picks.length, 1, 'pick onder 20pp moet door audit-dampen heen');
   assert.strictEqual(picks[0].audit.suspicious, true);
   assert.strictEqual(picks[0].audit.stake_dampen, 0.6);
 });
 
-test('buildPickFactory (v12.2.26): probGap 30pp MET signal-attribution (signalContrib >= 0.25*gap) → géén drop', () => {
+test('buildPickFactory (v12.2.31): probGap 25pp MET sterke signal-attribution → géén drop', () => {
   const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'hockey' });
-  // signalContrib +10% gemiddeld — meer dan 30*0.25=7.5 → probGapSuspect=false.
-  // baseGap = (67-10) - 37 = 20 → < 25 dus baseGap-extreem ook niet → géén drop.
-  mkP('A vs B', 'NHL', '📈 X TT Over', 2.70, 'test', 67, 0.20, null, 'Bet365',
-    ['team_stats:+5.0%', 'recent_form:+5.0%']);
-  assert.strictEqual(picks.length, 1, 'gap met sterk signaal-attribution mag door');
+  // probGap=25, signalContrib=+12% (meer dan 25*0.25=6.25) → probGapSuspect=false → geen drop.
+  mkP('A vs B', 'NHL', '📈 X TT Over', 2.50, 'test', 65, 0.20, null, 'Bet365',
+    ['team_stats:+6.0%', 'recent_form:+6.0%']);
+  assert.strictEqual(picks.length, 1, 'gap met sterk signaal-attribution mag door, ook bij 25pp');
 });
 
 test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
@@ -2596,7 +2604,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.30');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.31');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
