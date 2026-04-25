@@ -2,7 +2,21 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
-## [12.3.0] - 2026-04-26
+## [12.3.1] - 2026-04-25
+
+**HOTFIX · front-end stuk sinds v12.3.0 door zero-width space in inline JS**
+
+Operator-rapport: "Sinds 12.3.0 doet de app het niet echt meer. Net nog wel (12.2.50)."
+
+### Fixed
+
+- **`index.html` regel 1484** — onzichtbare U+200B (zero-width space, byte-sequence `0xE2 0x80 0x8B`) stond aan het begin van een commentregel binnen `renderPicks.pickStrength`. U+200B is geen geldig whitespace-token in ECMA-262, dus de browser brak het hele inline `<script>`-blok af met `SyntaxError: Invalid or unexpected token` — alle front-end JS dood. Server boot + `npm test` (Node) merkten het niet op omdat Node geen HTML parseert.
+  - Karakter is in v12.3.0 ingeslopen bij de P2-edit "warn bij ontbrekend kelly-veld". Diff toonde het ook al, maar viel niet op (zichtbaar als rare leading whitespace).
+  - Pre-push smoke-test van v12.3.0 dekte alleen Node-pad (server.js require), niet browser-pad. LESSON: voor index.html-edits ook een script-extractie-syntaxcheck of een handmatige browser-load.
+
+### Hardened
+
+- Geen. Pure 1-character-fix.
 
 **Fresh-eyes audit pass · 2 UX-fixes + 3 P2 hardenings + 3 test additions**
 
