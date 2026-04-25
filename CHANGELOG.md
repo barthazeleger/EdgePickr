@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.12] - 2026-04-25
+
+**D2 · unit_at_time backfill voor legacy bets**
+
+### Notes
+
+Migratie `docs/migrations-archive/v12.2.12_unit_at_time_backfill.sql` (handmatig draaien): vult NULL `unit_at_time` met €25.00 voor legacy bets gelogd vóór v10.10.7. Verbetert historische winU/lossU stats — voorheen vielen die terug op *current* unitEur, wat na unit-step-up tot revisie van oude cijfers leidde.
+
+Geen code-wijziging. Idempotent: tweede run muteert niets.
+
+---
+
 ## [12.2.11] - 2026-04-25
 
 **R1 spike · log-margin devigging als alternatief naast proportional**
