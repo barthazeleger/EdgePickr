@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.41] - 2026-04-25
+
+**Tests · `/admin/v2/model-brier` integration coverage**
+
+### Added
+
+- 2 integration tests via route-harness:
+  - empty-set: `totalSettled=0`, model/market/comparison null
+  - canonical join: bet 1 joinde naar pick_candidate (model source), bet 2 zonder match valt terug op market (1/odds)
+
+### Why
+
+- Endpoint v12.2.21 had alleen helper-tests. Route-laag had geen integration coverage. Defensief tegen refactors die join-shape of select-projection breken.
+
+### Impact
+
+- 745 → 747 tests passed.
+
 ## [12.2.40] - 2026-04-25
 
 **Tests · `/admin/v2/scan-by-sport` integration coverage**

@@ -2705,7 +2705,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.40');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.41');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9549,6 +9549,78 @@ test('integration: GET /admin/v2/scan-by-sport breakt down per fixtures.sport', 
   assert.strictEqual(res.body.bySport.football.total, 2);
   assert.strictEqual(res.body.bySport.football.rejected, 2);
   assert.strictEqual(res.body.bySport.football.topRejectReasons.edge_below_min, 2);
+});
+
+test('integration: GET /admin/v2/model-brier zonder settled bets → empty payload', async () => {
+  const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        in: () => ({
+          gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }),
+          limit: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
+    }),
+  };
+  const router = createAdminSnapshotsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    autoTuneSignalsByClv: async () => ({ ok: true }),
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/model-brier',
+    query: { days: '90' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.totalSettled, 0);
+  assert.strictEqual(res.body.model, null);
+  assert.strictEqual(res.body.market, null);
+});
+
+test('integration: GET /admin/v2/model-brier met canonical join → model + market split', async () => {
+  const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
+  const mockBets = [
+    { bet_id: 1, fixture_id: 100, datum: '01-04-2026', tijd: '20:00', markt: '🏠 Bayern wint', tip: 'Bet365', odds: 2.0, units: 1, uitkomst: 'W', sport: 'football' },
+    { bet_id: 2, fixture_id: 200, datum: '01-04-2026', tijd: '20:00', markt: '✈️ Real wint',   tip: 'Bet365', odds: 2.5, units: 1, uitkomst: 'L', sport: 'football' },
+  ];
+  const mockCands = [
+    { id: 'c1', model_run_id: 'r1', fixture_id: 100, selection_key: 'home', bookmaker: 'Bet365',
+      fair_prob: 0.55, bookmaker_odds: 2.0, passed_filters: true,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-01T18:00:00Z' } },
+  ];
+  const mockSupabase = {
+    from: (table) => ({
+      select: () => ({
+        in: () => {
+          if (table === 'bets') {
+            return { gte: () => ({ limit: () => Promise.resolve({ data: mockBets, error: null }) }) };
+          }
+          if (table === 'pick_candidates') {
+            return { limit: () => Promise.resolve({ data: mockCands, error: null }) };
+          }
+          return { limit: () => Promise.resolve({ data: [], error: null }) };
+        },
+      }),
+    }),
+  };
+  const router = createAdminSnapshotsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    autoTuneSignalsByClv: async () => ({ ok: true }),
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/model-brier',
+    query: { days: '30' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.totalSettled, 2);
+  assert.strictEqual(res.body.joinCoverage.model, 1, 'bet 1 joinde naar pick_candidate');
+  assert.strictEqual(res.body.joinCoverage.marketOnly, 1, 'bet 2 (geen candidate) viel terug op market');
+  assert.strictEqual(res.body.model.n, 1);
+  assert.strictEqual(res.body.market.n, 1);
 });
 
 test('integration: GET /admin/v2/scan-by-sport leeg → bySport={}', async () => {
