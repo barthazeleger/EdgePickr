@@ -2705,7 +2705,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.42');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.43');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9601,6 +9601,79 @@ test('integration: GET /admin/v2/sharp-soft-windows respecteert include_mirror=1
   });
   assert.strictEqual(res.statusCode, 200);
   assert.strictEqual(res.body.includeMirror, true);
+});
+
+test('integration: GET /admin/v2/concept-drift leeg → driftCount=0', async () => {
+  const createAdminTimelineRouter = require('./lib/routes/admin-timeline');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          in: () => ({
+            gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }),
+          }),
+        }),
+      }),
+    }),
+  };
+  const router = createAdminTimelineRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    loadUsers: async () => [],
+    lineTimelineLib: { getLineTimeline: () => null, deriveExecutionMetrics: () => null },
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/concept-drift',
+    query: { source: 'pick_ep' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.totalGroups, 0);
+  assert.strictEqual(res.body.driftCount, 0);
+  assert.deepStrictEqual(res.body.drifts, []);
+});
+
+test('integration: GET /admin/v2/concept-drift detecteert 30d > 90d delta boven threshold', async () => {
+  const createAdminTimelineRouter = require('./lib/routes/admin-timeline');
+  // Signal_X heeft 30d Brier van 0.30 vs 90d Brier 0.22 → delta 0.08 > 0.02 threshold = drift.
+  const mockRows = [
+    { signal_name: 'signal_X', sport: 'football', market_type: 'home',
+      window_key: '30d', n: 25, brier_score: 0.30, log_loss: 0.55, probability_source: 'pick_ep' },
+    { signal_name: 'signal_X', sport: 'football', market_type: 'home',
+      window_key: '90d', n: 80, brier_score: 0.22, log_loss: 0.45, probability_source: 'pick_ep' },
+    // Signal_Y stabiel: 30d 0.21 vs 90d 0.20 → delta 0.01 < threshold = NIET drift.
+    { signal_name: 'signal_Y', sport: 'football', market_type: 'over',
+      window_key: '30d', n: 30, brier_score: 0.21, log_loss: 0.42, probability_source: 'pick_ep' },
+    { signal_name: 'signal_Y', sport: 'football', market_type: 'over',
+      window_key: '90d', n: 90, brier_score: 0.20, log_loss: 0.40, probability_source: 'pick_ep' },
+  ];
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          in: () => ({
+            gte: () => ({ limit: () => Promise.resolve({ data: mockRows, error: null }) }),
+          }),
+        }),
+      }),
+    }),
+  };
+  const router = createAdminTimelineRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    loadUsers: async () => [],
+    lineTimelineLib: { getLineTimeline: () => null, deriveExecutionMetrics: () => null },
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/concept-drift',
+    query: { source: 'pick_ep', drift_threshold: '0.02' },
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.totalGroups, 2);
+  assert.strictEqual(res.body.driftCount, 1, 'alleen signal_X drift');
+  assert.strictEqual(res.body.drifts[0].signal_name, 'signal_X');
+  assert.strictEqual(res.body.drifts[0].driftV90, true);
+  assert.strictEqual(res.body.drifts[0].delta30v90, 0.08);
 });
 
 test('integration: GET /admin/v2/devig-backtest leeg → groupsAnalyzed=0', async () => {

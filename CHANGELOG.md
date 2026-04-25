@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.43] - 2026-04-25
+
+**Tests · `/admin/v2/concept-drift` integration coverage**
+
+### Added
+
+- 2 integration tests via route-harness:
+  - empty: totalGroups=0, driftCount=0
+  - happy-path: signal_X met 30d Brier 0.30 vs 90d 0.22 → drift detected (delta 0.08 > threshold 0.02). signal_Y met delta 0.01 → niet als drift.
+
+### Why
+
+- Endpoint v12.2.36 had geen route-coverage. Defense tegen brier-delta logic regressies.
+
+### Impact
+
+- 750 → 752 tests passed.
+
 ## [12.2.42] - 2026-04-25
 
 **Tests · sharp-soft-windows + devig-backtest integration coverage + payload-shape consistency fix**
