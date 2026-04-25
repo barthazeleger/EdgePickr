@@ -2705,7 +2705,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.41');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.42');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9549,6 +9549,83 @@ test('integration: GET /admin/v2/scan-by-sport breakt down per fixtures.sport', 
   assert.strictEqual(res.body.bySport.football.total, 2);
   assert.strictEqual(res.body.bySport.football.rejected, 2);
   assert.strictEqual(res.body.bySport.football.topRejectReasons.edge_below_min, 2);
+});
+
+test('integration: GET /admin/v2/sharp-soft-windows leeg → count=0', async () => {
+  const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ lte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+        in: () => ({ gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+      }),
+    }),
+  };
+  const router = createAdminSnapshotsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    autoTuneSignalsByClv: async () => ({ ok: true }),
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/sharp-soft-windows',
+    query: { lookahead_hours: '24', min_gap_pp: '0.02' },
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.count, 0);
+  assert.deepStrictEqual(res.body.windows, []);
+  assert.strictEqual(res.body.includeMirror, false);
+});
+
+test('integration: GET /admin/v2/sharp-soft-windows respecteert include_mirror=1', async () => {
+  const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ lte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+        in: () => ({ gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+      }),
+    }),
+  };
+  const router = createAdminSnapshotsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    autoTuneSignalsByClv: async () => ({ ok: true }),
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/sharp-soft-windows',
+    query: { include_mirror: '1' },
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.includeMirror, true);
+});
+
+test('integration: GET /admin/v2/devig-backtest leeg → groupsAnalyzed=0', async () => {
+  const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }),
+      }),
+    }),
+  };
+  const router = createAdminSnapshotsRouter({
+    supabase: mockSupabase,
+    requireAdmin: makeNoopAuthMiddleware(),
+    autoTuneSignalsByClv: async () => ({ ok: true }),
+    loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/devig-backtest',
+    query: { hours: '24', min_bookmakers: '3' },
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.groupsAnalyzed, 0);
+  assert.strictEqual(res.body.minBookmakers, 3);
 });
 
 test('integration: GET /admin/v2/model-brier zonder settled bets → empty payload', async () => {

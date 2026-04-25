@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.42] - 2026-04-25
+
+**Tests · sharp-soft-windows + devig-backtest integration coverage + payload-shape consistency fix**
+
+### Added
+
+- 3 integration tests:
+  - `/admin/v2/sharp-soft-windows` empty (geen fixtures)
+  - `/admin/v2/sharp-soft-windows?include_mirror=1` flag-doorgegeven
+  - `/admin/v2/devig-backtest` empty (geen snapshots)
+
+### Fixed
+
+- `/admin/v2/sharp-soft-windows` early-return (geen fixtures) emitte voorheen alleen `{windows, lookaheadHours, minGapPp, count}` — miste `lookbackHours, includeMirror, sinceIso, nowIso, untilIso`. Nu shape-consistent met de happy-path response. Gevonden tijdens integration test toevoegen.
+
+### Impact
+
+- 747 → 750 tests passed.
+
 ## [12.2.41] - 2026-04-25
 
 **Tests · `/admin/v2/model-brier` integration coverage**
