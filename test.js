@@ -2186,6 +2186,27 @@ test('createKillSwitch: refresh skipt bij enabled=false', async () => {
   assert.strictEqual(ks.set.size, 0, 'set moet gewist zijn als enabled=false');
 });
 
+test('createKillSwitch (v12.3.0 T2): refresh tolerant tegen notification insert-error', async () => {
+  // Defensief: notification-insert error mag refresh-flow niet stoppen. Set
+  // moet wel correct gepopuleerd worden ondanks insert failure.
+  const bets = Array.from({ length: 35 }, () => ({
+    sport: 'football', markt: '🏠 Bayern wint', uitkomst: 'W', clv_pct: -8.0,
+  }));
+  const mockSupabase = {
+    from: () => ({ insert: async () => { throw new Error('simulated supabase outage'); } }),
+  };
+  const ks = createKillSwitch({
+    supabase: mockSupabase,
+    loadSettledBets: async () => bets,
+    normalizeSport: (s) => s,
+    detectMarket: () => 'home',
+    supportsClvForBetMarkt: () => true,
+  });
+  // Should not throw.
+  await ks.refresh();
+  assert.strictEqual(ks.set.has('football_home'), true, 'set wel geüpdatet ondanks notify-fail');
+});
+
 test('createKillSwitch: isMarketKilled returnt false bij empty set / disabled', () => {
   const ks = createKillSwitch({
     supabase: { from: () => ({}) },
@@ -2912,7 +2933,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.50');
+  assert.strictEqual(appMeta.APP_VERSION, '12.3.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4692,6 +4713,16 @@ test('diagnoseJoinFailure: bookmaker mismatch → bookmaker_mismatch', () => {
   assert.strictEqual(diagnoseJoinFailure(bet, cands).category, 'bookmaker_mismatch');
 });
 
+test('diagnoseJoinFailure (v12.3.0 T1): null model_runs → market_mismatch (graceful)', () => {
+  // Defensief: candidate met null model_runs mag geen crash veroorzaken.
+  // Optional chaining op c.model_runs?.market_type filtert deze er gewoon uit.
+  const bet = { fixture_id: 1, markt: '🏠 Bayern wint', tip: 'Bet365' };
+  const cands = [
+    { fixture_id: 1, selection_key: 'home', bookmaker: 'Bet365', model_runs: null },
+  ];
+  assert.strictEqual(diagnoseJoinFailure(bet, cands).category, 'market_mismatch');
+});
+
 test('diagnoseJoinFailure: alles match → matched', () => {
   const bet = { fixture_id: 1, markt: '🏠 Bayern wint', tip: 'Bet365' };
   const cands = [
@@ -4843,6 +4874,21 @@ test('sharp-soft windows: default filtert sharp_undervalues mirror-side weg (all
   const dirs = new Set(all.map(w => w.edgeDirection));
   assert(dirs.has('soft_undervalues') && dirs.has('sharp_undervalues'), 'includeMirror=true moet beide kanten teruggeven');
   assert.strictEqual(all.length, def.length * 2, 'mirror-mode = 2× default');
+});
+
+test('sharp-soft windows (v12.3.0 T3): includeMirror=true + only-sharp bookies → leeg', () => {
+  // Edge: alle data is sharp-only (geen soft-side) → ongeacht includeMirror
+  // mag er geen window worden uitgegeven want er is geen soft fair-prob.
+  const snapshots = [
+    { fixture_id: 1, captured_at: '2026-04-25T10:00Z', bookmaker: 'Pinnacle', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.85 },
+    { fixture_id: 1, captured_at: '2026-04-25T10:00Z', bookmaker: 'Pinnacle', market_type: 'moneyline', selection_key: 'away', line: null, odds: 2.05 },
+  ];
+  const result = summarizeSharpSoftWindows({
+    snapshots, fixtures: new Map(),
+    sharpSet: new Set(['pinnacle']), softSet: new Set(['bet365']),
+    threshold: 0.02, includeMirror: true,
+  });
+  assert.strictEqual(result.length, 0);
 });
 
 test('sharp-soft windows: gebruikt latest snapshot per bookmaker bij meerdere captures', () => {

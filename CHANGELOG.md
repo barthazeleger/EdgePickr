@@ -2,6 +2,57 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.3.0] - 2026-04-26
+
+**Fresh-eyes audit pass · 2 UX-fixes + 3 P2 hardenings + 3 test additions**
+
+Eerste milestone-bump (12.2.x → 12.3.0) sinds april. Geen breaking change; markeert het einde van de audit-roadmap closure (v12.2.5 → v12.3.0 = 50 commits over 1.5 dag).
+
+### Fixed (urgent UX uit operator-screenshot 25-04 21:03)
+
+- **CLV-failure notification spam** — `server.js` `logCheckFailure()`: dedup-window van 6 uur per (type + wedstrijd-titel). Voorheen kon dezelfde fixture-failure ~10× tegelijk in inbox landen (Ottawa Senators × 10 in screenshot).
+- **"Wis alles" werkte niet voor `check_failed`** — `lib/inbox-notification-types.js`: `check_failed` weggehaald uit `PERSISTENT_INBOX_NOTIFICATION_TYPES` set. Was operationele ruis, geen audit-event. Andere types (stake_regime_transition, kill_switch, drift_alert, autotune_run, etc.) blijven persistent.
+
+### Hardened (P2 fixes uit fresh-eyes audit)
+
+- **concept-drift threshold rounding** — `lib/routes/admin-timeline.js`: comparison gebruikt nu RAW delta tegen drempel; `.toFixed(5)` alleen voor display. Voorheen kon delta = ~threshold een drift-signaal silent missen door rounding.
+- **admin-inspect inconsistente error-logging** — `lib/routes/admin-inspect.js`: catch-block logt nu `console.error('[admin-inspect]', e?.message)` voor consistency met andere admin-endpoints. Generic message blijft naar client (geen leak).
+- **UI pickStrength undefined kelly warning** — `index.html`: `console.warn` als pick.kelly geen number is. Dev-aid om server-side payload-regressies te spotten; runtime ongewijzigd.
+
+### Added (test-coverage gaps gedicht)
+
+- T1 · `diagnoseJoinFailure(bet, [{model_runs: null}])` → `market_mismatch` (graceful, geen crash).
+- T2 · `createKillSwitch.refresh()` met simulated supabase notify-error → state.set wordt nog steeds correct geupdatet.
+- T3 · `summarizeSharpSoftWindows({includeMirror: true})` met only-sharp bookies → leeg resultaat.
+
+### Audit summary
+
+- **5 false-positives** gespot in initiële agent-output (zie `docs/AUDIT_v12.3.0_FRESH_EYES.md` sectie 4): scoped vars, race condition, F5 migratie, push-payload privacy, migratie-uniqueness gap. Bij verificatie geen echte issues.
+- **R1 / R2 / R3** bewust niet als scaffold gebouwd — zou theater zijn zonder echte data-trigger. Auto-switch infrastructuur loopt via bestaande `/admin/v2/devig-backtest`, `/admin/v2/model-brier`, `/admin/v2/concept-drift` endpoints. Operator beslist wekelijks. Triggers expliciet in audit-doc.
+- **R5 / R6** strategisch held met data-triggers (Brier <0.22 + CLV >+2% over 200 settled / bankroll-headroom).
+- **R8** verdere extracts deferred — proven regressie-risico (v12.2.49 TDZ → v12.2.50 hotfix).
+
+### Lesson learned (in audit-doc opgeschreven)
+
+Elke `server.js` extract krijgt voortaan `SUPABASE_URL=https://test.supabase.co SUPABASE_KEY=test JWT_SECRET=test node -e "require('./server.js')"` smoke-test als pre-push gate. Unit tests vingen v12.2.49 TDZ niet omdat tests supabase mocks injecteren — module-load volgorde wordt door test-suite niet getriggerd.
+
+### Files
+
+- `server.js` — logCheckFailure dedup
+- `lib/inbox-notification-types.js` — check_failed weg uit persistent set
+- `lib/routes/admin-timeline.js` — concept-drift raw-delta comparison
+- `lib/routes/admin-inspect.js` — error-logging consistency
+- `index.html` — pickStrength warn
+- `test.js` — 3 nieuwe tests
+- `docs/AUDIT_v12.3.0_FRESH_EYES.md` — nieuwe audit-doc
+- 7 version-pin files
+
+### Impact
+
+- 770 → 773 tests passed.
+- Smoke-test boot OK met dummy env vars (geen TDZ regression na v12.2.50 hotfix).
+- Geen migratie. Geen breaking change.
+
 ## [12.2.50] - 2026-04-25
 
 **HOTFIX · server.js TDZ-error op Render boot (kritiek)**

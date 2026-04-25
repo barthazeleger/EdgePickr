@@ -1346,11 +1346,26 @@ const revertCalibration = learningLoop.revertCalibration;
 
 // Log een gefaalde pre-match/CLV check naar de notifications tabel,
 // zodat de user het in de 🔔 dropdown ziet.
+//
+// v12.3.0: dedup-window van 6 uur per (type + wedstrijd). Voorheen kon
+// daily-job + pre-kickoff scheduler dezelfde fixture-failure 10× spammen
+// (zie operator-screenshot 25-04: Ottawa Senators × 10 entries).
 async function logCheckFailure(type, wedstrijd, reason) {
   try {
     const label = type === 'clv' ? 'CLV check' : 'Pre-match check';
     const title = `Check mislukt: ${wedstrijd}`.slice(0, 100);
     const body = `⚠️ ${label}: kon geen odds ophalen voor ${wedstrijd} · ${reason || 'controleer handmatig'}`;
+    // Dedup: skip insert als zelfde title in last 6 uur al bestaat.
+    const sinceIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
+    try {
+      const { data: existing } = await supabase.from('notifications')
+        .select('id')
+        .eq('type', 'check_failed')
+        .eq('title', title)
+        .gte('created_at', sinceIso)
+        .limit(1);
+      if (Array.isArray(existing) && existing.length) return; // already logged recently
+    } catch (_) { /* on lookup error, fall through and try insert */ }
     await supabase.from('notifications').insert({
       type: 'check_failed', title, body, read: false, user_id: null
     });
