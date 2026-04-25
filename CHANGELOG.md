@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.22] - 2026-04-25
+
+**R1 spike · log-margin vs proportional devig backtest harness**
+
+### Added
+
+- `lib/devig-backtest.js` — pure helper `compareDevigOnSnapshots(snapshots, opts)`. Groepeert per (fixture × market × line), neemt latest per (bookie × selection), devigt met BEIDE algoritmes, vergelijkt mean fair-prob spread. Output: groupsAnalyzed, pairs, meanAbsDiffPp, maxAbsDiffPp, distributie-buckets (<0.5pp/<1pp/<2pp/≥2pp), top-10 grootste diffs.
+- `GET /api/admin/v2/devig-backtest?hours=24&min_bookmakers=3&sharp_only=1` — runt comparison op recente odds_snapshots. Antwoordt op audit-vraag of log-margin "marginaal preciezer" werkelijk meetbaar is.
+- 4 unit tests (lege input, vig-loos symmetric, vigged symmetric, min-bookies threshold).
+
+### Why
+
+- Audit R1 wilde walk-forward backtest vóór swap default devig-algoritme. Deze release levert het backtest-instrument; swap-decisie blijft expliciet aan operator op basis van live data.
+
+### Notes
+
+- Geen behavior-change in scan-pipeline. CLV-flow + market_consensus blijven proportional devig gebruiken.
+- 727 → 731 tests passed.
+
 ## [12.2.21] - 2026-04-25
 
 **R2 partial + R3 diagnostic · bet ↔ pick join-laag + model-Brier endpoint**

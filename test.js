@@ -2570,7 +2570,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.21');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.22');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4183,6 +4183,44 @@ test('bets-pick-join: outcomeBinaryFromBet W=1, L=0, anders null', () => {
   assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'Open' }), null);
   assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'Push' }), null);
   assert.strictEqual(outcomeBinaryFromBet(null), null);
+});
+
+// v12.2.22 (R1 spike): devig backtest helper
+const { compareDevigOnSnapshots } = require('./lib/devig-backtest');
+
+test('devig-backtest: lege snapshots → groupsAnalyzed=0', () => {
+  const r = compareDevigOnSnapshots([], { minBookmakers: 2 });
+  assert.strictEqual(r.groupsAnalyzed, 0);
+});
+
+test('devig-backtest: 3 bookies vig-loos 2.00/2.00 → diffs ~0', () => {
+  const snaps = ['Pinnacle', 'Bet365', 'Unibet'].flatMap(b => ([
+    { fixture_id: 1, captured_at: '2026-04-25T10:00:00Z', bookmaker: b, market_type: 'moneyline', selection_key: 'home', line: null, odds: 2.00 },
+    { fixture_id: 1, captured_at: '2026-04-25T10:00:00Z', bookmaker: b, market_type: 'moneyline', selection_key: 'away', line: null, odds: 2.00 },
+  ]));
+  const r = compareDevigOnSnapshots(snaps, { minBookmakers: 3 });
+  assert.strictEqual(r.groupsAnalyzed, 1);
+  assert.ok(r.meanAbsDiffPp < 0.01, `vig-loos: meanAbsDiff = ${r.meanAbsDiffPp}, expected ~0`);
+});
+
+test('devig-backtest: 3 bookies met vig 1.91/1.91 → algoritmes wijken minimaal af', () => {
+  const snaps = ['Pinnacle', 'Bet365', 'Unibet'].flatMap(b => ([
+    { fixture_id: 2, captured_at: '2026-04-25T10:00:00Z', bookmaker: b, market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.91 },
+    { fixture_id: 2, captured_at: '2026-04-25T10:00:00Z', bookmaker: b, market_type: 'moneyline', selection_key: 'away', line: null, odds: 1.91 },
+  ]));
+  const r = compareDevigOnSnapshots(snaps, { minBookmakers: 3 });
+  assert.strictEqual(r.groupsAnalyzed, 1);
+  // Bij symmetrische 50/50 vig zouden beide algoritmes 0.5/0.5 moeten produceren — diff < 0.5pp
+  assert.ok(r.meanAbsDiffPp < 0.5, `symmetric: meanAbsDiff = ${r.meanAbsDiffPp}, expected < 0.5pp`);
+});
+
+test('devig-backtest: skip groups onder minBookmakers', () => {
+  const snaps = [
+    { fixture_id: 3, captured_at: '2026-04-25T10:00:00Z', bookmaker: 'Pinnacle', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.91 },
+    { fixture_id: 3, captured_at: '2026-04-25T10:00:00Z', bookmaker: 'Pinnacle', market_type: 'moneyline', selection_key: 'away', line: null, odds: 1.91 },
+  ];
+  const r = compareDevigOnSnapshots(snaps, { minBookmakers: 3 });
+  assert.strictEqual(r.groupsAnalyzed, 0);
 });
 
 test('bets-pick-join: buildBrierRecords splitst model vs market source', () => {
@@ -6180,7 +6218,7 @@ test('admin-snapshots router: throws bij missing deps', () => {
   assert.throws(() => createAdminSnapshotsRouter({}), /missing required dep/);
 });
 
-test('admin-snapshots router: construct met valid deps + 3 routes', () => {
+test('admin-snapshots router: construct met valid deps + 5 routes', () => {
   const router = createAdminSnapshotsRouter({
     supabase: { from: () => ({ select: () => ({}) }) },
     requireAdmin: (req, res, next) => next(),
@@ -6191,6 +6229,8 @@ test('admin-snapshots router: construct met valid deps + 3 routes', () => {
   assert.ok(routes.includes('/admin/v2/autotune-clv'));
   assert.ok(routes.includes('/admin/v2/snapshot-counts'));
   assert.ok(routes.includes('/admin/v2/sharp-soft-windows'));
+  assert.ok(routes.includes('/admin/v2/model-brier'));
+  assert.ok(routes.includes('/admin/v2/devig-backtest'));
 });
 
 test('admin-controls router: throws bij missing deps', () => {
