@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.3] - 2026-04-25
+
+**Drop-reason telemetrie in mkP — diagnose 0-picks zaterdag**
+
+### Added
+
+- `lib/picks.js` `buildPickFactory` returnt nu `dropReasons` object dat per scan-loop telt waarom picks gedropt zijn (`price_too_low`, `ep_below_min`, `ep_too_close_to_market`, `kelly_too_low`, `no_signals`, `execution_gate_skip`, `edge_below_adaptive`).
+- Helper `formatDropReasons(obj) → "key1=N · key2=M · ..."` voor compacte scan-log emit.
+- Per-sport scan-bodies in `server.js` emitten nu een `🏀/🏒/⚾/🏈/🤾/⚽ Drops: ...` log-regel direct na de wedstrijden-geanalyseerd-regel. Geeft Bart per scan zichtbaar waar picks specifiek verloren gaan.
+
+### Notes
+
+Aanleiding: 0 picks op zaterdag 07:30 terwijl alle sporten honderden wedstrijden hadden. Admin-endpoint analyse toonde 73% van v2-rejections als `edge_below_min` — geen pipeline-bug, model haalt vaak de 5.5% drempel niet. v1-pipeline (UI) heeft extra gates die v2 niet kent. Drop-reason logging maakt nu zichtbaar welke gate de bottleneck is per scan.
+
+### Tests
+680 passed, 0 failed. 6 nieuwe tests voor dropReasons + formatDropReasons.
+
+---
+
 ## [12.2.2] - 2026-04-24
 
 **Bookie-balance "+ toevoegen" knop**

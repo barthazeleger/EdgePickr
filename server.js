@@ -27,6 +27,7 @@ const {
 const {
   createPickContext,
   buildPickFactory: createPickFactory,
+  formatDropReasons,
   calcForm,
   calcMomentum,
   calcStakes,
@@ -2451,7 +2452,7 @@ async function runBasketball(emit) {
   emit({ log: `🏀 Basketball scan · ${NBA_LEAGUES.length} competities` });
 
   const calib = loadCalib();
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'basketball');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'basketball');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -3061,6 +3062,10 @@ async function runBasketball(emit) {
   }
 
   emit({ log: `🏀 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedPicks.length} basketball picks` });
+  // v12.2.3: drop-reasons telemetrie. Toont waarom picks niet doorkwamen
+  // tijdens generatie (mkP-level filters; execution-gate-drops zijn separate log).
+  const _dropFmtNba = formatDropReasons(dropReasons);
+  if (_dropFmtNba) emit({ log: `🏀 Drops: ${_dropFmtNba}` });
 
   // Save scan entry
   if (gatedPicks.length) saveScanEntry(gatedPicks, 'nba', totalEvents);
@@ -3081,7 +3086,7 @@ async function runHockey(emit) {
   emit({ log: `🏒 Hockey scan · ${NHL_LEAGUES.length} competities` });
 
   const calib = loadCalib();
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'hockey');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'hockey');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -3894,6 +3899,9 @@ async function runHockey(emit) {
   }
 
   emit({ log: `🏒 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedHockeyPicks.length} hockey picks` });
+  // v12.2.3: drop-reasons telemetrie.
+  const _dropFmtNhl = formatDropReasons(dropReasons);
+  if (_dropFmtNhl) emit({ log: `🏒 Drops: ${_dropFmtNhl}` });
 
   if (gatedHockeyPicks.length) saveScanEntry(gatedHockeyPicks, 'nhl', totalEvents);
 
@@ -3928,7 +3936,7 @@ async function runBaseball(emit) {
   };
 
   const calib = loadCalib();
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -4531,6 +4539,9 @@ async function runBaseball(emit) {
   }
 
   emit({ log: `⚾ ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedMlbPicks.length} baseball picks` });
+  // v12.2.3: drop-reasons telemetrie.
+  const _dropFmtMlb = formatDropReasons(dropReasons);
+  if (_dropFmtMlb) emit({ log: `⚾ Drops: ${_dropFmtMlb}` });
 
   if (gatedMlbPicks.length) saveScanEntry(gatedMlbPicks, 'mlb', totalEvents);
 
@@ -4546,7 +4557,7 @@ async function runFootballUS(emit) {
   emit({ log: `🏈 NFL scan · ${NFL_LEAGUES.length} competities` });
 
   const calib = loadCalib();
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'american-football');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'american-football');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -5020,6 +5031,9 @@ async function runFootballUS(emit) {
   }
 
   emit({ log: `🏈 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedNflPicks.length} NFL picks` });
+  // v12.2.3: drop-reasons telemetrie.
+  const _dropFmtNfl = formatDropReasons(dropReasons);
+  if (_dropFmtNfl) emit({ log: `🏈 Drops: ${_dropFmtNfl}` });
 
   if (gatedNflPicks.length) saveScanEntry(gatedNflPicks, 'nfl', totalEvents);
 
@@ -5035,7 +5049,7 @@ async function runHandball(emit) {
   emit({ log: `🤾 Handball scan · ${HANDBALL_LEAGUES.length} competities` });
 
   const calib = loadCalib();
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'handball');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'handball');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -5464,6 +5478,9 @@ async function runHandball(emit) {
   }
 
   emit({ log: `🤾 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedHbPicks.length} handball picks` });
+  // v12.2.3: drop-reasons telemetrie.
+  const _dropFmtHb = formatDropReasons(dropReasons);
+  if (_dropFmtHb) emit({ log: `🤾 Drops: ${_dropFmtHb}` });
 
   if (gatedHbPicks.length) saveScanEntry(gatedHbPicks, 'handball', totalEvents);
 
@@ -5541,7 +5558,7 @@ async function runPrematch(emit) {
     }
   }
 
-  const { picks, combiPool, mkP } = buildPickFactory(1.60, calib.epBuckets || {}, 'football');
+  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'football');
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = AF_FOOTBALL_LEAGUES.length; // 1 call/league gebruikt in pre-fetch
@@ -6489,6 +6506,9 @@ async function runPrematch(emit) {
   for (const p of combiPool) { p.scanType = 'pre'; p.sport = 'football'; }
 
   emit({ log: `📋 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${picks.length} pre-match picks` });
+  // v12.2.3: drop-reasons telemetrie. Voetbal heeft hoogste volume, dus belangrijkste signaal.
+  const _dropFmtVoetbal = formatDropReasons(dropReasons);
+  if (_dropFmtVoetbal) emit({ log: `⚽ Drops: ${_dropFmtVoetbal}` });
 
   emit({ log: `📋 Totaal ${picks.length} kandidaten | Combi's berekenen...` });
 

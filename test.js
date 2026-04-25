@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -3929,6 +3929,47 @@ test('odds-parser: bestFromArr — preferred leeg, market wel → price=0 defaul
   assert.strictEqual(best.marketBookie, 'Pinnacle');
   assert.strictEqual(best.preferredPrice, 0);
   setPreferredBookies(null);
+});
+
+// v12.2.3: drop-reasons telemetrie in buildPickFactory
+const { buildPickFactory: _bpf, formatDropReasons: _fmtDrops } = require('./lib/picks');
+
+test('buildPickFactory exporteert dropReasons map', () => {
+  const f = _bpf(1.60, {}, 'football');
+  assert.ok(f.dropReasons, 'dropReasons object should be present');
+  assert.strictEqual(typeof f.dropReasons, 'object');
+});
+
+test('mkP bumpt drop-reason: price_too_low bij odd < 1.10', () => {
+  const f = _bpf(1.60, {}, 'football');
+  f.mkP('A vs B', 'L', 'Test', 0.5, 'r', 60, 0, null, 'Bet365', ['form:+1.0%']);
+  assert.strictEqual(f.dropReasons.price_too_low, 1);
+  assert.strictEqual(f.picks.length, 0);
+});
+
+test('mkP bumpt drop-reason: ep_too_close_to_market bij ep ≤ ip + 0.03', () => {
+  const f = _bpf(1.60, {}, 'football');
+  // odd 1.90 → ip=0.526. Boost=0 → ep=ip=0.526. ep > MIN_EP (0.52) ✓ maar ep ≤ ip+0.03 → drop.
+  f.mkP('A vs B', 'L', 'Test', 1.90, 'r', 55, 0, null, 'Bet365', ['form:+1.0%']);
+  assert.strictEqual(f.dropReasons.ep_too_close_to_market, 1);
+});
+
+test('mkP bumpt drop-reason: no_signals bij sigCount === 0 (boost vereist)', () => {
+  const f = _bpf(1.60, {}, 'football');
+  // boost 0.05 zorgt dat ep > ip + 0.03 én k > 0.015 → no_signals is enige drop-reden
+  f.mkP('A vs B', 'L', 'Test', 2.10, 'r', 55, 0.05, null, 'Bet365', []);
+  assert.strictEqual(f.dropReasons.no_signals, 1);
+});
+
+test('formatDropReasons: ordent op count desc, joined met dot-separator', () => {
+  const s = _fmtDrops({ no_signals: 5, kelly_too_low: 12, price_too_low: 1 });
+  assert.strictEqual(s, 'kelly_too_low=12 · no_signals=5 · price_too_low=1');
+});
+
+test('formatDropReasons: returnt null als alle counts 0 of map leeg', () => {
+  assert.strictEqual(_fmtDrops({}), null);
+  assert.strictEqual(_fmtDrops({ no_signals: 0 }), null);
+  assert.strictEqual(_fmtDrops(null), null);
 });
 
 // v12.2.0: bookie-balance impact berekeningen
