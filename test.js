@@ -2570,7 +2570,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.20');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.21');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4127,6 +4127,81 @@ test('market-keys canonical: invalid input → null', () => {
   assert.strictEqual(normalizeMarketKey(null), null);
   assert.strictEqual(normalizeMarketKey(undefined), null);
   assert.strictEqual(normalizeMarketKey(123), null);
+});
+
+// v12.2.21 (R2 partial): bet ↔ pick_candidate join-laag
+const { findMatchingPickCandidate, outcomeBinaryFromBet, buildBrierRecords } = require('./lib/bets-pick-join');
+
+test('bets-pick-join: ML home match → fair_prob teruggegeven', () => {
+  const bet = { fixture_id: 100, markt: '🏠 Bayern wint', tip: 'Bet365', odds: 2.0 };
+  const cands = [
+    { fixture_id: 100, selection_key: 'home', bookmaker: 'Bet365', fair_prob: 0.55,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T18:00:00Z' } },
+    { fixture_id: 100, selection_key: 'away', bookmaker: 'Bet365', fair_prob: 0.45,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T18:00:00Z' } },
+  ];
+  const m = findMatchingPickCandidate(bet, cands);
+  assert(m, 'expected match');
+  assert.strictEqual(m.fair_prob, 0.55);
+});
+
+test('bets-pick-join: bookmaker case-insensitive match', () => {
+  const bet = { fixture_id: 100, markt: '🏠 Bayern wint', tip: 'BET365' };
+  const cands = [
+    { fixture_id: 100, selection_key: 'home', bookmaker: 'bet365', fair_prob: 0.6,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T18:00:00Z' } },
+  ];
+  const m = findMatchingPickCandidate(bet, cands);
+  assert(m && m.fair_prob === 0.6);
+});
+
+test('bets-pick-join: line mismatch → geen match', () => {
+  const bet = { fixture_id: 100, markt: '📈 Over 2.5', tip: 'Bet365' };
+  const cands = [
+    { fixture_id: 100, selection_key: 'over', bookmaker: 'Bet365', fair_prob: 0.5,
+      model_runs: { market_type: 'total', line: 3.5, captured_at: '2026-04-25T18:00:00Z' } },
+  ];
+  const m = findMatchingPickCandidate(bet, cands);
+  assert.strictEqual(m, null, 'O/U 2.5 bet mag niet matchen op O/U 3.5 candidate');
+});
+
+test('bets-pick-join: meest recente capture wint bij meerdere matches', () => {
+  const bet = { fixture_id: 100, markt: '🏠 Bayern wint', tip: 'Bet365' };
+  const cands = [
+    { fixture_id: 100, selection_key: 'home', bookmaker: 'Bet365', fair_prob: 0.50,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T08:00:00Z' } },
+    { fixture_id: 100, selection_key: 'home', bookmaker: 'Bet365', fair_prob: 0.55,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T18:00:00Z' } },
+  ];
+  const m = findMatchingPickCandidate(bet, cands);
+  assert.strictEqual(m.fair_prob, 0.55, 'latest capture moet winnen');
+});
+
+test('bets-pick-join: outcomeBinaryFromBet W=1, L=0, anders null', () => {
+  assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'W' }), 1);
+  assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'L' }), 0);
+  assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'Open' }), null);
+  assert.strictEqual(outcomeBinaryFromBet({ uitkomst: 'Push' }), null);
+  assert.strictEqual(outcomeBinaryFromBet(null), null);
+});
+
+test('bets-pick-join: buildBrierRecords splitst model vs market source', () => {
+  const bets = [
+    { bet_id: 1, fixture_id: 100, markt: '🏠 Bayern wint', tip: 'Bet365', odds: 2.0, uitkomst: 'W' },
+    { bet_id: 2, fixture_id: 200, markt: '✈️ Real wint', tip: 'Bet365', odds: 2.5, uitkomst: 'L' },
+  ];
+  const candByFx = new Map([[100, [
+    { fixture_id: 100, selection_key: 'home', bookmaker: 'Bet365', fair_prob: 0.55,
+      model_runs: { market_type: 'moneyline', line: null, captured_at: '2026-04-25T18:00:00Z' } },
+  ]]]);
+  const recs = buildBrierRecords(bets, candByFx);
+  assert.strictEqual(recs.length, 2);
+  assert.strictEqual(recs[0].source, 'model');
+  assert.strictEqual(recs[0].predicted_prob, 0.55);
+  assert.strictEqual(recs[0].outcome_binary, 1);
+  assert.strictEqual(recs[1].source, 'market');
+  assert.strictEqual(recs[1].predicted_prob, 0.4); // 1/2.5
+  assert.strictEqual(recs[1].outcome_binary, 0);
 });
 
 // v12.2.13 (R4 MVP): sharp-soft asymmetric edge detection.

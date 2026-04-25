@@ -1,6 +1,6 @@
 {
   "name": "edgepickr",
-  "version": "12.2.20",
+  "version": "12.2.21",
   "description": "EdgePickr · Private operator betting terminal",
   "main": "server.js",
   "scripts": {

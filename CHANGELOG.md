@@ -2,6 +2,30 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.21] - 2026-04-25
+
+**R2 partial + R3 diagnostic · bet ↔ pick join-laag + model-Brier endpoint**
+
+### Added
+
+- `lib/bets-pick-join.js` — pure helper. `findMatchingPickCandidate(bet, candidates)` matcht een settled bet op zijn pick_candidate via fixture_id × market_type × selection_key × line × bookmaker (case-insensitive). Bij meerdere matches wint laatste capture. `outcomeBinaryFromBet()` voor W/L → 0/1 conversie. `buildBrierRecords()` produceert (predicted_prob, outcome_binary) records voor walk-forward stats — model-source als join lukt, market-source als fallback (1/odds).
+- `GET /api/admin/v2/model-brier?days=90` — vergelijkt model Brier met market Brier op overlap-set. Output:
+  - per-source counts (model joined / market only / coverage %)
+  - per-source Brier + log-loss
+  - head-to-head op overlap met `interpretation: 'model_beats_market' | 'market_beats_model'`
+  - bij <30 join-matches: `insufficient_join_coverage` notice
+- 6 unit tests voor join-laag.
+
+### Why
+
+- Audit R2 vroeg om bet↔pick join om isotonic regression mogelijk te maken; audit R3 vroeg om Brier-meting om te beslissen of Bayesian dynamic team-strength implementatie zinvol is. Deze release ontsluit beide door één gedeelde join-laag te leveren.
+- De endpoint geeft directe data: zodra ≥30 settled bets joinen, weten we of het model écht waarde toevoegt boven markt. Het beslispunt voor R3 (Bayesian) wordt data-driven ipv aanname.
+
+### Notes
+
+- Isotonic regression-fit zelf nog niet gebouwd — wacht tot Bart de Brier-output bekijkt en beslist of additional calibration layer nodig is. Helpers staan klaar.
+- 721 → 727 tests passed.
+
 ## [12.2.20] - 2026-04-25
 
 **D4 · calibration-store Supabase als single source of truth**
