@@ -2,6 +2,21 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.2.6] - 2026-04-25
+
+**F2 · Atomic bookie-balance via Postgres RPC (race-condition fix)**
+
+### Fixed
+
+- **[P1]** `lib/bookie-balances.js` `applyDelta` deed read-calc-write zonder atomariteit. Twee concurrent W-outcomes op zelfde bookie konden de tweede update verliezen — direct geld-impact bij parallelle settlement.
+- Fix: `applyDelta` roept nu primair `bookie_balance_apply_delta(p_user_id, p_bookie, p_delta)` Postgres RPC aan (atomic UPSERT met `balance += delta`). Fallback naar legacy read-calc-write blijft alleen actief als RPC ontbreekt (pre-migratie schema).
+- Vereiste migratie: SQL-functie `bookie_balance_apply_delta` met `security definer` en `service_role grant execute`. Aparte SQL — niet in `docs/migrations-archive/` omdat het een function-create is, geen schema-mutatie.
+
+### Tests
+683 passed, 0 failed. 1 nieuwe test voor RPC-pad. 2 bestaande tests aangepast om RPC-mock te gebruiken (de fallback-test gebruikt expliciet `function does not exist`-error).
+
+---
+
 ## [12.2.5] - 2026-04-25
 
 **F7 · current-odds bookie-specifieke lookup**

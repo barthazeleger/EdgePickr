@@ -2531,7 +2531,7 @@ test('calibration store: save warmt cache en schrijft naar supabase', async () =
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.2.5');
+  assert.strictEqual(appMeta.APP_VERSION, '12.2.6');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4027,9 +4027,11 @@ test('bookie-balance normalizeBookieKey: lowercase + trim', () => {
   assert.strictEqual(normalizeBookieKey(null), '');
 });
 
-test('bookie-balance store: applyDelta autocreate + cumulative sum', async () => {
+test('bookie-balance store: applyDelta autocreate + cumulative sum (legacy fallback)', async () => {
   const balances = new Map();
   const mockSupabase = {
+    // RPC niet beschikbaar → triggert fallback naar read-calc-write tier-2
+    rpc: () => Promise.resolve({ data: null, error: { message: 'function does not exist' } }),
     from: (tbl) => ({
       select: () => ({
         eq: function(col, val) {
@@ -4058,23 +4060,41 @@ test('bookie-balance store: applyDelta autocreate + cumulative sum', async () =>
   assert.strictEqual(balances.get('u1|unibet'), 50);
 });
 
+// v12.2.6 (F2): atomic Postgres RPC pad — race-vrij, primaire flow.
+test('bookie-balance store: applyDelta gebruikt atomic RPC wanneer beschikbaar', async () => {
+  const balances = new Map();
+  const rpcCalls = [];
+  const mockSupabase = {
+    rpc: (fn, args) => {
+      rpcCalls.push({ fn, args });
+      const key = (args.p_user_id || 'null') + '|' + args.p_bookie;
+      const next = +(((balances.get(key) || 0) + Number(args.p_delta)).toFixed(2));
+      balances.set(key, next);
+      return Promise.resolve({ data: next, error: null });
+    },
+    from: () => { throw new Error('legacy fallback should NOT be reached when RPC works'); },
+  };
+  const store = createBookieBalanceStore({ supabase: mockSupabase });
+  const r1 = await store.applyDelta('u1', 'Bet365', 100);
+  const r2 = await store.applyDelta('u1', 'Bet365', -25);
+  assert.strictEqual(rpcCalls.length, 2);
+  assert.strictEqual(rpcCalls[0].fn, 'bookie_balance_apply_delta');
+  assert.strictEqual(rpcCalls[0].args.p_bookie, 'bet365');
+  assert.strictEqual(r1.balance, 100);
+  assert.strictEqual(r2.balance, 75);
+  assert.strictEqual(balances.get('u1|bet365'), 75);
+});
+
 test('bookie-balance store: onBetWritten past Open-impact toe (balance -= inzet)', async () => {
   const balances = new Map();
   const mockSupabase = {
-    from: () => ({
-      select: () => ({
-        eq: function(c, v) { if (c === 'bookie') this._b = v; if (c === 'user_id') this._u = v; return this; },
-        limit: function() {
-          const key = (this._u || 'null') + '|' + this._b;
-          const bal = balances.get(key);
-          return Promise.resolve({ data: bal != null ? [{ balance: bal }] : [], error: null });
-        },
-      }),
-      upsert: (row) => {
-        balances.set((row.user_id || 'null') + '|' + row.bookie, row.balance);
-        return Promise.resolve({ error: null });
-      },
-    }),
+    rpc: (fn, args) => {
+      const key = (args.p_user_id || 'null') + '|' + args.p_bookie;
+      const next = +(((balances.get(key) || 0) + Number(args.p_delta)).toFixed(2));
+      balances.set(key, next);
+      return Promise.resolve({ data: next, error: null });
+    },
+    from: () => { throw new Error('legacy fallback should not be reached'); },
   };
   const store = createBookieBalanceStore({ supabase: mockSupabase });
   balances.set('u1|bet365', 100);
@@ -4085,20 +4105,13 @@ test('bookie-balance store: onBetWritten past Open-impact toe (balance -= inzet)
 test('bookie-balance store: onBetOutcomeChanged Open→W past payout bij', async () => {
   const balances = new Map();
   const mockSupabase = {
-    from: () => ({
-      select: () => ({
-        eq: function(c, v) { if (c === 'bookie') this._b = v; if (c === 'user_id') this._u = v; return this; },
-        limit: function() {
-          const key = (this._u || 'null') + '|' + this._b;
-          const bal = balances.get(key);
-          return Promise.resolve({ data: bal != null ? [{ balance: bal }] : [], error: null });
-        },
-      }),
-      upsert: (row) => {
-        balances.set((row.user_id || 'null') + '|' + row.bookie, row.balance);
-        return Promise.resolve({ error: null });
-      },
-    }),
+    rpc: (fn, args) => {
+      const key = (args.p_user_id || 'null') + '|' + args.p_bookie;
+      const next = +(((balances.get(key) || 0) + Number(args.p_delta)).toFixed(2));
+      balances.set(key, next);
+      return Promise.resolve({ data: next, error: null });
+    },
+    from: () => { throw new Error('legacy fallback should not be reached'); },
   };
   const store = createBookieBalanceStore({ supabase: mockSupabase });
   balances.set('u1|bet365', 75); // na Open-bet van €25
