@@ -2906,7 +2906,7 @@ async function runBasketball(emit) {
             const marketProb = 1 / bH.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `home_${bH.point}`, line: bH.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
                 `Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -2919,7 +2919,7 @@ async function runBasketball(emit) {
             const marketProb = 1 / bA.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `away_${bA.point}`, line: bA.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
                 `Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -2985,7 +2985,7 @@ async function runBasketball(emit) {
             const marketProb = 1 / bH.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: `home_${bH.point}`, line: bH.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, bH.price,
                 `1st Half Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bH.edge * 0.18, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -2998,7 +2998,7 @@ async function runBasketball(emit) {
             const marketProb = 1 / bA.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: `away_${bA.point}`, line: bA.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, bA.price,
                 `1st Half Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bA.edge * 0.18, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -3661,8 +3661,8 @@ async function runHockey(emit) {
             const pUnder = 1 - pOver;
             const ovEdge = pOver * bestOv.price - 1;
             const unEdge = pUnder * bestUn.price - 1;
-            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total', selectionKey: `home_over_${line}`, line };
-            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total', selectionKey: `home_under_${line}`, line };
+            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total_home', selectionKey: 'over', line };
+            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total_home', selectionKey: 'under', line };
             if (ovEdge >= MIN_EDGE && bestOv.price >= 1.60 && bestOv.price <= 3.5) {
               mkP(`${hm} vs ${aw}`, league.name, `📈 ${hm} TT Over ${line}`, bestOv.price,
                 `Team Total Home: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaHome.toFixed(2)}) | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
@@ -3698,8 +3698,8 @@ async function runHockey(emit) {
             const pUnder = 1 - pOver;
             const ovEdge = pOver * bestOv.price - 1;
             const unEdge = pUnder * bestUn.price - 1;
-            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total', selectionKey: `away_over_${line}`, line };
-            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total', selectionKey: `away_under_${line}`, line };
+            const fxMetaTtH = { fixtureId: gameId, marketType: 'team_total_away', selectionKey: 'over', line };
+            const fxMetaTtU = { fixtureId: gameId, marketType: 'team_total_away', selectionKey: 'under', line };
             if (ovEdge >= MIN_EDGE && bestOv.price >= 1.60 && bestOv.price <= 3.5) {
               mkP(`${hm} vs ${aw}`, league.name, `📈 ${aw} TT Over ${line}`, bestOv.price,
                 `Team Total Away: ${(pOver*100).toFixed(1)}% over ${line} (λ=${lambdaAway.toFixed(2)}) | ${bestOv.bookie}: ${bestOv.price} | ${ko}`,
@@ -3802,7 +3802,7 @@ async function runHockey(emit) {
               const sanity = modelMarketSanityCheck(fpHomePuck, 1 / bH.price);
               if (sanity.agree) {
                 const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
-                const fxMeta = { fixtureId: gameId, marketType: 'puck_line', selectionKey: `home_${bH.point}`, line: bH.point };
+                const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
                 mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
                   `Puck Line | ${bH.bookie}: ${bH.price} · cover ${(fpHomePuck*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                   Math.round(fpHomePuck*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -3813,7 +3813,7 @@ async function runHockey(emit) {
               const sanity = modelMarketSanityCheck(fpAwayPuck, 1 / bA.price);
               if (sanity.agree) {
                 const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
-                const fxMeta = { fixtureId: gameId, marketType: 'puck_line', selectionKey: `away_${bA.point}`, line: bA.point };
+                const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
                 mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
                   `Puck Line | ${bA.bookie}: ${bA.price} · cover ${(fpAwayPuck*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                   Math.round(fpAwayPuck*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -3847,8 +3847,11 @@ async function runHockey(emit) {
               const p1UnderEdge = (1-p1OverP) * p1BestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
               const p1Gate = passesDivergence2Way(p1OverP, 1-p1OverP, p1BestOv.price, p1BestUn.price);
-              const fxMetaP1Ov = { fixtureId: gameId, marketType: 'period_total', selectionKey: 'over', line: p1Line };
-              const fxMetaP1Un = { fixtureId: gameId, marketType: 'period_total', selectionKey: 'under', line: p1Line };
+              // v12.4.1: parser deelt P1-totalen via parsed.halfTotals → snapshots.js
+              // schrijft als 'half_total'. fxMeta volgt die canonieke schrijfconventie
+              // zodat lookupTimeline daadwerkelijk match'et (was no-op met 'period_total').
+              const fxMetaP1Ov = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'over', line: p1Line };
+              const fxMetaP1Un = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'under', line: p1Line };
 
               if (p1OverEdge >= MIN_EDGE && p1BestOv.price >= 1.60 && p1BestOv.price <= 3.5 && p1Gate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🏒 P1 Over ${p1Line} goals`, p1BestOv.price,
@@ -3942,7 +3945,11 @@ async function runHockey(emit) {
       // v12.4.0: parity. team_total mismatch open: fxMeta='team_total' maar
       // odds_snapshots schrijft 'team_total_home'/'team_total_away' (snapshots.js:97).
       // Beide aliassen hier zodat lookup óf geen-match-passthrough doet, óf hit.
-      marketTypes: ['moneyline','threeway','total','team_total','team_total_home','team_total_away','puck_line','period_total','odd_even'],
+      // v12.4.1: aliassen verwijderd — fxMeta + snapshot-schrijfconventie zijn
+      // nu canoniek aligned. team_total_home/away (was team_total + alias),
+      // spread (was puck_line; flattenParsedOdds schrijft hockey spreads als
+      // 'spread'), half_total (was period_total; parsed.halfTotals).
+      marketTypes: ['moneyline','threeway','total','team_total_home','team_total_away','spread','half_total','odd_even'],
       kellyToUnits,
     });
     gatedHockeyPicks = res.picks;
@@ -4420,7 +4427,7 @@ async function runBaseball(emit) {
               const sanity = modelMarketSanityCheck(fpHomeSpread, 1 / bH.price);
               if (sanity.agree) {
                 const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
-                const fxMeta = { fixtureId: gameId, marketType: 'run_line', selectionKey: `home_${bH.point}`, line: bH.point };
+                const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
                 mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
                   `Run Line | ${bH.bookie}: ${bH.price} · cover ${(fpHomeSpread*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                   Math.round(fpHomeSpread*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -4431,7 +4438,7 @@ async function runBaseball(emit) {
               const sanity = modelMarketSanityCheck(fpAwaySpread, 1 / bA.price);
               if (sanity.agree) {
                 const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
-                const fxMeta = { fixtureId: gameId, marketType: 'run_line', selectionKey: `away_${bA.point}`, line: bA.point };
+                const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
                 mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
                   `Run Line | ${bA.bookie}: ${bA.price} · cover ${(fpAwaySpread*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                   Math.round(fpAwaySpread*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -4621,7 +4628,9 @@ async function runBaseball(emit) {
     const res = await applyPostScanGate(gatedMlbPicks, supabase, {
       preferredBookies, scanAnchorMs: Date.now(), activeUnitEur: getActiveUnitEur(),
       // v12.4.0: parity — total/run_line/nrfi/f5_* erbij.
-      marketTypes: ['moneyline','total','run_line','nrfi','f5_ml','f5_total'],
+      // v12.4.1: 'run_line' vervangen door 'spread' — flattenParsedOdds schrijft
+      // baseball spreads (incl. run-line) als market_type='spread'.
+      marketTypes: ['moneyline','total','spread','nrfi','f5_ml','f5_total'],
       kellyToUnits,
     });
     gatedMlbPicks = res.picks;
@@ -5024,7 +5033,7 @@ async function runFootballUS(emit) {
             const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
             if (sanity.agree) {
               const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
-              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `home_${bH.point}`, line: bH.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
                 `Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -5036,7 +5045,7 @@ async function runFootballUS(emit) {
             const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
             if (sanity.agree) {
               const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
-              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: `away_${bA.point}`, line: bA.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
                 `Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -5059,7 +5068,7 @@ async function runFootballUS(emit) {
             const marketProb = 1 / bH.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: `home_${bH.point}`, line: bH.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, bH.price,
                 `1st Half Spread | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bH.edge * 0.18, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -5072,7 +5081,7 @@ async function runFootballUS(emit) {
             const marketProb = 1 / bA.price;
             const sanity = modelMarketSanityCheck(fp, marketProb);
             if (sanity.agree) {
-              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: `away_${bA.point}`, line: bA.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, bA.price,
                 `1st Half Spread | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bA.edge * 0.18, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -5592,7 +5601,7 @@ async function runHandball(emit) {
             const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
             if (sanity.agree) {
               const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
-              const fxMeta = { fixtureId: gameId, marketType: 'handicap', selectionKey: `home_${bH.point}`, line: bH.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
                 `Handicap | ${bH.bookie}: ${bH.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bH.edge * 0.20, kickoffTime, bH.bookie, matchSignals, null, fxMeta);
@@ -5604,7 +5613,7 @@ async function runHandball(emit) {
             const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
             if (sanity.agree) {
               const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
-              const fxMeta = { fixtureId: gameId, marketType: 'handicap', selectionKey: `away_${bA.point}`, line: bA.point };
+              const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
                 `Handicap | ${bA.bookie}: ${bA.price} · cover ${(fp*100).toFixed(1)}%${sharedNotes} | ${ko}`,
                 Math.round(fp*100), bA.edge * 0.20, kickoffTime, bA.bookie, matchSignals, null, fxMeta);
@@ -5632,8 +5641,9 @@ async function runHandball(emit) {
     const before = gatedHbPicks.length;
     const res = await applyPostScanGate(gatedHbPicks, supabase, {
       preferredBookies, scanAnchorMs: Date.now(), activeUnitEur: getActiveUnitEur(),
-      // v12.4.0: parity — threeway/total/handicap erbij.
-      marketTypes: ['moneyline','threeway','total','handicap'],
+      // v12.4.1: 'handicap' vervangen door 'spread' — flattenParsedOdds schrijft
+      // handball spreads als market_type='spread'.
+      marketTypes: ['moneyline','threeway','total','spread'],
       kellyToUnits,
     });
     gatedHbPicks = res.picks;
@@ -6560,9 +6570,16 @@ async function runPrematch(emit) {
             const dnbHomeEdge = dnbHomeP * bestDnbH.price - 1;
             const dnbAwayEdge = dnbAwayP * bestDnbA.price - 1;
 
-            // v10.12.7 Phase A.1b: DNB = 2-way markt
-            const fxMetaDnbH = { fixtureId: fid, marketType: 'dnb', selectionKey: 'home', line: null };
-            const fxMetaDnbA = { fixtureId: fid, marketType: 'dnb', selectionKey: 'away', line: null };
+            // v12.4.1: DNB & DC worden NIET door flattenFootballBookies naar
+            // odds_snapshots geschreven (alleen h2h/totals/btts/spreads). Een
+            // fxMeta met market_type='dnb' of 'double_chance' produceert daarom
+            // een lookup die nooit een entry vindt → execution-gate doet
+            // sowieso niets nuttigs. Liever expliciet null dan stiekem broken-
+            // lookup-no-op. Wanneer flattenFootballBookies wordt uitgebreid om
+            // bet-id 8 (DC) en bet-id 12 incl. "Draw No Bet"-variant naar
+            // odds_snapshots te schrijven, kan dit terug naar fxMeta-objecten.
+            const fxMetaDnbH = null;
+            const fxMetaDnbA = null;
             // v11.1.2: sanity-gate vs devigged DNB-market. dnbHomeP/dnbAwayP is
             // model-derived (redistrib); vergelijk met bookmaker-implied.
             const dnbGate = passesDivergence2Way(dnbHomeP, dnbAwayP, bestDnbH.price, bestDnbA.price);
@@ -6633,9 +6650,12 @@ async function runPrematch(emit) {
           const sanDcHX = mfHX != null ? modelMarketSanityCheck(pHX, mfHX) : { agree: true };
           const sanDc12 = mf12 != null ? modelMarketSanityCheck(p12, mf12) : { agree: true };
           const sanDcX2 = mfX2 != null ? modelMarketSanityCheck(pX2, mfX2) : { agree: true };
-          const fxMetaDcHX = { fixtureId: fid, marketType: 'double_chance', selectionKey: '1x', line: null };
-          const fxMetaDc12 = { fixtureId: fid, marketType: 'double_chance', selectionKey: '12', line: null };
-          const fxMetaDcX2 = { fixtureId: fid, marketType: 'double_chance', selectionKey: 'x2', line: null };
+          // v12.4.1: zie DNB hierboven — flattenFootballBookies schrijft
+          // double_chance niet, dus fxMeta=null. Gate-no-op blijft hetzelfde
+          // gedrag als pre-v12.4.0 voor DC.
+          const fxMetaDcHX = null;
+          const fxMetaDc12 = null;
+          const fxMetaDcX2 = null;
 
           // v12.0.0 (Claude P1): Double Chance eigen calibratie-buckets.
           if (eHX >= MIN_EDGE && bestHX.price >= 1.15 && bestHX.price <= 2.50 && sanDcHX.agree)
@@ -6692,7 +6712,7 @@ async function runPrematch(emit) {
             const sanity = modelMarketSanityCheck(fpAh, 1 / bAhH.price);
             if (sanity.agree && bAhH.price <= 3.8) {
               const pt = bAhH.point > 0 ? `+${bAhH.point}` : `${bAhH.point}`;
-              const fxMeta = { fixtureId: fid, marketType: 'handicap', selectionKey: `home_${bAhH.point}`, line: bAhH.point };
+              const fxMeta = { fixtureId: fid, marketType: 'spread', selectionKey: 'home', line: bAhH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bAhH.price,
                 `Handicap | ${bAhH.bookie}: ${bAhH.price} · cover ${(fpAh*100).toFixed(1)}% | ${ko}`,
                 Math.round(fpAh*100), bAhH.edge * 0.20, kickoffTime, bAhH.bookie, matchSignals, refereeName, fxMeta);
@@ -6704,7 +6724,7 @@ async function runPrematch(emit) {
             const sanity = modelMarketSanityCheck(fpAh, 1 / bAhA.price);
             if (sanity.agree && bAhA.price <= 3.8) {
               const pt = bAhA.point > 0 ? `+${bAhA.point}` : `${bAhA.point}`;
-              const fxMeta = { fixtureId: fid, marketType: 'handicap', selectionKey: `away_${bAhA.point}`, line: bAhA.point };
+              const fxMeta = { fixtureId: fid, marketType: 'spread', selectionKey: 'away', line: bAhA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bAhA.price,
                 `Handicap | ${bAhA.bookie}: ${bAhA.price} · cover ${(fpAh*100).toFixed(1)}% | ${ko}`,
                 Math.round(fpAh*100), bAhA.edge * 0.20, kickoffTime, bAhA.bookie, matchSignals, refereeName, fxMeta);
@@ -6811,7 +6831,11 @@ async function runPrematch(emit) {
       activeUnitEur: getActiveUnitEur(),
       // v12.4.0: parity — DC + handicap erbij. Voorheen lekten die zonder
       // execution-gate door (geen overround/stale-line/playability check).
-      marketTypes: ['1x2','total','btts','dnb','double_chance','handicap'],
+      // v12.4.1: dnb + double_chance verwijderd (flattenFootballBookies schrijft
+      // ze niet naar odds_snapshots — fxMeta voor deze markten is nu null).
+      // 'handicap' vervangen door 'spread' (flattenFootballBookies mapt asian-
+      // handicap → market_type='spread').
+      marketTypes: ['1x2','total','btts','spread'],
       kellyToUnits,
     });
     allCandidates = res.picks;

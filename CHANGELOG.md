@@ -2,6 +2,57 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.4.1] - 2026-04-26
+
+**HOTFIX op v12.4.0 review-findings · execution-gate lookup-mismatch + paper-trading sweep skip-bug**
+
+Aanleiding: post-deploy review v12.4.0 toonde dat de "marktTypes-acceptlist uitbreiding" in alle 6 sport-scans alleen de DB-query-filter herstelde, niet de map-lookup. `lookupTimeline` keys op `${fixtureId}|${marketType}|${selectionKey}|${lineKey}` en die kwam niet overeen met wat `flattenParsedOdds` / `flattenFootballBookies` daadwerkelijk naar `odds_snapshots` schrijft. Resultaat: hockey TT/puck-line/period-total, baseball run-line, basketball+NFL spread/half-spread, handball+football handicap waren **stilletjes ongated** ondanks v12.4.0 CHANGELOG-claim. Eerste prod-scan had 0 picks dus geen materiële schade, maar voor v12.5.0 auto-promote zou dit anomale telemetry hebben gegeven.
+
+### Fixed (P1 · canonical fxMeta ↔ snapshots-schrijfconventie)
+
+- **server.js sport-scans** — `_fixtureMeta` per markt herschreven naar de schrijfvorm die `lib/snapshots.js` daadwerkelijk produceert:
+  - hockey TT (L3664/3665/3701/3702): `marketType: 'team_total_home'/'team_total_away'`, `selectionKey: 'over'/'under'` (was `team_total` / `home_over_X`).
+  - hockey puck-line (L3805/3816): `marketType: 'spread'`, `selectionKey: 'home'/'away'` (was `puck_line` / `home_-1.5`). `parsed.spreads` wordt door `flattenParsedOdds` als `spread` geschreven.
+  - hockey period-total (L3850/3851): `marketType: 'half_total'` (was `period_total`). `parsed.halfTotals` schrijft `half_total`.
+  - baseball run-line (L4423/4434): `marketType: 'spread'`, `selectionKey: 'home'/'away'` (was `run_line` / `home_-1.5`).
+  - basketball + NFL spread (L2909/2922 + L5030/5042) en half-spread (L2988/3001 + L5065/5078): `selectionKey: 'home'/'away'` (was `home_-3.5`); marketType al correct.
+  - handball handicap (L5595/5607): `marketType: 'spread'`, `selectionKey: 'home'/'away'`.
+  - football handicap (L6695/6707): `marketType: 'spread'`, `selectionKey: 'home'/'away'`. `flattenFootballBookies` mapt asian-handicap (api-football bet-id 12, exclusief DNB-variant) naar `spread`.
+  - football DNB + DC (L6564/6565 + L6636-6638): `fxMeta = null`. `flattenFootballBookies` schrijft deze markten **niet** naar `odds_snapshots` — een fxMeta produceerde alleen broken-lookup-no-op. Liever expliciet null. Wanneer `flattenFootballBookies` wordt uitgebreid met DNB/DC kan dit terug naar fxMeta-objecten.
+- **`marketTypes`-filter** in alle 6 `applyPostScanGate`-calls overeenkomstig opgeruimd (geen aliassen meer):
+  - football: `['1x2','total','btts','spread']` (was incl. `dnb`/`double_chance`/`handicap`).
+  - hockey: `['moneyline','threeway','total','team_total_home','team_total_away','spread','half_total','odd_even']` (was incl. `team_total`/`puck_line`/`period_total`).
+  - baseball: `['moneyline','total','spread','nrfi','f5_ml','f5_total']` (was incl. `run_line`).
+  - handball: `['moneyline','threeway','total','spread']` (was incl. `handicap`).
+  - basketball + NFL ongewijzigd (waren al canoniek aligned).
+
+### Fixed (P1 · paper-trading sweep silent row-skip)
+
+- **`lib/paper-trading.js` `runPaperTradingSweep`** — vervangen `range(from, from+batchSize-1)` met `from += batchSize` door composite `(kickoff_ms ASC, id ASC)` cursor. v12.4.0-versie skipte rijen omdat `.is('result', null)` settled rijen tussen pages weg-filterde, waarna `range(200, 399)` rijen [200, 200+K) met K=settled-count miste. Worst case 50% data-loss bij fully-settling batches. Cursor-paging op `(kickoff_ms, id)` heeft die race niet — settled rijen vallen uit het result-set, maar de cursor verschuift alleen naar rijen die we daadwerkelijk verwerkt hebben. Pure `kickoff_ms`-cursor zonder `id`-tiebreaker werkt niet voor kickoff_ms-ties (Saturday 15:00 EPL slate ~10 fixtures gedeelde kickoff). Functie is nog niet gewired aan een cron — maar fix landt voordat v12.5.0 hem activeert.
+
+### Hardened (P2)
+
+- **`lib/picks.js` `emitCandidate`** — try/catch wrapt nu `Promise.resolve(onCandidate(...)).catch(()=>{})`. v12.4.0 swallowt'e alleen sync throws; een async onCandidate (bijv. v12.5.0 paper-trading shadow-write hook) die rejects ontsnapte naar `unhandledRejection`. JSDoc-claim "Errors in de hook worden gevangen" geldt nu ook voor async.
+- **`lib/paper-trading.js` `buildMarktLabel`** — `double_chance`, `f5_ml`, `f5_total`, `half_spread` returnen nu `null`. `resolveBetOutcome` ondersteunt deze markten niet, dus settle gaf altijd `null` terug → row bleef eeuwig in `result IS NULL` pool en sweep blééf hem ophalen elke run. `markt_label IS NULL` wordt door sweep-query uitgesloten (`.not('markt_label', 'is', null)`) → schone unsettled-pool. Wanneer `resolveBetOutcome` later DC/F5 leert, doet één eenmalige backfill van `markt_label` op bestaande shadow-rows de inhaalslag.
+
+### Tests (775 → 777)
+
+- **G3 · `lineTimeline.lookupTimeline` ↔ `snapshots.flattenParsedOdds` roundtrip** — 14 (sport, marktType, selectionKey, line) tuples die in v12.4.1-server.js gebruikt worden cross-checken tegen een mock-supabase die de snapshot-rows teruggeeft die `flattenParsedOdds`/`flattenFootballBookies` zouden produceren. Test faalt als één enkele combo in de toekomst weer divergeert — vroeg-waarschuwing voor dezelfde klasse bug die v12.4.0 had.
+- **G4 · `runPaperTradingSweep` cursor-paging** — seed 5 unsettled rijen met `kickoff_ms`-ties + 2 latere; mock 3 settle-succesvol; assert `stats.checked === 5` (geen silent skip) + geen duplicate-IDs in pagination-trace. Vangt regressie naar offset-paging.
+
+### Verified
+
+- `npm test` 777/777 groen.
+- Smoke: `node -e "require('./server.js')"` boot zonder TDZ.
+- Geen schema-migration nodig: alle fixes zijn code-only, RLS + indices van v12.4.0 ongewijzigd.
+
+### Out-of-scope (deferred naar v12.5.0)
+
+- `market_scan_telemetry.sanity_passed` is nog steeds dead column (geen caller bumpt het). Niet kritiek voor v12.4.1 — telemetry is geen pick-flow. Schone fix volgt met de geplande sanity/divergence/pushed event-stages refactor.
+- `divergence_passed` semantisch "mkp_pushed" — zelfde refactor.
+- `top5_count` meet "post-gate per sport-scan" i.p.v. cross-sport finalPicks — wacht op de UPDATE-pass die in v12.4.0 al expliciet als deferred genoteerd staat.
+- BTTS divergence-gate doctrine-monitoring — eerste 2 weken prod-data afwachten; geen code-change tot signal.
+
 ## [12.4.0] - 2026-04-26
 
 **Markt-parity fix · paper-trading shadow infrastructure · per-scan markt-mix telemetrie**
@@ -66,6 +117,7 @@ Doctrine: signal-promotion-doctrine (shadow → CLV+Brier-bewijs → live promot
 - DC + handicap (football) en threeway/total/spread/half_*/team_total/period_total/odd_even/run_line/nrfi/f5_* (5 niet-football sporten) krijgen nu `applyExecutionGate` → kelly-demping op stale-line/overround/playability i.p.v. ongated door te glippen.
 - Per-scan log toont nu funnel-data per markt × sport — operator kan zien welke markten consistent picks produceren vs welke filters wegfilteren. Auto-promote-input voor v12.5+.
 - Smoke-test (`SUPABASE_URL=test … node -e "require('./lib/paper-trading'); require('./lib/market-telemetry'); ..."`) boot zonder TDZ.
+- (Correctie 26-04: testcount in deze entry is 775 (incl. v12.3.1 ZWSP-gates G1+G2), niet 773 zoals oorspronkelijk vermeld.)
 - Geen UI-prominentie voor shadow (puur data-laag).
 - Migratie idempotent + RLS afgevangen — bestaande pick_candidates-flow ongewijzigd.
 
@@ -92,7 +144,7 @@ Operator-rapport: "Sinds 12.3.0 doet de app het niet echt meer. Net nog wel (12.
 
 - Restore na injectie: `grep -cP '\x{200B}' index.html` → 0. 775/775 groen.
 
-## [12.3.0] - 2026-04-26
+## [12.3.0] - 2026-04-25
 
 **Fresh-eyes audit pass · 2 UX-fixes + 3 P2 hardenings + 3 test additions**
 

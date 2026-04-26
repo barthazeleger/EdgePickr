@@ -2933,7 +2933,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.4.0');
+  assert.strictEqual(appMeta.APP_VERSION, '12.4.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7636,6 +7636,164 @@ test('lineTimeline.lookupTimeline: O(1) key-match', () => {
   assert.ok(lineTimeline.lookupTimeline(map, { fixtureId: 1, marketType: 'totals', selectionKey: 'over', line: 2.5 }));
   assert.strictEqual(lineTimeline.lookupTimeline(map, { fixtureId: 1, marketType: 'h2h', selectionKey: 'away', line: null }), null);
   assert.strictEqual(lineTimeline.lookupTimeline(null, { fixtureId: 1, marketType: 'h2h', selectionKey: 'home', line: null }), null);
+});
+
+// v12.4.1 hotfix-regressie · fxMeta ↔ snapshots roundtrip.
+//
+// In v12.4.0 schreef server.js fxMeta met namen als 'team_total' /
+// 'puck_line' / 'period_total' / 'run_line' / 'handicap', terwijl
+// snapshots.flattenParsedOdds (en flattenFootballBookies) de canonical
+// names 'team_total_home/away' / 'spread' / 'half_total' schrijft. Plus
+// fxMeta selectionKey was vaak 'home_-1.5' terwijl snapshots
+// selection_key='home' + line=-1.5 schrijven. Lookup-mismatch ⇒ scan-gate
+// stilletjes no-op voor die markten. Deze test cross-checkt de canonical
+// (marketType, selectionKey, line)-tuples zoals nu in server.js gebruikt
+// tegen de map die snapshots → buildScanTimelineMap zou bouwen.
+test('v12.4.1 fxMeta ↔ snapshots: canonical keys vinden elkaar via lookupTimeline', async () => {
+  const snap = require('./lib/snapshots');
+  // Eén rij per markt-type met de v12.4.1 canonical schrijfvorm. Deze
+  // mockt wat flattenParsedOdds / flattenFootballBookies écht produceert.
+  const rows = [
+    // 1x2 / threeway / moneyline (basketball/hockey/baseball/NFL/handball)
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'moneyline', selection_key: 'home', line: null, odds: 1.85 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'threeway',  selection_key: 'home', line: null, odds: 2.10 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: '1x2',       selection_key: 'home', line: null, odds: 2.05 },
+    // total + half_total (basketball 1H + hockey period_total)
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'total',      selection_key: 'over',  line: 2.5, odds: 1.95 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'half_total', selection_key: 'over',  line: 1.5, odds: 1.92 },
+    // spread (basketball/NFL/handball/baseball-runline/hockey-puckline/football-handicap)
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'spread',      selection_key: 'home', line: -3.5, odds: 1.91 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'half_spread', selection_key: 'away', line:  2.5, odds: 1.88 },
+    // team_total (hockey)
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'team_total_home', selection_key: 'over',  line: 2.5, odds: 2.05 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'team_total_away', selection_key: 'under', line: 2.5, odds: 2.10 },
+    // baseball f5 + nrfi
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'f5_ml',    selection_key: 'home', line: null, odds: 2.20 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'f5_total', selection_key: 'over', line: 4.5,  odds: 1.93 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'nrfi',     selection_key: 'nrfi', line: null, odds: 2.30 },
+    // hockey odd_even, btts
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'odd_even', selection_key: 'odd', line: null, odds: 1.95 },
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'btts',     selection_key: 'yes', line: null, odds: 1.80 },
+    // dnb (parsed.dnb voor 5 niet-football sporten)
+    { fixture_id: 1, captured_at: '2026-04-26T08:00:00Z', bookmaker: 'bet365', market_type: 'dnb', selection_key: 'home', line: null, odds: 1.65 },
+  ];
+  const builder = {};
+  builder.select = () => builder; builder.in = () => builder; builder.order = () => builder;
+  builder.then = (resolve) => resolve({ data: rows, error: null });
+  const fakeSupabase = { from: () => builder };
+  const map = await lineTimeline.buildScanTimelineMap(fakeSupabase, {
+    fixtureIds: [1],
+    marketTypes: ['moneyline','threeway','1x2','total','half_total','spread','half_spread','team_total_home','team_total_away','f5_ml','f5_total','nrfi','odd_even','btts','dnb'],
+  });
+  // De fxMeta-vorm zoals server.js v12.4.1 hem produceert per sport-scan.
+  // Elk geval moet een entry vinden — anders is de gate stilletjes no-op.
+  const cases = [
+    // [label, fxMeta]
+    ['basketball/NFL/baseball/handball ML',           { fixtureId: 1, marketType: 'moneyline', selectionKey: 'home', line: null }],
+    ['hockey 60-min threeway',                         { fixtureId: 1, marketType: 'threeway',  selectionKey: 'home', line: null }],
+    ['football 1X2',                                   { fixtureId: 1, marketType: '1x2',       selectionKey: 'home', line: null }],
+    ['football/basketball/hockey/baseball O/U total',  { fixtureId: 1, marketType: 'total',     selectionKey: 'over', line: 2.5 }],
+    ['basketball/NFL 1H total + hockey period total',  { fixtureId: 1, marketType: 'half_total',selectionKey: 'over', line: 1.5 }],
+    ['basketball/NFL spread + hockey puck-line + baseball run-line + handball/football handicap', { fixtureId: 1, marketType: 'spread', selectionKey: 'home', line: -3.5 }],
+    ['basketball/NFL 1H spread',                        { fixtureId: 1, marketType: 'half_spread', selectionKey: 'away', line: 2.5 }],
+    ['hockey TT home over',                             { fixtureId: 1, marketType: 'team_total_home', selectionKey: 'over',  line: 2.5 }],
+    ['hockey TT away under',                            { fixtureId: 1, marketType: 'team_total_away', selectionKey: 'under', line: 2.5 }],
+    ['baseball F5 ML',                                  { fixtureId: 1, marketType: 'f5_ml',   selectionKey: 'home', line: null }],
+    ['baseball F5 total',                               { fixtureId: 1, marketType: 'f5_total',selectionKey: 'over', line: 4.5 }],
+    ['baseball NRFI',                                   { fixtureId: 1, marketType: 'nrfi',    selectionKey: 'nrfi', line: null }],
+    ['hockey odd/even',                                 { fixtureId: 1, marketType: 'odd_even',selectionKey: 'odd',  line: null }],
+    ['football BTTS',                                   { fixtureId: 1, marketType: 'btts',    selectionKey: 'yes',  line: null }],
+  ];
+  const misses = [];
+  for (const [label, fx] of cases) {
+    const entry = lineTimeline.lookupTimeline(map, fx);
+    if (!entry || !entry.timeline) misses.push(label);
+  }
+  assert.deepStrictEqual(misses, [], `lookup-mismatch in:\n${misses.join('\n')}`);
+});
+
+// v12.4.1 hotfix-regressie · paper-trading sweep cursor-paging.
+// v12.4.0 gebruikte offset-paging (`from += batchSize`); settled rijen
+// vallen uit door `.is('result', null)`, dus `range(200, 399)` skipte
+// rijen [200, 200+K) waar K nieuw-settled. v12.4.1 vervangt door
+// composite (kickoff_ms, id) cursor. Test seed 5 unsettled rijen, mock
+// settle voor 3 van de 5, en verifieer dat alle 5 in `stats.checked`
+// belanden — niet 3 met 2 silent-skipped.
+test('v12.4.1 runPaperTradingSweep: composite cursor paging skipt geen rijen na settles', async () => {
+  const { runPaperTradingSweep } = require('./lib/paper-trading');
+  // Seed 5 rijen, 3 met identieke kickoff_ms (tie), 2 met latere kickoff.
+  const allRows = [
+    { id: 101, fixture_id: 1, sport: 'football', markt_label: '🏠 A wint',  bookmaker: 'bet365', bookmaker_odds: 1.85, kickoff_ms: 1000, market_type: '1x2', _result: null },
+    { id: 102, fixture_id: 2, sport: 'football', markt_label: '🏠 B wint',  bookmaker: 'bet365', bookmaker_odds: 1.90, kickoff_ms: 1000, market_type: '1x2', _result: null },
+    { id: 103, fixture_id: 3, sport: 'football', markt_label: '🏠 C wint',  bookmaker: 'bet365', bookmaker_odds: 2.10, kickoff_ms: 1000, market_type: '1x2', _result: null },
+    { id: 104, fixture_id: 4, sport: 'football', markt_label: '🏠 D wint',  bookmaker: 'bet365', bookmaker_odds: 2.20, kickoff_ms: 2000, market_type: '1x2', _result: null },
+    { id: 105, fixture_id: 5, sport: 'football', markt_label: '🏠 E wint',  bookmaker: 'bet365', bookmaker_odds: 2.30, kickoff_ms: 2000, market_type: '1x2', _result: null },
+  ];
+  // Mock supabase met query-builder die de cursor-filters interpreteert.
+  // Genoeg om te bewijzen dat sweep alle 5 ids ziet.
+  const seenIds = [];
+  const updates = [];
+  function makeBuilder() {
+    const filters = { lt: {}, gt: {}, isNull: {}, notNull: {}, or: null };
+    const b = {};
+    b.select = () => b;
+    b.is     = (col, val) => { if (val === null) filters.isNull[col] = true; return b; };
+    b.not    = (col, op, val) => {
+      if (op === 'is' && val === null) filters.notNull[col] = true;
+      else if (col === 'id' && op === 'in') {} // niet gebruikt
+      return b;
+    };
+    b.lt     = (col, val) => { filters.lt[col] = val; return b; };
+    b.gt     = (col, val) => { filters.gt[col] = val; return b; };
+    b.eq     = (col, val) => { filters.eq = { [col]: val }; return b; };
+    b.order  = () => b;
+    b.limit  = (n) => { filters.limit = n; return b; };
+    b.range  = () => b;
+    b.or     = (expr) => { filters.or = expr; return b; };
+    b.update = (patch) => {
+      const x = {};
+      x.eq = (col, val) => {
+        const row = allRows.find(r => r[col] === val);
+        if (row) { Object.assign(row, patch); row._result = patch.result; }
+        updates.push({ patch, [col]: val });
+        return Promise.resolve({ data: null, error: null });
+      };
+      return x;
+    };
+    b.then = (resolve) => {
+      let pool = allRows.filter(r => r._result === null);
+      if (filters.lt.kickoff_ms != null) pool = pool.filter(r => r.kickoff_ms < filters.lt.kickoff_ms);
+      // Composite or-cursor: kickoff_ms.gt.X OR (kickoff_ms.eq.X AND id.gt.Y)
+      if (filters.or) {
+        const m = filters.or.match(/kickoff_ms\.gt\.(\d+),and\(kickoff_ms\.eq\.(\d+),id\.gt\.(\d+)\)/);
+        if (m) {
+          const [, gtKick, eqKick, gtId] = m.map(Number);
+          pool = pool.filter(r => r.kickoff_ms > gtKick || (r.kickoff_ms === eqKick && r.id > gtId));
+        }
+      }
+      pool.sort((a, b2) => (a.kickoff_ms - b2.kickoff_ms) || (a.id - b2.id));
+      if (filters.limit) pool = pool.slice(0, filters.limit);
+      seenIds.push(...pool.map(r => r.id));
+      resolve({ data: pool, error: null });
+    };
+    return b;
+  }
+  const supabase = { from: () => makeBuilder() };
+  // 3 van de 5 settle succesvol; 2 returnen geen ev (skipped, blijven unsettled).
+  const fetchEventByFixture = async (sport, fid) => {
+    if (fid === 1 || fid === 2 || fid === 3) {
+      return { home: 'A', away: 'B', scoreH: 2, scoreA: 1 }; // resolveBetOutcome zal "🏠 A wint" → W resolven mits home > away
+    }
+    return null; // skip
+  };
+  const stats = await runPaperTradingSweep({
+    supabase, fetchEventByFixture, cutoffMs: 9999, batchSize: 2,
+  });
+  // Alle 5 moeten gezien zijn (checked=5), niet stille-skip naar 3.
+  assert.strictEqual(stats.checked, 5, `expected 5 checked, got ${stats.checked} (seenIds=${seenIds.join(',')})`);
+  // Geen duplicate-processing: elke id maximaal 1× in seenIds.
+  const dupes = seenIds.filter((id, i) => seenIds.indexOf(id) !== i);
+  assert.deepStrictEqual(dupes, [], `unexpected duplicate ids in pagination: ${dupes.join(',')}`);
 });
 
 // ── EXECUTION GATE: applyExecutionGate (v10.10.10+, fundament 3 Bouwvolgorde) ─
