@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.11');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.12');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6939,11 +6939,12 @@ test('aggregator: getMergedH2H merged events van meerdere sources (dedup)', asyn
 test('aggregator: healthCheckAll roept alle sources aan', async () => {
   setSourceEnabled('sofascore', false);
   setSourceEnabled('fotmob', false);
+  setSourceEnabled('thesportsdb', false);
   setSourceEnabled('nba-stats', false);
   setSourceEnabled('nhl-api', false);
   setSourceEnabled('mlb-stats-ext', false);
   const r = await agg.healthCheckAll();
-  assert.strictEqual(r.length, 5);
+  assert.strictEqual(r.length, 6);  // v12.5.12: thesportsdb toegevoegd
   assert.ok(r.every(x => x.healthy === null || x.disabled === true || x.healthy === false));
 });
 

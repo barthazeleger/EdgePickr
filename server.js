@@ -5912,7 +5912,7 @@ async function runPrematch(emit) {
           dataAgg.healthCheckAll(),
           new Promise((_, rej) => setTimeout(() => rej(new Error('health_timeout_4s')), 4000)),
         ]);
-        const ftChecks = (checks || []).filter(c => c && (c.source === 'sofascore' || c.source === 'fotmob'));
+        const ftChecks = (checks || []).filter(c => c && (c.source === 'sofascore' || c.source === 'fotmob' || c.source === 'thesportsdb'));
         const formatted = ftChecks.map(c => {
           if (c.disabled) return `${c.source}=off`;
           if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
@@ -8096,7 +8096,7 @@ app.listen(PORT, () => {
       const scraperBase = require('./lib/integrations/scraper-base');
       const cs = loadCalib();
       const persisted = cs.scraper_sources || {};
-      const known = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+      const known = ['sofascore', 'fotmob', 'thesportsdb', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
       const masterOn = !!OPERATOR.scraping_enabled;
       const noPersistedTrue = !Object.values(persisted).some(v => v === true);
       let applied = 0;

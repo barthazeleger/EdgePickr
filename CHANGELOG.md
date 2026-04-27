@@ -2,6 +2,64 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.12] - 2026-04-26
+
+**TheSportsDB toegevoegd als h2h-bron · sofascore + fotmob bevestigd dood vanaf Render**
+
+Aanleiding: v12.5.11 toonde definitieve diagnose:
+- `sofascore=DEAD(http_403, http=403)` — Cloudflare/anti-bot blokkeert Render's IP-segment. Permanent.
+- `fotmob=DEAD(http_404, http=404)` — endpoint not found. Layout-/API-change sinds v10.9.0.
+
+Beide bestaande scrapers werken niet meer vanaf prod. Nieuwe bron nodig om de h2h-coverage-gap voor small leagues (Cyprus / Egypt / Peru / Allsvenskan / Süper Lig) deels te dekken.
+
+### Added
+
+- **`lib/integrations/sources/thesportsdb.js`** (NIEUW) — TheSportsDB adapter, ~180 regels volgens hetzelfde patroon als sofascore/fotmob (rate-limiter, TTL-cache, circuit-breaker via scraper-base). Endpoints:
+  - `searchteams.php?t={NAME}` — team-lookup (filtert op `strSport='Soccer'`)
+  - `lookuph2h.php?id={A}&id2={B}` — H2H events (premium-key required voor reliable response; free test-key kan beperkte data geven)
+  - `healthCheck()` met returnDetails (zelfde diagnose-pattern als v12.5.11)
+- **API-key configuratie** — env-var `TSDB_API_KEY` of fallback op gratis test-key `'3'`. Test-key heeft strikte rate-limits en sommige endpoints disabled; voor productie aanmaken via thesportsdb.com → patreon $5/maand voor v2 API access.
+- **`fetchH2HEvents`** parses TheSportsDB's `event[]`-array naar het canonical `{source, sport, date, homeTeam, awayTeam, homeScore, awayScore, totalGoals, btts}` shape dat data-aggregator's dedup + summary verwacht.
+
+### Changed
+
+- **`lib/integrations/data-aggregator.js`** — TheSportsDB toegevoegd aan `SPORT_SOURCES.football.h2h` array (na sofascore + fotmob). `getMergedH2H` aggregator-merge picks 'm automatisch op via de bestaande pattern. `healthCheckAll` uitgebreid van 5 → 6 sources.
+- **`lib/routes/admin-sources.js VALID_SOURCE_NAMES`** — `'thesportsdb'` toegevoegd.
+- **`server.js` boot-restore + `lib/routes/admin-controls.js` master-toggle propagatie** — known-sources lists uitgebreid van 5 → 6.
+- **`server.js runPrematch` scan-emit** — health-check filter toont nu ook `thesportsdb` naast sofascore + fotmob.
+
+### Tests (805 → 805, 1 update)
+
+- **aggregator: healthCheckAll roept alle sources aan** — assert `r.length === 6` (was 5) inclusief thesportsdb.
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Voor operator
+
+Geen actie nodig voor diagnose. Volgende scan toont:
+```
+🔌 Scraper-health: sofascore=DEAD(http_403, ...) · fotmob=DEAD(http_404, ...) · thesportsdb=ok(150ms)
+```
+
+Als `thesportsdb=ok` → bron werkt vanaf Render-IP-segment. h2h-data wordt automatisch ge-merged in `getMergedH2H` voor BTTS-rows.
+
+### Optionele upgrade — premium TheSportsDB key
+
+Free test-key `'3'` werkt voor health-check + searchteams maar `lookuph2h.php` is **patreon-only** (mogelijk altijd lege response op free-key). Voor echte h2h-throughput:
+
+1. Ga naar https://www.thesportsdb.com/free_sports_api → patreon link → $5/maand
+2. Krijg eigen API-key (privé, voor v2-endpoints)
+3. Voeg toe in Render dashboard: env-var `TSDB_API_KEY=<jouw_key>`
+4. Auto-deploy → scrapers gebruiken nieuwe key
+
+### Out-of-scope
+
+- **fotmob endpoint-fix** — endpoint `/api/searchapi/suggest` returnt 404. Mogelijk gewijzigd naar `/api/data/searchapi` of vergelijkbaar. Onderzoek + fix in latere versie als TheSportsDB onvoldoende blijkt.
+- **sofascore via paid scraping-proxy** — kan via Bright Data / ScraperAPI ($30+/maand) cloudflare omzeilen. Niet acuut.
+
 ## [12.5.11] - 2026-04-26
 
 **Verrijkte scraper-health diagnose · raw HTTP-status + safeFetch error-label**
