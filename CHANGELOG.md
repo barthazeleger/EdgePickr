@@ -2,6 +2,45 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.8] - 2026-04-26
+
+**Scraper-health zichtbaar in scan-log · diagnose zonder DevTools**
+
+Aanleiding: operator wilde scraper-health checken vanaf telefoon (geen DevTools beschikbaar). Plus de v12.5.7-fix wel deployed maar geen zichtbare verandering in `btts_thin_h2h` ratio — onduidelijk of scrapers actief returneren of silent fail.
+
+### Added
+
+- **`server.js runPrematch` scraper-health emit** — bij elke voetbal-scan-start (ná calibratie-banner) wordt `data-aggregator.healthCheckAll()` getriggerd voor sofascore + fotmob. Resultaat ge-emit als scan-log regel:
+  ```
+  🔌 Scraper-health: sofascore=ok(218ms) · fotmob=ok(305ms)
+  ```
+  Of bij failure:
+  ```
+  🔌 Scraper-health: sofascore=DEAD(403_or_blocked, breaker=open) · fotmob=DEAD(null_response, breaker=closed)
+  ```
+- Health-check is gated op `OPERATOR.scraping_enabled` — geen overhead als scraping uit staat.
+- Fail-safe: try/catch swallowt errors, scan blijft draaien.
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Diagnose-pad
+
+Operator kan nu vanaf telefoon de scan-log lezen en direct zien:
+1. Of scrapers daadwerkelijk responsive zijn (`ok(Xms)`).
+2. Of breaker open staat (`DEAD ... breaker=open` = 5+ recente failures, cooldown actief).
+3. Wat de fail-reason is (`null_response` = empty body, `403` = host-blocked, `timeout`, etc.).
+
+Als beide `DEAD`: scrapers worden door externe service gerejected (cloudflare-block, layout-change). Volgende stap: alternatieve API-sources.
+
+### Out-of-scope (deferred)
+
+- Health-status persisteren naar Supabase voor trend-analyse over tijd.
+- Auto-retry op `breaker=open` tijdens scan (nu: scan accepteert open breaker en valt terug op api-football alleen).
+- Inbox-alert bij plotseling DEAD (dwz alle laatste 5 scans waren `ok` en nu `DEAD`).
+
 ## [12.5.7] - 2026-04-26
 
 **Scrapers werkten niet · master `OPERATOR.scraping_enabled` propageert nu naar per-source toggles**

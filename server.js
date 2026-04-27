@@ -5901,6 +5901,28 @@ async function runPrematch(emit) {
   }
   emit({ log: `🧠 Calibratie: thuis×${mm('home').toFixed(2)} uit×${mm('away').toFixed(2)} draw×${mm('draw').toFixed(2)} over×${mm('over').toFixed(2)}` });
 
+  // v12.5.8: scraper-health one-shot per voetbal-scan. Resultaat wordt
+  // ge-emit in de scan-log zodat operator (zonder DevTools) ziet of de
+  // externe data-bronnen daadwerkelijk responsive zijn. Voorkomt silent-
+  // skip-syndroom uit pre-v12.5.7 (master aan, per-source uit) én ontdekt
+  // later cloudflare-blocks of layout-changes. Fail-safe — error in
+  // healthCheck mag scan nooit breken.
+  if (OPERATOR.scraping_enabled) {
+    try {
+      const dataAgg = require('./lib/integrations/data-aggregator');
+      const checks = await dataAgg.healthCheckAll();
+      const ftChecks = checks.filter(c => c && (c.source === 'sofascore' || c.source === 'fotmob'));
+      const formatted = ftChecks.map(c => {
+        if (c.disabled) return `${c.source}=off`;
+        if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
+        const breakerState = c.breaker?.state || 'unknown';
+        const reason = c.breaker?.lastError || c.error || 'fail';
+        return `${c.source}=DEAD(${reason}, breaker=${breakerState})`;
+      }).join(' · ');
+      if (formatted) emit({ log: `🔌 Scraper-health: ${formatted}` });
+    } catch (e) { /* swallow — scan flow ongewijzigd */ }
+  }
+
   // v12.5.4: pre-mkP funnel-counters. Telt per fixture op WELKE markt-typen
   // pre-mkP weggevallen zijn — diagnose voor "veel fixtures bereiken mkP niet"
   // (zie operator-rapport: 35 voetbal-fixtures → 7 mkP-calls). Markt-mix
