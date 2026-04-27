@@ -2,6 +2,35 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.13] - 2026-04-26
+
+**Double Chance parsing-fix · convertAfOdds produceert nu `double_chance` market-key**
+
+Aanleiding: pre-mkP funnel toonde `dc_no_market = 100%` op alle scans. Diagnose: `lib/odds-parser.js convertAfOdds` parseerde alleen bet-id 1/5/8/12 (h2h/totals/btts/asian-handicap) — geen Double Chance. Server.js DC-block (regel ~6843) zoekt op `markets.find(m => m.key.includes('double_chance'))` op de **post-convertAfOdds** bookies, maar die key bestond nooit in de output → DC-block kreeg altijd 0 bookies, ongeacht of api-sports het wel of niet leverde. Stille code-bug.
+
+### Fixed
+
+- **`lib/odds-parser.js convertAfOdds`** — DC-parsing toegevoegd. Zoekt op `bet.name.includes('double chance')` (case-insensitive) i.p.v. specifieke bet-id (api-sports varieert tussen 12/14/anders per versie). Mapt values naar canonical `'1x'`/`'12'`/`'x2'` keys, accepteert ook `'Home/Draw'`/`'Home/Away'`/`'Draw/Away'`-naamstijlen die sommige bookies gebruiken. Output-shape `{ key: 'double_chance', outcomes: [{name, price}] }` matcht exact wat server.js DC-block + `lib/snapshots.js flattenFootballBookies` verwacht.
+
+### Tests (805 → 807)
+
+- **convertAfOdds (v12.5.13) parses Double Chance market** — Bet365 met bet-id 12 + name 'Double Chance' + values `'1X'/'12'/'X2'` → 3 outcomes met juiste prijs-mapping.
+- **convertAfOdds (v12.5.13) DC accepteert ook "Home/Draw"-naamstijl** — Pinnacle met bet-id 14 + values `'Home/Draw'/'Home/Away'/'Draw/Away'` → 3 outcomes correct ge-mapt naar canonical keys.
+
+### Verified
+
+- `npm test` 807/807 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Voor operator
+
+Volgende scan-output zou `dc_no_market` lager moeten zien als api-sports DC daadwerkelijk levert voor de fixtures. Belangrijke nuance: api-sports' DC-coverage voor kleine leagues (Cyprus / Egyptian / Liga Peru) is mogelijk thin — fix maakt parser werkbaar maar gegeven data blijft markt-realiteit.
+
+### Niet gefixt (markt-realiteit)
+
+- **DNB `dnb_no_market = 100%`** — server.js DNB-block leest direct uit raw `filteredBks` (`b.id === 12 && name.includes('draw no bet')`). Geen parser-bug; gewoon api-sports levert geen DNB voor jouw competitie-mix. Niet code-fixable zonder andere odds-bron.
+- **Handicap `handicap_no_devig = 100%`** — vereist `>=3 bookies` op hoofdlijn voor per-point devig. api-sports levert vaak 1-2 bookies voor kleine leagues. Drempel-verlaging mogelijk maar trade-off met betrouwbaarheid (per-point devig op n=2 is brittle). Niet aanbevolen zonder breder odds-pool.
+
 ## [12.5.12] - 2026-04-26
 
 **TheSportsDB toegevoegd als h2h-bron · sofascore + fotmob bevestigd dood vanaf Render**

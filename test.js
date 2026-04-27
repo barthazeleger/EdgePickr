@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.12');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.13');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6138,6 +6138,55 @@ test('odds-parser: convertAfOdds zet api-football payload om naar interne markte
   assert.ok(bk.markets.find(m => m.key === 'totals'));
   assert.ok(bk.markets.find(m => m.key === 'btts'));
   assert.ok(bk.markets.find(m => m.key === 'spreads'));
+});
+
+test('odds-parser: convertAfOdds (v12.5.13) parses Double Chance market', () => {
+  // v12.5.13: pre-fix produceerde convertAfOdds geen 'double_chance' market-key,
+  // ondanks dat server.js DC-block daarop matcht (regel 6843). Pre-mkP funnel
+  // toonde dc_no_market = 100% van fixtures. Fix: zoek bet op naam-string
+  // 'double chance' i.p.v. specifieke bet-id (varieert per api-sports versie).
+  const rows = convertAfOdds([{
+    name: 'Bet365',
+    bets: [
+      { id: 1, values: [{ value: 'Home', odd: '2.10' }, { value: 'Away', odd: '3.20' }, { value: 'Draw', odd: '3.40' }] },
+      { id: 12, name: 'Double Chance', values: [
+        { value: '1X', odd: '1.30' },
+        { value: '12', odd: '1.45' },
+        { value: 'X2', odd: '1.55' },
+      ]},
+    ],
+  }], 'Ajax', 'PSV');
+  const dc = rows[0].markets.find(m => m.key === 'double_chance');
+  assert.ok(dc, 'double_chance market moet aanwezig zijn');
+  assert.strictEqual(dc.outcomes.length, 3);
+  const o1x = dc.outcomes.find(o => o.name === '1x');
+  const o12 = dc.outcomes.find(o => o.name === '12');
+  const ox2 = dc.outcomes.find(o => o.name === 'x2');
+  assert.ok(o1x && Math.abs(o1x.price - 1.30) < 0.001);
+  assert.ok(o12 && Math.abs(o12.price - 1.45) < 0.001);
+  assert.ok(ox2 && Math.abs(ox2.price - 1.55) < 0.001);
+});
+
+test('odds-parser: convertAfOdds (v12.5.13) DC accepteert ook "Home/Draw"-naamstijl', () => {
+  // Sommige bookies returnen 'Home/Draw' i.p.v. '1X'. Normalisatie moet beide
+  // aankunnen — server.js DC-block doet zelfde mapping.
+  const rows = convertAfOdds([{
+    name: 'Pinnacle',
+    bets: [
+      { id: 1, values: [{ value: 'Home', odd: '2.0' }, { value: 'Away', odd: '4.0' }, { value: 'Draw', odd: '3.5' }] },
+      { id: 14, name: 'Double Chance', values: [
+        { value: 'Home/Draw', odd: '1.28' },
+        { value: 'Home/Away', odd: '1.40' },
+        { value: 'Draw/Away', odd: '1.60' },
+      ]},
+    ],
+  }], 'Real', 'Barca');
+  const dc = rows[0].markets.find(m => m.key === 'double_chance');
+  assert.ok(dc);
+  assert.strictEqual(dc.outcomes.length, 3);
+  assert.ok(dc.outcomes.find(o => o.name === '1x'));
+  assert.ok(dc.outcomes.find(o => o.name === '12'));
+  assert.ok(dc.outcomes.find(o => o.name === 'x2'));
 });
 
 test('modal recUnits: bij odds-daling daalt aanbevolen units', () => {
