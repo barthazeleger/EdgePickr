@@ -2,6 +2,26 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.9] - 2026-04-26
+
+**HOTFIX op v12.5.8 · scraper-health fire-and-forget i.p.v. blocking await**
+
+Aanleiding: operator-rapport "output wordt niet meer getoond". Diagnose: v12.5.8 deed `await dataAgg.healthCheckAll()` ná de calibratie-banner emit. Bij trage of onresponsive sofascore/fotmob (timeout in `safeFetch` is 7000ms) blokkeerde dit de scan-flow vóór de eerste league-loop. SSE-stream-clients zagen banner + calibratie, dan stilstand tot 7s, dan rest van de scan — bij flaky verbinding kon dat als "geen output meer" presenteren.
+
+### Fixed
+
+- **`server.js runPrematch` scraper-health niet meer blocking** — wrapped in IIFE-async `(async () => { ... })()`. Scan-flow gaat direct door naar de league-loop. Health-check emit'eert pas wanneer Promise.race resolved (binnen 4s timeout) of rejected. Geen invloed op scan-duration.
+- **Promise.race met 4s timeout** — explicit timeout zodat health-check nooit oneindig hangt op slow source. Bij timeout: `🔌 Scraper-health: health_timeout_4s` in scan-log (rest van scan ongestoord).
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Voor operator
+
+Volgende scan zou normaal moeten lopen — eerste regels (banner, calibratie, league-iteratie) komen direct, scraper-health-regel verschijnt later in de log (binnen 4s). Geen blocking meer.
+
 ## [12.5.8] - 2026-04-26
 
 **Scraper-health zichtbaar in scan-log · diagnose zonder DevTools**
