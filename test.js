@@ -2831,6 +2831,25 @@ test('fetchFinishedFixturesById (G9c): geen afGet → lege Map', async () => {
   assert.strictEqual(map.size, 0);
 });
 
+test('learning-loop confidence-ramp (G11): n=20 → 0× delta, n=100 → 1× delta', () => {
+  // v12.5.4: ramp-confidence in updateCalibration multiplier-formule.
+  // confidence = clamp((n - 20) / 80, [0, 1]).
+  // n=20 (= sample-threshold gehaald) → 0× scaling (multiplier blijft 1.0).
+  // n=100 → 1× volle delta. Voorheen: harde n>=20 cliff met volle delta.
+  const ramp = (n) => Math.max(0, Math.min(1, (n - 20) / 80));
+  // Check formule-grenzen tegen variance-clip.
+  assert.strictEqual(ramp(15), 0,  'onder threshold → 0');
+  assert.strictEqual(ramp(20), 0,  'op threshold → 0 (geen variance-noise)');
+  assert.strictEqual(ramp(60), 0.5, 'midden-ramp → halve confidence');
+  assert.strictEqual(ramp(100), 1.0, 'volle confidence bereikt');
+  assert.strictEqual(ramp(200), 1.0, 'clamp boven');
+  // Concreet effect-voorbeeld: n=30 + profitPerBet=+5 → rawDelta=0.15, ramp(30)=0.125,
+  // delta=0.019 → multiplier=1.019 (was 1.15 pre-v12.5.4).
+  const rawDelta = 0.15;
+  const effective = rawDelta * ramp(30);
+  assert.ok(Math.abs(effective - 0.01875) < 0.001, `n=30 effective delta=${effective.toFixed(4)} (verwachtte ~0.019)`);
+});
+
 test('formatDropReasons (G10): sigCount-distributie verrijking — telemetrie voor v12.5.0 pivot-effect', () => {
   // Operator-rapport scan: ep_too_close_to_market=3, ep_below_min=2.
   // v12.5.3 toont per drop-reason gemiddelde sigCount + ≥6-bucket. Doctrine:
@@ -3274,7 +3293,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.3');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

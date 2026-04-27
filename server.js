@@ -5894,6 +5894,21 @@ async function runPrematch(emit) {
   }
   emit({ log: `🧠 Calibratie: thuis×${mm('home').toFixed(2)} uit×${mm('away').toFixed(2)} draw×${mm('draw').toFixed(2)} over×${mm('over').toFixed(2)}` });
 
+  // v12.5.4: pre-mkP funnel-counters. Telt per fixture op WELKE markt-typen
+  // pre-mkP weggevallen zijn — diagnose voor "veel fixtures bereiken mkP niet"
+  // (zie operator-rapport: 35 voetbal-fixtures → 7 mkP-calls). Markt-mix
+  // telemetrie laat alleen *gegenereerde* mkP-calls zien; deze counter laat
+  // zien wat *vóór* mkP sneuvelt.
+  const _premkpFunnel = {
+    total_fixtures: 0,
+    btts_no_market: 0,        // api-football lever geen BTTS-quote
+    btts_thin_h2h: 0,         // BTTS markt aanwezig maar h2hN < 5
+    dnb_no_market: 0,         // geen DNB in api-football payload
+    dc_no_market: 0,          // geen Double Chance in payload
+    handicap_no_devig: 0,     // hasDevig fail of <3 bookies bij main-line
+    sanity_block_1x2: 0,      // alle 3 sides modelMarketSanityCheck = disagree
+  };
+
   // v10.12.8 Phase A.1b: kickoff map wordt verderop in het scan-gate
   // post-process gebruikt. Bouwen zodra fixtures pre-fetched zijn.
   const _scanKickoffByFixture = new Map();
@@ -5952,6 +5967,7 @@ async function runPrematch(emit) {
         const hmId = f.teams?.home?.id;
         const awId = f.teams?.away?.id;
         if (!fid || !hm || !aw) continue;
+        _premkpFunnel.total_fixtures++;  // v12.5.4 funnel
 
         const kickoffMs  = new Date(f.fixture?.date).getTime();
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
@@ -6421,6 +6437,8 @@ async function runPrematch(emit) {
         const sanityHomeFb = fp && typeof fp.home === 'number' ? modelMarketSanityCheck(adjHome2, fp.home) : { agree: true };
         const sanityAwayFb = fp && typeof fp.away === 'number' ? modelMarketSanityCheck(adjAway2, fp.away) : { agree: true };
         const sanityDrawFb = fp && typeof fp.draw === 'number' ? modelMarketSanityCheck(adjDraw || 0, fp.draw) : { agree: true };
+        // v12.5.4 funnel: alle 3 sides disagree → 1x2 markt-mix volledig blocked.
+        if (!sanityHomeFb.agree && !sanityAwayFb.agree && !sanityDrawFb.agree) _premkpFunnel.sanity_block_1x2++;
 
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && bA.price > BLOWOUT_OPP_MAX && sanityHomeFb.agree)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price, reasonH, Math.round(adjHome2*100), homeEdge * 0.28 * (cm.home?.multiplier ?? 1), kickoffTime, bH.bookie, matchSignals, refereeName, fxMetaH);
@@ -6552,6 +6570,7 @@ async function runPrematch(emit) {
             return { name: fb.name, values: bttsM.values || [] };
           }).filter(Boolean);
 
+          if (bttsBk.length === 0) _premkpFunnel.btts_no_market++;
           if (bttsBk.length > 0) {
             // v10.12.20 fix: pick-odds MUST come uit operator's preferred bookies
             // (execution truth). filteredBks bevat ook sharp-refs (Pinnacle,
@@ -6671,6 +6690,7 @@ async function runPrematch(emit) {
               // h2hN=2 @ 74% model vs 42% market). Houden — addresseert input-
               // kwaliteit, niet output-divergentie.
               const bttsDataOk = h2hN >= 5;
+              if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;  // v12.5.4 funnel
 
               // v12.4.0: parity met O/U/DNB sanity-gate. Operator-rapport
               // 2026-04-26: BTTS domineerde top-5 omdat signaal-stack
@@ -6720,6 +6740,7 @@ async function runPrematch(emit) {
             return { name: fb.name, values: dnbM.values || [] };
           }).filter(Boolean);
 
+          if (dnbBk.length === 0) _premkpFunnel.dnb_no_market++;
           if (dnbBk.length > 0) {
             // v10.12.22 fix: DNB pick-odds moeten uit operator's preferred
             // bookies komen, niet uit de wider consensus-pool (Pinnacle etc).
@@ -6786,6 +6807,7 @@ async function runPrematch(emit) {
           return { name: fb.title || fb.name, values: dcM.outcomes || [] };
         }).filter(Boolean);
 
+        if (dcBookies.length === 0) _premkpFunnel.dc_no_market++;
         if (dcBookies.length > 0 && adjHome2 && adjAway2) {
           const pHX = adjHome2 + (adjDraw || 0);
           const p12 = adjHome2 + adjAway2;
@@ -6886,6 +6908,10 @@ async function runPrematch(emit) {
           }
           const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(ahHomeSpr, ahAwaySpr, fp.home * 0.65, fp.away * 0.65);
           const bAhH = bestSpreadPick(ahHomeSpr, homeFn, MIN_EDGE + 0.01);
+          // v12.5.4 funnel: tel als HEADER side van handicap dropt op
+          // hasDevig of bookieCountAt — dat dekt de meest voorkomende
+          // "no_devig" oorzaak (te dunne bookie-pool voor de hoofdlijn).
+          if (!bAhH || !hasDevig(bAhH.point) || bookieCountAt(bAhH.point) < 3) _premkpFunnel.handicap_no_devig++;
           if (bAhH && hasDevig(bAhH.point) && bookieCountAt(bAhH.point) >= 3) {
             const fpAh = homeFn(bAhH.point);
             const sanity = modelMarketSanityCheck(fpAh, 1 / bAhH.price);
@@ -6925,6 +6951,18 @@ async function runPrematch(emit) {
   // v12.2.3: drop-reasons telemetrie. Voetbal heeft hoogste volume, dus belangrijkste signaal.
   const _dropFmtVoetbal = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtVoetbal) emit({ log: `⚽ Drops: ${_dropFmtVoetbal}` });
+  // v12.5.4: pre-mkP funnel-telemetrie. Toont per markt-categorie hoe vaak
+  // we vóór mkP al droppen — diagnose waarom 80% van fixtures geen mkP-call
+  // bereikt. Hoofdbottleneck identificeert waar gates evt. te conservatief
+  // zijn voor de huidige bookies-set / data-coverage.
+  if (_premkpFunnel.total_fixtures > 0) {
+    const fnlParts = Object.entries(_premkpFunnel)
+      .filter(([k, v]) => k !== 'total_fixtures' && v > 0)
+      .map(([k, v]) => `${k}=${v}`);
+    if (fnlParts.length) {
+      emit({ log: `⚽ Pre-mkP funnel (${_premkpFunnel.total_fixtures} fixtures): ${fnlParts.join(' · ')}` });
+    }
+  }
 
   emit({ log: `📋 Totaal ${picks.length} kandidaten | Combi's berekenen...` });
 

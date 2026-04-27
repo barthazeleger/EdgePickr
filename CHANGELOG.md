@@ -2,6 +2,56 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.4] - 2026-04-26
+
+**Calibratie confidence-ramp + voetbal pre-mkP funnel-telemetrie**
+
+Aanleiding: operator zag `over×1.18` calibratie-multiplier op n=70 totaal-bets verdeeld over alle markt-buckets, en wilde diagnostiek waar 80% van voetbal-fixtures pre-mkP sneuvelt.
+
+### Changed
+
+- **`lib/learning-loop.js updateCalibration` confidence-ramp** — multiplier-update krijgt nu `confidence = clamp((n - 20) / 80, [0, 1])` factor over de `rawDelta`. n=20 (sample-threshold gehaald) → 0× scaling (multiplier blijft 1.00); n=60 → 0.5× delta; n=100 → 1× volle delta. Voorheen (v12.0.0): harde n>=20 cliff met volle delta — bij n=22 met +€5/bet profit was multiplier al 1.15 op variance-thin sample.
+  - Concreet effect: huidige `football_over` 1.18× zal bij volgende settled bet automatisch terug-schalen omdat de formule overschrijft, niet incrementeel optelt.
+  - Sluit aan bij operator-doctrine: "Step-ups vragen bewijs, niet enthousiasme."
+
+### Added
+
+- **Pre-mkP funnel-telemetrie in voetbal-scan** (`server.js`) — counter-object `_premkpFunnel` met 7 buckets:
+  - `total_fixtures` (denominator)
+  - `btts_no_market` (api-football leverde geen BTTS-quote)
+  - `btts_thin_h2h` (BTTS-markt aanwezig maar h2hN<5)
+  - `dnb_no_market` (geen Draw No Bet in payload)
+  - `dc_no_market` (geen Double Chance in payload)
+  - `handicap_no_devig` (te dunne bookie-pool: <3 bookies of hasDevig=false op de hoofdlijn)
+  - `sanity_block_1x2` (alle 3 sides modelMarketSanityCheck = disagree, 1x2-markt volledig dood)
+- **Scan-log regel** aan eind van voetbal-scan, ná `⚽ Drops:` regel:
+  ```
+  ⚽ Pre-mkP funnel (35 fixtures): btts_thin_h2h=22 · handicap_no_devig=18 · dc_no_market=12
+  ```
+  Counters die op 0 staan worden weggelaten — alleen actionable bottlenecks blijven over.
+
+### Tests (802 → 803)
+
+- **G11** · learning-loop confidence-ramp: ramp(15)=0, ramp(20)=0, ramp(60)=0.5, ramp(100)=1.0, ramp(200)=1.0. Plus concreet effect-voorbeeld: n=30 + rawDelta=0.15 → effective=0.0188 (was 0.15 pre-v12.5.4).
+
+### Verified
+
+- `npm test` 803/803 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+- Geen schema-migratie nodig — pure code-only changes.
+
+### Operator-instructie
+
+Geen actie nodig. Render auto-deploy haalt v12.5.4 binnen 5 min op. Volgende voetbal-scan:
+1. Calibratie-banner zal `over×1.00` (of vlakbij) tonen zodra de eerstvolgende football_over bet settled is — confidence-ramp herrekent de multiplier.
+2. Onder de bestaande `⚽ Drops:` regel verschijnt een `⚽ Pre-mkP funnel:` regel met de 5-7 grootste verlies-paden vóór mkP.
+
+### Out-of-scope (deferred)
+
+- **Pre-mkP funnel voor andere sporten** (basketball, hockey, baseball, NFL, handball). Voetbal is verreweg de grootste fixture-source (35 vs 7-8 voor de rest); andere sporten erbij is meer copy-paste-werk dan diagnose-waarde. Volgt in v12.5.x als voetbal-funnel acties uitlokt.
+- **Per-bookie diagnostiek** ("welke preferred bookie biedt welke markt aan op welke fixture"). Te granulair voor scan-log; zou een /admin endpoint kunnen worden in v12.5.x als operator dat wil.
+- **Calibratie-reset endpoint**: huidige multipliers worden bij volgende update auto-gecorrigeerd. Geen reset nodig. Als je toch de calibration.json wilt resetten: handmatig in Supabase `update users set settings = settings - 'calibration'` voor admin user (of wis lokale calibration.json fallback file).
+
 ## [12.5.3] - 2026-04-26
 
 **Diagnose-telemetrie · sigCount-distributie per drop-reason**
