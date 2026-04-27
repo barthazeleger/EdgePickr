@@ -2,6 +2,84 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.0] - 2026-04-26
+
+**Doctrine-pivot · confidence-gewogen ep-gap + dataConf-rank-lift + conviction shadow-track**
+
+Aanleiding: operator-rapport "al de hele dag geen confident picks". Diagnose uit prod-scan v12.4.x: 144 fixtures → 14 mkP-calls → **0 final picks**, drops dominant op `ep_too_close_to_market` (ep ≤ ip+0.03). Doctrine-vraag: minder strikt edge-vs-market en meer signaal/model-zekerheid laten meewegen — zonder de longshot-floor (MIN_EP=0.52) of de fake-edge-protectie (`extreme_divergence`, 20pp) op te geven. Doel = max netto winst, niet meer picks om de picks.
+
+### Changed (gate-doctrine)
+
+- **`lib/picks.js` `mkP` `ep_too_close_to_market`** — drempel is nu sigCount-afhankelijk:
+  - sigCount ≥ 6 → `0.02` (lage drempel; high-conviction signal-stack)
+  - sigCount in [3, 5] → `0.03` (ongewijzigd t.o.v. v12.4.x)
+  - sigCount ≤ 2 → `0.04` (strenger; weinig signaal-bewijs)
+  - `MIN_EP=0.52` blijft ongewijzigd — longshot-protectie staat niet ter discussie.
+  - `extreme_divergence` (>20pp + auditSuspicious) blijft hard-drop — fake-edge-vangnet.
+- **`lib/picks.js` `expectedEur` rank-lift** — `dataConf^1.5` i.p.v. lineair `dataConf` in de `expectedEur`-formule. server.js sorteert top-5 op `expectedEur` (`server.js:6871/6898`); een lineaire dataConf onderschatte 6+ signaal-picks bij gelijke edge. Ratio 6+ vs 3-5 signaals: was 1.43×, nu 1.71×. `kelly`/`units` (= stake-sizing) blijven ongemoeid — die blijven edge-driven.
+
+### Added (operator-zichtbaarheid + CLV-evidence)
+
+- **`pick.audit.conviction_route` boolean** — `true` als pick alleen door de loosened ep-gate (sigCount ≥ 6, gap ∈ [0.02, 0.03)) is gekomen. Zichtbaar in pick-audit-toggle (groen `· conviction-route`-label in `index.html:auditHtml`).
+- **`pick_candidates.conviction_route` kolom** — additive schema-migratie (`docs/migrations-archive/v12.5.0_conviction_route.sql`). Partial index `WHERE conviction_route = true` voor lichtgewicht analyse-queries. Niet-destructief (`ADD COLUMN IF NOT EXISTS`, default false).
+- **`lib/snapshots.js writePickCandidate`** — accepteert `convictionRoute` arg, schrijft naar `row.conviction_route`.
+- **`lib/snapshots.js record{Ml2Way,Totals,Threeway,DoubleChance,Btts}Evaluation`** — accepteren `convictionSelections: Set<selectionKey>`. Per evaluatie zetten ze `conviction_route=true` op alleen de selectie-rijen die in de set zitten (rest default false).
+- **`server.js` 6 sport-scans** — elk onderhoudt `_xxxConvictionByFML` Map, populated door de bestaande `onCandidate`-hook (uitgebreid met `pick`-arg) op pushed picks met `audit.conviction_route=true`. Alle 17 `recordXxxEvaluation`-call-sites krijgen `convictionSelections: _xxxConvictionFor(fixtureId, marketType, line)` mee. Geen nieuwe DB-rondtrips, geen await-conversie van bestaande fire-and-forget calls.
+
+### Run de migratie
+
+```bash
+node scripts/migrate.js docs/migrations-archive/v12.5.0_conviction_route.sql
+```
+
+Idempotent — twee keer draaien is veilig.
+
+### Tests (782 → 791, 9 nieuwe)
+
+- **G7a** · sigCount=6 + ep gap=0.025 (odd 1.60, boost 0.025) → push (was drop op 3pp-gate). `audit.conviction_route=true`.
+- **G7b** · sigCount=1 + ep gap=0.035 → drop op `ep_too_close_to_market` (was push op 3pp-gate).
+- **G7c** · sigCount=4 + ep gap=0.025 → drop. Bewijst dat 3-5 bucket ongewijzigd v12.4.x-gedrag heeft.
+- **G7d** · sigCount=10 + ep=0.5045 < MIN_EP → drop op `ep_below_min`. Longshot-floor doctrineel intact.
+- **G7e** · sigCount=10 (zonder %-attributie) + probGap=22pp → drop op `extreme_divergence`. Fake-edge-protectie intact.
+- **G7f** · expectedEur ratio (6+ sigCount vs 3-5) ≈ 1.71× ± 5%. Bewijst dataConf^1.5 ranking-lift.
+- **G7g** · sigCount=6 maar ep gap=0.05 (ruim boven oude 3pp) → `audit.conviction_route=false` (pick was niet "alleen door loosened gate").
+- **G7h** · `writePickCandidate({convictionRoute: true})` → `row.conviction_route=true`.
+- **G7i** · `recordTotalsEvaluation({convictionSelections: new Set(['over'])})` → over-rij `conviction_route=true`, under-rij `conviction_route=false`.
+
+### Verified
+
+- `npm test` 791/791 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ → REQUIRE_OK v=12.5.0.
+- Migration syntactisch geverifieerd; daadwerkelijke uitvoer bij prod-deploy via `scripts/migrate.js`.
+
+### Roll-back-pad
+
+1. **Hot-toggle** (instant): in `lib/picks.js mkP` regel waar `epGap` wordt bepaald, hard-set `epGap = 0.03` → gedrag zoals v12.4.2. Geen schema-impact.
+2. **Code-revert** (~30 min): één `git revert` van deze commit. DB-kolom `conviction_route` blijft staan met defaults — bestaande rijen blijven correct.
+3. **Schema** (alleen bij volledige spijt): nieuwe migratie met `ALTER TABLE public.pick_candidates DROP COLUMN conviction_route`. Niet aanbevolen — kolom is goedkoop, hergebruik in v12.5.x mogelijk.
+
+### Doctrine-decisie · v12.5.x (na ~1 week / 100+ settled rijen)
+
+```sql
+select conviction_route,
+       count(*) as n,
+       avg(case when result = 'W' then 1.0 when result = 'L' then 0.0 end) as winrate,
+       avg(clv_pct) as avg_clv
+  from public.pick_candidates
+ where result in ('W', 'L', 'P')
+   and created_at > now() - interval '14 days'
+ group by conviction_route;
+```
+
+- `avg_clv(conviction_route=true) ≥ avg_clv(false)` → loosen verder (sigCount ≥ 6 → 0.015, etc.).
+- `< edge-track baseline` → revert via roll-back-pad. CLV is meet-instrument achteraf, ochtend-/zelfscans blijven actie-trigger; hoe de scan picks selecteert moet uiteindelijk gevalideerd worden door closing-line bewijs.
+
+### Out-of-scope (deferred)
+
+- Per-sport differentiatie van `MIN_EP` (huidige uniform 0.52). Wacht op auto-tune-harness uit v12.5+ roadmap.
+- Conviction-route voor `recordMl2WayEvaluation` met markt-specifieke `marketType`-waarden (bv. hockey ML met `marketType: 'moneyline'` vs `'moneyline_incl_ot'` — beide gebruiken nu `'moneyline'` in de cache-key, mogelijk dat hockey OT-ML's mismatchen). Niet acuut want hockey ML heeft geen TT-style flood-pad.
+- Top-5 cross-sport finalPicks-mark (UPDATE-pass uit v12.4.0 deferred-lijst). Conviction_route is kolom-niveau, niet rij-finalisatie. Beide vragen om de race-cond fix tegen async `recordXxx`-rijen.
+
 ## [12.4.2] - 2026-04-26
 
 **HOTFIX op operator-rapport NHL TT-pick · modal-tracker score-sync + bookie-anomaly inbox-warning**

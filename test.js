@@ -2541,6 +2541,136 @@ test('buildPickFactory (v12.2.31): probGap 25pp MET sterke signal-attribution �
   assert.strictEqual(picks.length, 1, 'gap met sterk signaal-attribution mag door, ook bij 25pp');
 });
 
+// ── v12.5.0 doctrine-pivot: confidence-gewogen ep-gap + dataConf^1.5 ─────────
+//
+// Operator-rapport: "al de hele dag geen confident picks". Diagnose:
+// 12 van 14 mkP-kandidaten dropten op ep_below_min, 2 op ep_too_close_to_market.
+// v12.5.0: ep_too_close_to_market drempel wordt sigCount-afhankelijk
+//   sigCount ≥ 6 → 0.02 (high-conviction, lagere drempel)
+//   sigCount in [3,5] → 0.03 (ongewijzigd t.o.v. v12.4.x)
+//   sigCount ≤ 2 → 0.04 (strenger; weinig signaal-bewijs)
+// MIN_EP=0.52 (longshot-floor) blijft ongewijzigd.
+// expectedEur krijgt dataConf^1.5 i.p.v. lineair voor rank-lift.
+test('buildPickFactory (v12.5.0 G7a): sigCount≥6 met ep gap=0.025 → push (was drop in v12.4.x)', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // odd=1.60 → ip=0.625. boost=0.025 → ep=0.65. ep > ip+0.02 (0.645) ✓.
+  // 6 signalen → sigCount=6 → epGap=0.02. Onder oude v12.4.x 3pp-gate (0.655)
+  // zou dit gedropt zijn; nu geaccepteerd.
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.60, 'test', 65, 0.025, null, 'Bet365',
+    ['form:+1.0%', 'h2h:+1.0%', 'home_adv:+0.5%', 'rest:+0.5%', 'lineup:+0.5%', 'standings:+0.5%']);
+  assert.strictEqual(picks.length, 1, 'high-conviction pick moet door loosened ep-gate');
+  assert.strictEqual(picks[0].audit.conviction_route, true, 'audit.conviction_route moet true zijn');
+  assert.strictEqual(dropReasons.ep_too_close_to_market || 0, 0);
+});
+
+test('buildPickFactory (v12.5.0 G7b): sigCount≤2 met ep gap=0.035 → drop op ep_too_close_to_market', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // odd=1.60 → ip=0.625. boost=0.035 → ep=0.66. ep > ip+0.03 (0.655)
+  // → onder oude 3pp-gate gepasseerd. Maar sigCount=1 → epGap=0.04 → ep > ip+0.04 (0.665)
+  // vereist; ep=0.66 ≤ 0.665 → drop.
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.60, 'test', 66, 0.035, null, 'Bet365',
+    ['form:+3.5%']);
+  assert.strictEqual(picks.length, 0, 'low-conviction pick moet stranden op stricter ep-gap');
+  assert.strictEqual(dropReasons.ep_too_close_to_market, 1);
+});
+
+test('buildPickFactory (v12.5.0 G7c): sigCount in [3,5] regressie — drempel ongewijzigd 0.03', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // odd=1.60 → ip=0.625. boost=0.025 → ep=0.65. sigCount=4 → epGap=0.03.
+  // ep > ip+0.03 (0.655)? 0.65 ≤ 0.655 → drop. v12.4.x-gedrag.
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.60, 'test', 65, 0.025, null, 'Bet365',
+    ['form:+0.5%', 'h2h:+1.0%', 'home_adv:+0.5%', 'rest:+0.5%']);
+  assert.strictEqual(picks.length, 0, 'mid-conviction (sigCount 4) moet ongewijzigd 3pp-gate volgen');
+  assert.strictEqual(dropReasons.ep_too_close_to_market, 1);
+});
+
+test('buildPickFactory (v12.5.0 G7d): MIN_EP=0.52 floor blijft ongewijzigd ondanks sigCount=10', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // odd=2.20 → ip=0.4545. boost=0.05 → ep=0.5045 < MIN_EP=0.52.
+  // Met 10 signalen toch drop op ep_below_min — longshot-floor doctrineel intact.
+  mkP('A vs B', 'EPL', '🏠 A wint', 2.20, 'test', 50, 0.05, null, 'Bet365',
+    Array.from({length: 10}, (_, i) => `sig${i}:+0.5%`));
+  assert.strictEqual(picks.length, 0, 'longshot-floor moet absoluut blijven');
+  assert.strictEqual(dropReasons.ep_below_min, 1);
+});
+
+test('buildPickFactory (v12.5.0 G7e): extreme_divergence (>20pp) blijft hard-drop ondanks sigCount=10', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // probGap=22pp + 10 signaal-namen ZONDER expliciete %-bijdrage → signalContrib=0
+  // → probGapSuspect=true. Loosened ep-gap helpt niet — extreme_divergence eerst.
+  mkP('A vs B', 'EPL', '🏠 A wint', 2.50, 'test', 62, 0.20, null, 'Bet365',
+    Array.from({length: 10}, (_, i) => `sig${i}_no_pct`));
+  assert.strictEqual(picks.length, 0);
+  assert.strictEqual(dropReasons.extreme_divergence, 1);
+});
+
+test('buildPickFactory (v12.5.0 G7f): expectedEur dataConf^1.5 ranking-lift', () => {
+  const { picks: picksHigh, mkP: mkPHigh } = buildPickFactory(1.6, {}, { sport: 'football' });
+  const { picks: picksMid, mkP: mkPMid } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // Zelfde edge/odd/units; verschil enkel sigCount → dataConf 1.0 vs 0.70.
+  // expectedEur ratio moet (1.0/0.70)^1.5 = 1.71 zijn (was 1.43 met lineair).
+  mkPHigh('A vs B', 'EPL', '🏠 A wint', 1.80, 'test', 60, 0.05, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+1%', 's4:+1%', 's5:+1%', 's6:+0%']);
+  mkPMid('A vs B', 'EPL', '🏠 A wint', 1.80, 'test', 60, 0.05, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+1%']);
+  assert.strictEqual(picksHigh.length, 1, 'high-conviction pick moet door');
+  assert.strictEqual(picksMid.length, 1, 'mid-conviction pick moet door');
+  // Beide hebben dezelfde edge → expectedEur-ratio = (1.0/0.70)^1.5 ≈ 1.71.
+  // (Pre-v12.5.0 was lineair → ratio 1.43.) Tolerantie 5%.
+  const ratio = picksHigh[0].expectedEur / picksMid[0].expectedEur;
+  assert.ok(ratio > 1.62 && ratio < 1.80, `expectedEur ratio ${ratio.toFixed(3)} buiten [1.62, 1.80] range — dataConf^1.5 ranking-lift defect`);
+});
+
+test('buildPickFactory (v12.5.0 G7g): conviction_route=false als sigCount<6 of ep-gap≥0.03', () => {
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // sigCount=6 maar ep-gap=0.05 (well boven 0.03 oude drempel) → conviction_route=false
+  // want pick was niet "alleen door loosened gate" gekomen.
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.80, 'test', 61, 0.05, null, 'Bet365',
+    ['s1:+1%', 's2:+0.5%', 's3:+0.5%', 's4:+0.5%', 's5:+0.5%', 's6:+0.5%']);
+  assert.strictEqual(picks.length, 1);
+  assert.strictEqual(picks[0].audit.conviction_route, false, 'pick die ook door v12.4.x-gate kwam moet conviction_route=false hebben');
+});
+
+test('writePickCandidate (v12.5.0 G7h): convictionRoute=true → row.conviction_route=true', async () => {
+  let captured = null;
+  const fakeSb = { from: () => ({ insert: (row) => { captured = row; return Promise.resolve({ error: null }); } }) };
+  await snap.writePickCandidate(fakeSb, {
+    modelRunId: 5, fixtureId: 100, selectionKey: 'home',
+    bookmaker: 'Bet365', bookmakerOdds: 1.86, fairProb: 0.55, edgePct: 2.3,
+    passedFilters: true, rejectedReason: null, signals: [],
+    convictionRoute: true,
+  });
+  assert.ok(captured);
+  assert.strictEqual(captured.conviction_route, true);
+});
+
+test('recordTotalsEvaluation (v12.5.0 G7i): convictionSelections.has(side) → row.conviction_route=true', async () => {
+  const writes = { runs: [], picks: [] };
+  const fakeSb = {
+    from: (table) => ({
+      insert: (row) => {
+        if (table === 'model_runs') { writes.runs.push(row); return { select: () => ({ single: () => Promise.resolve({ data: { id: 99 }, error: null }) }) }; }
+        if (table === 'pick_candidates') writes.picks.push(row);
+        return Promise.resolve({ error: null });
+      }
+    })
+  };
+  await snap.recordTotalsEvaluation({
+    supabase: fakeSb, modelVersionId: 1, fixtureId: 200,
+    marketType: 'total', line: 2.5,
+    pOver: 0.55, pUnder: 0.45,
+    bestOv: { price: 1.95, bookie: 'Bet365' },
+    bestUn: { price: 1.95, bookie: 'Bet365' },
+    ovEdge: 0.072, unEdge: -0.05, minEdge: 0.055,
+    convictionSelections: new Set(['over']),  // alleen 'over' was conviction-route
+  });
+  const overRow = writes.picks.find(r => r.selection_key === 'over');
+  const underRow = writes.picks.find(r => r.selection_key === 'under');
+  assert.ok(overRow && underRow, 'beide rijen moeten geschreven zijn');
+  assert.strictEqual(overRow.conviction_route, true, 'over zit in set → true');
+  assert.strictEqual(underRow.conviction_route, false, 'under niet in set → false (default)');
+});
+
 test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
   const ctx = createPickContext({
     sport: 'basketball',
@@ -2933,7 +3063,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.4.2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

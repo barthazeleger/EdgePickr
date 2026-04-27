@@ -2448,11 +2448,23 @@ async function runBasketball(emit) {
   const calib = loadCalib();
   // v12.4.0: per-scan markt-mix telemetrie (zie market-telemetry.js).
   const _basketballMarketTel = createScanTelemetry({ sport: 'basketball', scanAnchorMs: Date.now() });
-  const _basketballOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking. Map<`${fid}|${mt}|${line||null}`, Set<selectionKey>>
+  // populated door onCandidate-hook; geconsumeerd door recordXxxEvaluation-calls
+  // zodat pick_candidates.conviction_route correct gezet wordt voor CLV-monitoring.
+  const _basketballConvictionByFML = new Map();
+  const _basketballConvictionFor = (fid, mt, line) =>
+    _basketballConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _basketballOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _basketballMarketTel.bumpGenerated(mt);
-    if (pushed) _basketballMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _basketballMarketTel.bumpGenerated(mt);
+      if (pushed) _basketballMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_basketballConvictionByFML.has(key)) _basketballConvictionByFML.set(key, new Set());
+      _basketballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'basketball', { onCandidate: _basketballOnCandidate });
   const MIN_EDGE = 0.055;
@@ -2852,6 +2864,7 @@ async function runBasketball(emit) {
             marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            convictionSelections: _basketballConvictionFor(gameId, 'moneyline', null),
             debug: { sport: 'basketball', ha, signals: matchSignals },
           }).catch(() => {});
         }
@@ -2917,7 +2930,9 @@ async function runBasketball(emit) {
                   marketType: 'total', line,
                   pOver: overP, pUnder: 1 - overP,
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-                  matchSignals, debug: { sport: 'basketball' },
+                  matchSignals,
+                  convictionSelections: _basketballConvictionFor(gameId, 'total', line),
+                  debug: { sport: 'basketball' },
                 }).catch(() => {});
               }
             }
@@ -3111,11 +3126,21 @@ async function runHockey(emit) {
   const calib = loadCalib();
   // v12.4.0: per-scan markt-mix telemetrie.
   const _hockeyMarketTel = createScanTelemetry({ sport: 'hockey', scanAnchorMs: Date.now() });
-  const _hockeyOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking (zie basketball voor rationale).
+  const _hockeyConvictionByFML = new Map();
+  const _hockeyConvictionFor = (fid, mt, line) =>
+    _hockeyConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _hockeyOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _hockeyMarketTel.bumpGenerated(mt);
-    if (pushed) _hockeyMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _hockeyMarketTel.bumpGenerated(mt);
+      if (pushed) _hockeyMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_hockeyConvictionByFML.has(key)) _hockeyConvictionByFML.set(key, new Set());
+      _hockeyConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'hockey', { onCandidate: _hockeyOnCandidate });
   const MIN_EDGE = 0.055;
@@ -3642,6 +3667,7 @@ async function runHockey(emit) {
               bestH: bH3, bestD: bD3, bestA: bA3,
               homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
               matchSignals: [...matchSignals, '3way_ml'],
+              convictionSelections: _hockeyConvictionFor(gameId, 'threeway', null),
               debug: { sport: 'hockey', lambda_h: expHome, lambda_a: expAway },
             }).catch(() => {});
           }
@@ -3734,6 +3760,7 @@ async function runHockey(emit) {
                 marketType: 'team_total_home', line,
                 pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
                 matchSignals: [...matchSignals, 'team_total_home'],
+                convictionSelections: _hockeyConvictionFor(gameId, 'team_total_home', line),
                 debug: { sport: 'hockey', side: 'home', lambda: lambdaHome },
               }).catch(() => {});
             }
@@ -3772,6 +3799,7 @@ async function runHockey(emit) {
                 marketType: 'team_total_away', line,
                 pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
                 matchSignals: [...matchSignals, 'team_total_away'],
+                convictionSelections: _hockeyConvictionFor(gameId, 'team_total_away', line),
                 debug: { sport: 'hockey', side: 'away', lambda: lambdaAway },
               }).catch(() => {});
             }
@@ -3825,7 +3853,9 @@ async function runHockey(emit) {
                   marketType: 'total', line,
                   pOver: overP, pUnder: 1 - overP,
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-                  matchSignals, debug: { sport: 'hockey' },
+                  matchSignals,
+                  convictionSelections: _hockeyConvictionFor(gameId, 'total', line),
+                  debug: { sport: 'hockey' },
                 }).catch(() => {});
               }
             }
@@ -4063,11 +4093,21 @@ async function runBaseball(emit) {
   const calib = loadCalib();
   // v12.4.0: per-scan markt-mix telemetrie.
   const _baseballMarketTel = createScanTelemetry({ sport: 'baseball', scanAnchorMs: Date.now() });
-  const _baseballOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking (zie basketball voor rationale).
+  const _baseballConvictionByFML = new Map();
+  const _baseballConvictionFor = (fid, mt, line) =>
+    _baseballConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _baseballOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _baseballMarketTel.bumpGenerated(mt);
-    if (pushed) _baseballMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _baseballMarketTel.bumpGenerated(mt);
+      if (pushed) _baseballMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_baseballConvictionByFML.has(key)) _baseballConvictionByFML.set(key, new Set());
+      _baseballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball', { onCandidate: _baseballOnCandidate });
   const MIN_EDGE = 0.055;
@@ -4389,6 +4429,7 @@ async function runBaseball(emit) {
             marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            convictionSelections: _baseballConvictionFor(gameId, 'moneyline', null),
             debug: { sport: 'baseball', ha, pitcher_valid: pitcherSig.valid, signals: matchSignals },
           }).catch(() => {});
         }
@@ -4450,7 +4491,9 @@ async function runBaseball(emit) {
                   marketType: 'total', line,
                   pOver: overP, pUnder: 1 - overP,
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-                  matchSignals, debug: { sport: 'baseball', weatherAdj: mlbWeatherAdj },
+                  matchSignals,
+                  convictionSelections: _baseballConvictionFor(gameId, 'total', line),
+                  debug: { sport: 'baseball', weatherAdj: mlbWeatherAdj },
                 }).catch(() => {});
               }
             }
@@ -4649,6 +4692,7 @@ async function runBaseball(emit) {
                   pOver: adjOverP, pUnder: 1 - adjOverP,
                   bestOv, bestUn, ovEdge: eOv, unEdge: eUn, minEdge: MIN_EDGE,
                   matchSignals: [...matchSignals, 'f5_total'],
+                  convictionSelections: _baseballConvictionFor(gameId, 'f5_total', line),
                   debug: { sport: 'baseball' },
                 }).catch(() => {});
               }
@@ -4725,11 +4769,21 @@ async function runFootballUS(emit) {
   const calib = loadCalib();
   // v12.4.0: per-scan markt-mix telemetrie.
   const _nflMarketTel = createScanTelemetry({ sport: 'american-football', scanAnchorMs: Date.now() });
-  const _nflOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking (zie basketball voor rationale).
+  const _nflConvictionByFML = new Map();
+  const _nflConvictionFor = (fid, mt, line) =>
+    _nflConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _nflOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _nflMarketTel.bumpGenerated(mt);
-    if (pushed) _nflMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _nflMarketTel.bumpGenerated(mt);
+      if (pushed) _nflMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_nflConvictionByFML.has(key)) _nflConvictionByFML.set(key, new Set());
+      _nflConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'american-football', { onCandidate: _nflOnCandidate });
   const MIN_EDGE = 0.055;
@@ -5006,6 +5060,7 @@ async function runFootballUS(emit) {
             marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            convictionSelections: _nflConvictionFor(gameId, 'moneyline', null),
             debug: { sport: 'american-football', ha, signals: matchSignals },
           }).catch(() => {});
         }
@@ -5068,7 +5123,9 @@ async function runFootballUS(emit) {
                   marketType: 'total', line,
                   pOver: overP, pUnder: 1 - overP,
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-                  matchSignals, debug: { sport: 'american-football' },
+                  matchSignals,
+                  convictionSelections: _nflConvictionFor(gameId, 'total', line),
+                  debug: { sport: 'american-football' },
                 }).catch(() => {});
               }
             }
@@ -5245,11 +5302,21 @@ async function runHandball(emit) {
   const calib = loadCalib();
   // v12.4.0: per-scan markt-mix telemetrie.
   const _handballMarketTel = createScanTelemetry({ sport: 'handball', scanAnchorMs: Date.now() });
-  const _handballOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking (zie basketball voor rationale).
+  const _handballConvictionByFML = new Map();
+  const _handballConvictionFor = (fid, mt, line) =>
+    _handballConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _handballOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _handballMarketTel.bumpGenerated(mt);
-    if (pushed) _handballMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _handballMarketTel.bumpGenerated(mt);
+      if (pushed) _handballMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_handballConvictionByFML.has(key)) _handballConvictionByFML.set(key, new Set());
+      _handballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'handball', { onCandidate: _handballOnCandidate });
   const MIN_EDGE = 0.055;
@@ -5557,6 +5624,7 @@ async function runHandball(emit) {
               bestH: bH3, bestD: bD3, bestA: bA3,
               homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
               matchSignals: [...matchSignals, '3way_ml'],
+              convictionSelections: _handballConvictionFor(gameId, 'threeway', null),
               debug: { sport: 'handball', lambda_h: expHome, lambda_a: expAway },
             }).catch(() => {});
           }
@@ -5577,6 +5645,7 @@ async function runHandball(emit) {
             marketType: 'moneyline', fpHome, fpAway, adjHome, adjAway,
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
+            convictionSelections: _handballConvictionFor(gameId, 'moneyline', null),
             debug: { sport: 'handball', ha, signals: matchSignals },
           }).catch(() => {});
         }
@@ -5638,7 +5707,9 @@ async function runHandball(emit) {
                   marketType: 'total', line,
                   pOver: overP, pUnder: 1 - overP,
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-                  matchSignals, debug: { sport: 'handball' },
+                  matchSignals,
+                  convictionSelections: _handballConvictionFor(gameId, 'total', line),
+                  debug: { sport: 'handball' },
                 }).catch(() => {});
               }
             }
@@ -5803,11 +5874,21 @@ async function runPrematch(emit) {
   // Persisteert na scan in market_scan_telemetry zodat we cross-scan trends
   // per markt × sport hebben (auto-promote-input voor v12.5+).
   const _footballMarketTel = createScanTelemetry({ sport: 'football', scanAnchorMs: Date.now() });
-  const _footballOnCandidate = ({ pushed, fixtureMeta }) => {
+  // v12.5.0: conviction-route tracking (zie basketball voor rationale).
+  const _footballConvictionByFML = new Map();
+  const _footballConvictionFor = (fid, mt, line) =>
+    _footballConvictionByFML.get(`${fid}|${mt}|${line == null ? 'null' : line}`) || undefined;
+  const _footballOnCandidate = ({ pushed, fixtureMeta, pick }) => {
     const mt = fixtureMeta?.marketType;
-    if (!mt) return;
-    _footballMarketTel.bumpGenerated(mt);
-    if (pushed) _footballMarketTel.bumpDivergencePass(mt);
+    if (mt) {
+      _footballMarketTel.bumpGenerated(mt);
+      if (pushed) _footballMarketTel.bumpDivergencePass(mt);
+    }
+    if (pushed && pick?.audit?.conviction_route && fixtureMeta && fixtureMeta.fixtureId != null) {
+      const key = `${fixtureMeta.fixtureId}|${mt}|${fixtureMeta.line == null ? 'null' : fixtureMeta.line}`;
+      if (!_footballConvictionByFML.has(key)) _footballConvictionByFML.set(key, new Set());
+      _footballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
+    }
   };
   const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'football', { onCandidate: _footballOnCandidate });
   const MIN_EDGE = 0.055;
@@ -6418,7 +6499,9 @@ async function runPrematch(emit) {
               pOver: overP, pUnder: 1 - overP,
               bestOv: over.best, bestUn: under.best,
               ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
-              matchSignals: ouSignals, debug: { sport: 'football' },
+              matchSignals: ouSignals,
+              convictionSelections: _footballConvictionFor(fid, 'total', 2.5),
+              debug: { sport: 'football' },
             }).catch(() => {});
           }
         }
@@ -6581,7 +6664,9 @@ async function runPrematch(emit) {
                   pYes: bttsYesP, pNo: bttsNoP,
                   bestYes, bestNo,
                   yesEdge: bttsYesEdge, noEdge: bttsNoEdge, minEdge: MIN_EDGE,
-                  matchSignals: bttsSignals, debug: { sport: 'football', h2hN },
+                  matchSignals: bttsSignals,
+                  convictionSelections: _footballConvictionFor(fid, 'btts', null),
+                  debug: { sport: 'football', h2hN },
                 }).catch(() => {});
               }
             }
@@ -6731,7 +6816,9 @@ async function runPrematch(emit) {
               supabase, modelVersionId: _currentModelVersionId, fixtureId: fid,
               pHX, p12, pX2, bestHX, best12, bestX2,
               eHX, e12, eX2, minEdge: MIN_EDGE,
-              matchSignals, debug: { sport: 'football' },
+              matchSignals,
+              convictionSelections: _footballConvictionFor(fid, 'double_chance', null),
+              debug: { sport: 'football' },
             }).catch(() => {});
           }
         }
