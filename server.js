@@ -112,6 +112,12 @@ let KILL_SWITCH; // eslint-disable-line prefer-const
 let loadSettledBetsOnce; // eslint-disable-line prefer-const
 let refreshKillSwitch; // eslint-disable-line prefer-const
 let isMarketKilled; // eslint-disable-line prefer-const
+// v12.5.2: markFinalTop5 wordt door _atomicSetPrematch (rond regel 1265)
+// aangeroepen, maar pas geinitialiseerd bij maintenanceSchedulers-setup
+// (rond regel 7240). Forward-let voorkomt TDZ bij vroege calls (eerste
+// scan kan starten vóór schedulers-init in theorie); typeof-check in
+// _atomicSetPrematch voorkomt undefined-call.
+let markFinalTop5; // eslint-disable-line prefer-const
 
 // Adaptive MIN_EDGE: voor markten met weinig settled bets vereisen we strenger
 // edge (8% i.p.v. 5.5%) zodat we niet vroeg te veel risico nemen op markten
@@ -1262,7 +1268,30 @@ const HANDBALL_LEAGUES = [
 // een lange scan.
 let lastPrematchPicks = Object.freeze([]);
 let lastLivePicks = Object.freeze([]);
-function _atomicSetPrematch(v) { lastPrematchPicks = Object.freeze(Array.isArray(v) ? [...v] : []); }
+// v12.5.2: dedup-Set voor markFinalTop5 — voorkomt dat parallelle scan-paths
+// (voetbal afzonderlijk + cross-sport merge in /api/prematch) dezelfde update-
+// pass dubbel triggeren in dezelfde 60s-window. Key = fixtureId+selectionKey.
+const _finalTop5MarkQueued = new Set();
+function _atomicSetPrematch(v) {
+  const arr = Array.isArray(v) ? [...v] : [];
+  lastPrematchPicks = Object.freeze(arr);
+  // Schedule final_top5=true UPDATE 60s deferred — race-cond met async
+  // recordXxxEvaluation `.catch(()=>{})` writes die nog moeten landen.
+  // markFinalTop5 is idempotent (UPDATE op SET=true) dus dubbele triggers OK.
+  if (arr.length && typeof markFinalTop5 === 'function') {
+    const fingerprint = arr.map(p => `${p?._fixtureMeta?.fixtureId}|${p?._fixtureMeta?.selectionKey}`).sort().join(',');
+    if (!_finalTop5MarkQueued.has(fingerprint)) {
+      _finalTop5MarkQueued.add(fingerprint);
+      setTimeout(async () => {
+        try {
+          const r = await markFinalTop5(arr, { windowMinutes: 30 });
+          if (r.updated > 0) console.log(`🎯 final_top5: ${r.updated}/${r.attempted} pick_candidates rijen gemarkt`);
+        } catch (e) { /* swallow — telemetry-bug mag scan niet breken */ }
+        finally { _finalTop5MarkQueued.delete(fingerprint); }
+      }, 60_000);
+    }
+  }
+}
 function _atomicSetLive(v)     { lastLivePicks     = Object.freeze(Array.isArray(v) ? [...v] : []); }
 
 // ── SCAN HISTORY ─────────────────────────────────────────────────────────────
@@ -7231,6 +7260,9 @@ const scheduleHealthAlerts = maintenanceSchedulers.scheduleHealthAlerts;
 const scheduleSignalStatsRefresh = maintenanceSchedulers.scheduleSignalStatsRefresh;
 const scheduleAutoRetraining = maintenanceSchedulers.scheduleAutoRetraining;
 const scheduleConvictionDoctrineReview = maintenanceSchedulers.scheduleConvictionDoctrineReview;
+const scheduleConvictionShadowSweep = maintenanceSchedulers.scheduleConvictionShadowSweep;
+// markFinalTop5 als forward-let elders gedeclareerd (v12.5.2) — assign hier:
+markFinalTop5 = maintenanceSchedulers.markFinalTop5;
 const checkUnitSizeChange = maintenanceSchedulers.checkUnitSizeChange;
 const computeBookieConcentration = maintenanceSchedulers.computeBookieConcentration;
 const writeTrainingExamplesForSettled = maintenanceSchedulers.writeTrainingExamplesForSettled;
@@ -7960,6 +7992,10 @@ app.listen(PORT, () => {
     (key, value) => { OPERATOR[key] = value; },
     saveOperatorState
   );
+  // v12.5.2: paper-trading shadow-sweep. Settle dagelijks alle onafgeronde
+  // pick_candidates (incl. conviction-shadow) tegen api-sports finished
+  // events → CLV/result-velden krijgen waarde voor doctrine-review-evidence.
+  scheduleConvictionShadowSweep({ afGet });
 
   // v12.2.14 (D1): rescheduleer pending pre-kickoff/CLV jobs uit DB en
   // zet sweep-loop op (cleanup completed > 7d, mark overdue > 1u).

@@ -2,6 +2,53 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.2] - 2026-04-26
+
+**Plaatsvervanger voor externe May-10 scheduled agent · v12.4.0 deferred items 2 + 3**
+
+Aanleiding: operator wil een externe scheduled agent (10 mei) verwijderen. Die agent zou drie v12.4.0 deferred items afhandelen — auto-promote/demote was al opgepakt door v12.5.1; deze v12.5.2 pakt de andere twee:
+
+1. **Top-5 finalPicks UPDATE-pass** in `pick_candidates.final_top5` (race-cond met async `recordXxxEvaluation` opgelost via 60s deferred trigger).
+2. **`runPaperTradingSweep` cron-aanhaakpunt** (sweep-functie was sinds v12.4.1 gefixed maar niet gewired).
+
+### Added
+
+- **`lib/runtime/fixture-events-fetcher.js`** (NIEUW) — `fetchFinishedFixturesById({afGet})` returns `Map<\`${sport}|${fixtureId}\`, ev>`. Fetched alle 6 sporten over 3 dates (today + yesterday + day-before, voor late-settling postponed/playoff overruns) en mapt naar het `ev`-shape dat `resolveBetOutcome` verwacht. Live games genegeerd (alleen FT/AOT/AP/PEN). Codestijl matcht `lib/runtime/check-open-bets.js` zonder die te refactoren — bewust (check-open-bets heeft ook live-events nodig, separate-shape-overhead niet waard).
+
+- **`lib/runtime/maintenance-schedulers.js scheduleConvictionShadowSweep({afGet})`** — dagelijkse cron (eerste run +90min boot, daarna 24h-interval). Roept `fetchFinishedFixturesById` + `runPaperTradingSweep` aan met `cutoffMs = now - 30min` (grace voor late finals) en `batchSize=200`. Settle-stats logged: `🧪 Paper-sweep: checked=N, settled=M, skipped=K`. Geen inbox-spam — alleen log.
+
+- **`lib/runtime/maintenance-schedulers.js markFinalTop5(finalPicks, opts)`** — pure helper (geen factory-side-effects). Voor elke pick met `_fixtureMeta.fixtureId` + `selectionKey`: idempotente UPDATE op `pick_candidates SET final_top5=true WHERE fixture_id=X AND selection_key=Y AND created_at >= now() - windowMinutes`. Default windowMinutes=30. Returnt `{updated, attempted}`.
+
+- **`server.js _atomicSetPrematch`** — schedule `markFinalTop5(finalPicks)` 60s deferred trigger zodra `lastPrematchPicks` wordt geupdatet. 60s window geeft alle async `recordXxxEvaluation` `.catch(()=>{})` writes tijd om te landen — race-cond uit v12.4.0 deferred-list opgelost. Dedup-Set `_finalTop5MarkQueued` voorkomt dat parallelle scan-paths (voetbal afzonderlijk + cross-sport merge in `/api/prematch`) dezelfde update-pass dubbel queueien in één 60s-window.
+
+- **Forward-let `markFinalTop5`** in `server.js` — declared rond regel 110 (naast `KILL_SWITCH`), assigned bij `maintenanceSchedulers`-setup. Voorkomt TDZ bij vroege scan-triggers.
+
+### Tests (798 → 801, 3 nieuwe)
+
+- **G9a** · `fetchFinishedFixturesById`: football FT + hockey AOT (regulation-score reconstructed via periods.first/second/third sum) + baseball FT (incl. 1st-inning scores voor NRFI). Verifieert 18 afGet-calls (6 sporten × 3 dates) en correct map-keys.
+- **G9b** · live games (status='1P', 'NS') NIET in result — sweep filtert al op `kickoff_ms < cutoff` maar dubbele safety hier.
+- **G9c** · geen `afGet` dep → lege Map (graceful degrade i.p.v. crash).
+
+### Verified
+
+- `npm test` 801/801 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+- Geen schema-migratie nodig (gebruikt bestaande `pick_candidates.final_top5` van v12.4.0 + `conviction_route` van v12.5.0).
+- `markFinalTop5`-update is best-effort: misses door window-mismatch acceptabel — `final_top5=true` is een telemetrie-marker, geen audit-event. Operator analyse-queries krijgen incrementally meer dekking.
+
+### Operator-instructie
+
+Verwijder de externe scheduled agent op 10 mei. v12.5.0/12.5.1/12.5.2 vervangen alle drie deferred items uit v12.4.0:
+- ✅ Auto-promote/demote — vervangen door v12.5.1 wekelijkse doctrine-review (auto-revert + promote-recommendation via inbox).
+- ✅ Top-5 mark UPDATE-pass — vervangen door v12.5.2 60s-deferred trigger in `_atomicSetPrematch`.
+- ✅ runPaperTradingSweep cron — vervangen door v12.5.2 dagelijkse `scheduleConvictionShadowSweep`.
+
+### Out-of-scope (deferred / monitoring)
+
+- **Per-sport paper-sweep batching**: alle 6 sporten worden parallel gefetched in één call. Bij API rate-limit overflow → split per sport. Niet acuut want sweep draait 1× per dag.
+- **Sweep-timing optimalisatie**: nu vast +90min na boot, daarna 24h. Beter zou zijn cron-style "elke dag 04:30 NL" — vereist node-cron of vergelijkbaar. Voor v1: simpele setInterval acceptabel.
+- **markFinalTop5 batching**: 5 picks → 5 sequentiële UPDATEs. Voor cross-sport finalPicks-array van ~5-10 rijen geen issue; bij grotere batches kan een single `IN`-query sneller. Niet kritiek nu.
+
 ## [12.5.1] - 2026-04-26
 
 **Conviction-doctrine automation · wekelijkse evidence-review + auto-revert + manual-promote endpoint**

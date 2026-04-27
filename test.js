@@ -2776,6 +2776,61 @@ test('buildPickFactory (v12.5.1 G8f): convictionDisabled=true → sigCount≥6 v
   assert.strictEqual(dropReasons.ep_too_close_to_market, 1);
 });
 
+// ── v12.5.2 · Paper-trading shadow-sweep + final_top5 marker ────────────────
+test('fetchFinishedFixturesById (G9a): football+hockey+baseball mapping naar Map<sport|id, ev>', async () => {
+  const { fetchFinishedFixturesById } = require('./lib/runtime/fixture-events-fetcher');
+  // afGet mocks per sport-host. Drie dates worden in parallel opgevraagd; we
+  // returnen alleen voor today (eerste date) data, rest leeg.
+  let callCount = 0;
+  const fakeAfGet = async (host, path, params) => {
+    callCount++;
+    // Alleen op de eerste date data; dayBefore + yesterday lege array.
+    if (host === 'v3.football.api-sports.io') {
+      return [{ fixture: { id: 100, status: { short: 'FT' } }, teams: { home: { name: 'Ajax' }, away: { name: 'PSV' } }, goals: { home: 2, away: 1 } }];
+    }
+    if (host === 'v1.hockey.api-sports.io') {
+      return [{ id: 200, status: { short: 'AOT' }, teams: { home: { name: 'Bruins' }, away: { name: 'Rangers' } }, scores: { home: 4, away: 3 }, periods: { first: { home: 1, away: 1 }, second: { home: 1, away: 1 }, third: { home: 1, away: 1 } } }];
+    }
+    if (host === 'v1.baseball.api-sports.io') {
+      return [{ id: 300, status: { short: 'FT' }, teams: { home: { name: 'Yankees' }, away: { name: 'Red Sox' } }, scores: { home: { total: 7, innings: { '1': 2 } }, away: { total: 4, innings: { '1': 0 } } } }];
+    }
+    return [];
+  };
+  const map = await fetchFinishedFixturesById({ afGet: fakeAfGet });
+  // 6 sporten × 3 dates = 18 calls
+  assert.strictEqual(callCount, 18, `verwachtte 18 afGet-calls, kreeg ${callCount}`);
+  // 3 finished events
+  assert.strictEqual(map.size, 3);
+  const fb = map.get('football|100');
+  assert.ok(fb && fb.scoreH === 2 && fb.scoreA === 1 && fb.sport === 'football');
+  const hk = map.get('hockey|200');
+  assert.ok(hk && hk.regScoreH === 3 && hk.regScoreA === 3, 'hockey AOT → reg-score reconstructed via periods sum');
+  assert.strictEqual(hk.status, 'AOT');
+  const ba = map.get('baseball|300');
+  assert.ok(ba && ba.inn1H === 2 && ba.inn1A === 0, 'baseball 1st-inning scores meegegeven voor NRFI/YRFI');
+});
+
+test('fetchFinishedFixturesById (G9b): live games (status≠FT/AOT/AP) niet meegenomen', async () => {
+  const { fetchFinishedFixturesById } = require('./lib/runtime/fixture-events-fetcher');
+  const fakeAfGet = async (host) => {
+    if (host === 'v1.hockey.api-sports.io') {
+      return [
+        { id: 500, status: { short: '1P' }, teams: { home: { name: 'A' }, away: { name: 'B' } }, scores: { home: 1, away: 0 } }, // live
+        { id: 501, status: { short: 'NS' }, teams: { home: { name: 'C' }, away: { name: 'D' } }, scores: { home: 0, away: 0 } }, // not started
+      ];
+    }
+    return [];
+  };
+  const map = await fetchFinishedFixturesById({ afGet: fakeAfGet });
+  assert.strictEqual(map.size, 0, 'sweep wil alleen finished events — live/NS overgeslagen');
+});
+
+test('fetchFinishedFixturesById (G9c): geen afGet → lege Map', async () => {
+  const { fetchFinishedFixturesById } = require('./lib/runtime/fixture-events-fetcher');
+  const map = await fetchFinishedFixturesById({});
+  assert.strictEqual(map.size, 0);
+});
+
 test('formatDoctrineDecision (G8g): leesbaar string-output voor inbox-body', () => {
   const { formatDoctrineDecision } = require('./lib/conviction-doctrine');
   const evaluation = {
@@ -3183,7 +3238,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.1');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
