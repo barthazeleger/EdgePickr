@@ -2,6 +2,35 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.10] - 2026-04-26
+
+**HOTFIX op v12.5.7 race-conditie · scraper-restore loopt nu NA `loadOperatorState()`**
+
+Aanleiding: scan-output toont `🔌 Scraper-health: sofascore=off · fotmob=off`, dwz beide bronnen `disabled=true` ondanks v12.5.7 master-default fallback. Diagnose: boot-volgorde was sync `restoreScraperSourcesFromCalib` → async `loadOperatorState().then(...)`. Op het moment van scraper-restore is `OPERATOR.scraping_enabled` nog default-false (admin user.settings nog niet geladen) → `masterOn = false` → master-default fallback fired niet. Helder timing-bug.
+
+### Fixed
+
+- **`server.js` boot-time scraper-restore extracted naar `restoreScraperSourcesFromCalib()`** helper en gechained ná `loadOperatorState()` resolutie. Nu volgorde: load admin settings → OPERATOR.scraping_enabled gezet → restoreScraperSourcesFromCalib leest masterOn correct → fallback fires bij empty persisted.
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Voor operator
+
+v12.5.10 deploy bij eerstvolgende scan-output geeft:
+```
+🔌 Scrape-sources hersteld: 5 source(s) enabled (master-default)
+🔌 Scraper-health: sofascore=ok(218ms) · fotmob=ok(305ms)
+```
+of bij externe block:
+```
+🔌 Scraper-health: sofascore=DEAD(...) · fotmob=DEAD(...)
+```
+
+Master-toggle bleef ondertussen gewoon `true` (jouw oorspronkelijke actie); je hoeft niets opnieuw te togglen.
+
 ## [12.5.9] - 2026-04-26
 
 **HOTFIX op v12.5.8 · scraper-health fire-and-forget i.p.v. blocking await**
