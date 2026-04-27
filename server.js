@@ -2503,7 +2503,7 @@ async function runBasketball(emit) {
       _basketballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'basketball', { onCandidate: _basketballOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'basketball', { onCandidate: _basketballOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -3139,7 +3139,7 @@ async function runBasketball(emit) {
   emit({ log: `🏀 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedPicks.length} basketball picks` });
   // v12.2.3: drop-reasons telemetrie. Toont waarom picks niet doorkwamen
   // tijdens generatie (mkP-level filters; execution-gate-drops zijn separate log).
-  const _dropFmtNba = formatDropReasons(dropReasons);
+  const _dropFmtNba = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtNba) emit({ log: `🏀 Drops: ${_dropFmtNba}` });
 
   // Save scan entry
@@ -3179,7 +3179,7 @@ async function runHockey(emit) {
       _hockeyConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'hockey', { onCandidate: _hockeyOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'hockey', { onCandidate: _hockeyOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -4092,7 +4092,7 @@ async function runHockey(emit) {
 
   emit({ log: `🏒 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedHockeyPicks.length} hockey picks` });
   // v12.2.3: drop-reasons telemetrie.
-  const _dropFmtNhl = formatDropReasons(dropReasons);
+  const _dropFmtNhl = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtNhl) emit({ log: `🏒 Drops: ${_dropFmtNhl}` });
 
   if (gatedHockeyPicks.length) saveScanEntry(gatedHockeyPicks, 'nhl', totalEvents);
@@ -4146,7 +4146,7 @@ async function runBaseball(emit) {
       _baseballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball', { onCandidate: _baseballOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'baseball', { onCandidate: _baseballOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -4787,7 +4787,7 @@ async function runBaseball(emit) {
 
   emit({ log: `⚾ ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedMlbPicks.length} baseball picks` });
   // v12.2.3: drop-reasons telemetrie.
-  const _dropFmtMlb = formatDropReasons(dropReasons);
+  const _dropFmtMlb = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtMlb) emit({ log: `⚾ Drops: ${_dropFmtMlb}` });
 
   if (gatedMlbPicks.length) saveScanEntry(gatedMlbPicks, 'mlb', totalEvents);
@@ -4822,7 +4822,7 @@ async function runFootballUS(emit) {
       _nflConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'american-football', { onCandidate: _nflOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'american-football', { onCandidate: _nflOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -5320,7 +5320,7 @@ async function runFootballUS(emit) {
 
   emit({ log: `🏈 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedNflPicks.length} NFL picks` });
   // v12.2.3: drop-reasons telemetrie.
-  const _dropFmtNfl = formatDropReasons(dropReasons);
+  const _dropFmtNfl = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtNfl) emit({ log: `🏈 Drops: ${_dropFmtNfl}` });
 
   if (gatedNflPicks.length) saveScanEntry(gatedNflPicks, 'nfl', totalEvents);
@@ -5355,7 +5355,7 @@ async function runHandball(emit) {
       _handballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'handball', { onCandidate: _handballOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'handball', { onCandidate: _handballOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = 0;
@@ -5827,7 +5827,7 @@ async function runHandball(emit) {
 
   emit({ log: `🤾 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${gatedHbPicks.length} handball picks` });
   // v12.2.3: drop-reasons telemetrie.
-  const _dropFmtHb = formatDropReasons(dropReasons);
+  const _dropFmtHb = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtHb) emit({ log: `🤾 Drops: ${_dropFmtHb}` });
 
   if (gatedHbPicks.length) saveScanEntry(gatedHbPicks, 'handball', totalEvents);
@@ -5927,7 +5927,7 @@ async function runPrematch(emit) {
       _footballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons } = buildPickFactory(1.60, calib.epBuckets || {}, 'football', { onCandidate: _footballOnCandidate });
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'football', { onCandidate: _footballOnCandidate });
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = AF_FOOTBALL_LEAGUES.length; // 1 call/league gebruikt in pre-fetch
@@ -6923,7 +6923,7 @@ async function runPrematch(emit) {
 
   emit({ log: `📋 ${totalEvents} wedstrijden geanalyseerd (${apiCallsUsed} API calls) | ${picks.length} pre-match picks` });
   // v12.2.3: drop-reasons telemetrie. Voetbal heeft hoogste volume, dus belangrijkste signaal.
-  const _dropFmtVoetbal = formatDropReasons(dropReasons);
+  const _dropFmtVoetbal = formatDropReasons(dropReasons, dropSigCounts);
   if (_dropFmtVoetbal) emit({ log: `⚽ Drops: ${_dropFmtVoetbal}` });
 
   emit({ log: `📋 Totaal ${picks.length} kandidaten | Combi's berekenen...` });

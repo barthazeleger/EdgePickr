@@ -26,7 +26,7 @@ const {
   buildSpreadFairProbFns,
   convertAfOdds,
 } = require('./lib/odds-parser');
-const { createPickContext, buildPickFactory, calcBTTSProb, bestOdds, analyseTotal } = require('./lib/picks');
+const { createPickContext, buildPickFactory, formatDropReasons, calcBTTSProb, bestOdds, analyseTotal } = require('./lib/picks');
 const { summarizeExecutionQuality } = require('./lib/execution-quality');
 const { selectLikelyGoalie, extractNhlGoaliePreview } = require('./lib/integrations/nhl-goalie-preview');
 const lineTimeline = require('./lib/line-timeline');
@@ -2831,6 +2831,42 @@ test('fetchFinishedFixturesById (G9c): geen afGet → lege Map', async () => {
   assert.strictEqual(map.size, 0);
 });
 
+test('formatDropReasons (G10): sigCount-distributie verrijking — telemetrie voor v12.5.0 pivot-effect', () => {
+  // Operator-rapport scan: ep_too_close_to_market=3, ep_below_min=2.
+  // v12.5.3 toont per drop-reason gemiddelde sigCount + ≥6-bucket. Doctrine:
+  // ≥6 bucket op ep_too_close-rij = pick die met v12.5.0 loosened gate net
+  // door zou komen → concrete tuning-signal voor v12.5.x.
+  const { picks, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.6, {}, { sport: 'football' });
+  // Drie ep_too_close-drops: sigCount 6, 4, 3 (avg=4.33, ≥6=1).
+  // Eén met sigCount=6: ep gap moet net binnen 0.02-0.03 zitten zodat v12.5.0
+  // hem ANDERS zou behandelen (= push). Hier convictionDisabled niet gezet
+  // → met sigCount=6 zou hij PUSH'en, niet droppen. Dus we forceren een
+  // klein verschil: gebruik sigCount=4 (3-5 bucket → 0.03-gate) zodat we
+  // wel reproduceerbaar drops maken voor de telemetrie-test.
+  // Eenvoudiger: alle drie sigCount=4 → 0.03-gate, allemaal drops.
+  // Dan toetsen we alleen dat dropSigCounts correct meegegeven wordt.
+  mkP('A vs B', 'EPL', '🏠', 1.60, 't', 65, 0.025, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+1%', 's4:+1%']);  // sigCount=4 → drop ep_too_close
+  mkP('C vs D', 'EPL', '🏠', 1.60, 't', 65, 0.025, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+1%', 's4:+1%', 's5:+1%', 's6:+1%']);  // sigCount=6 → push (G7a-pad)
+  mkP('E vs F', 'EPL', '🏠', 1.60, 't', 65, 0.025, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+1%']);  // sigCount=3 → drop ep_too_close
+  assert.strictEqual(dropReasons.ep_too_close_to_market, 2, '2 sigCount<6 → drops');
+  assert.strictEqual(picks.length, 1, '1 sigCount=6 pick komt door (pivot-effect)');
+  // dropSigCounts.ep_too_close_to_market moet [4, 3] (of [3, 4]) bevatten
+  const arr = dropSigCounts.ep_too_close_to_market;
+  assert.ok(Array.isArray(arr) && arr.length === 2);
+  assert.strictEqual(arr.reduce((s, v) => s + v, 0), 7, 'sum sigCounts moet 4+3=7 zijn');
+  // formatDropReasons enriched
+  const formatted = formatDropReasons(dropReasons, dropSigCounts);
+  assert.ok(formatted.includes('ep_too_close_to_market=2'));
+  assert.ok(formatted.includes('avg=3.5'), `verwachtte avg=3.5 in output: ${formatted}`);
+  assert.ok(formatted.includes('≥6=0'), `verwachtte ≥6=0 in output: ${formatted}`);
+  // Backwards-compat: zonder dropSigCounts → oude format
+  const old = formatDropReasons(dropReasons);
+  assert.strictEqual(old, 'ep_too_close_to_market=2');
+});
+
 test('formatDoctrineDecision (G8g): leesbaar string-output voor inbox-body', () => {
   const { formatDoctrineDecision } = require('./lib/conviction-doctrine');
   const evaluation = {
@@ -3238,7 +3274,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

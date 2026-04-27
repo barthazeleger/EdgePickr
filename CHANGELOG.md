@@ -2,6 +2,42 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.3] - 2026-04-26
+
+**Diagnose-telemetrie · sigCount-distributie per drop-reason**
+
+Aanleiding: operator-rapport scan toonde `⚽ Drops: ep_too_close_to_market=3 · ep_below_min=2`. Onbekend of die drops sigCount≥6 hadden (= door v12.5.0 doctrine-pivot tegengehouden vóór hij effect kon hebben) of sigCount<3 (= terecht gedropt). Zonder dat onderscheid is "te streng" of "te los" een onderbuikgevoel — niet een data-driven beslissing.
+
+### Added
+
+- **`lib/picks.js dropSigCounts`** — parallel object aan `dropReasons` dat per reason de sigCount-array bijhoudt. `bumpDrop(reason, sigCount)` pusht sigCount naar `dropSigCounts[reason]` als het een valid getal is.
+- **`mkP` sigCount-berekening verschoven naar boven** — `const sigCount = (signals || []).length` staat nu vóór de eerste drop-pad zodat álle drops (incl. `price_too_low`) hem kunnen meegeven aan `bumpDrop`.
+- **`formatDropReasons(dropReasons, dropSigCounts?)`** — optionele 2e arg. Zonder → backwards-compat output `key=N`. Met → enriched output `key=N (sigCount avg=X.X, ≥6=Y)`. `≥6=Y` is het concrete v12.5.0-pivot-signaal: een ep_too_close-drop met sigCount≥6 is een pick die met de loosened gate net door zou komen.
+
+### Changed
+
+- **`buildPickFactory` return** — `{ picks, combiPool, mkP, dropReasons, dropSigCounts }`. Backwards-compat: bestaande `dropReasons.x === N` tests blijven werken.
+- **6 sport-scans in `server.js`** — destructure `dropSigCounts` uit `buildPickFactory()` en geef mee aan `formatDropReasons(dropReasons, dropSigCounts)`. Scan-log regel toont nu bv:
+  ```
+  ⚽ Drops: ep_too_close_to_market=3 (sigCount avg=4.7, ≥6=1) · ep_below_min=2 (sigCount avg=2.5, ≥6=0)
+  ```
+
+### Tests (801 → 802)
+
+- **G10** · `formatDropReasons` enriched output: 2 ep_too_close-drops + 1 push (sigCount=6 doctrine-pivot werkt). Verifieert `dropSigCounts.ep_too_close_to_market` array-content + enriched format-string `avg=3.5, ≥6=0` + backwards-compat zonder dropSigCounts arg.
+
+### Verified
+
+- `npm test` 802/802 groen.
+- Geen schema-migratie nodig — pure in-memory telemetrie.
+- Geen runtime-impact — extra geheugen per scan: ~10 ints × N drop-reasons. Wordt na scan-log al gegarbage-collect.
+
+### Doctrine-decisie input voor v12.5.x
+
+Met deze telemetrie is de v12.5.0-pivot-effectiviteit direct meetbaar uit de scan-log:
+- `ep_too_close_to_market=N (sigCount avg=X.X, ≥6=Y)` → Y / N is het percentage drops dat v12.5.0 nu zou pushen. Y > 0 over meerdere scans = pivot werkt zoals bedoeld.
+- `ep_below_min=N (sigCount avg=X.X, ≥6=Y)` → laat zien of MIN_EP=0.52 high-conviction picks blokkeert. Y > 0 over meerdere scans + positieve CLV op die markten = signal om MIN_EP-floor doctrineel te herzien (ander gesprek, niet automatisch).
+
 ## [12.5.2] - 2026-04-26
 
 **Plaatsvervanger voor externe May-10 scheduled agent · v12.4.0 deferred items 2 + 3**
