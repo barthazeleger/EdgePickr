@@ -5917,8 +5917,15 @@ async function runPrematch(emit) {
           if (c.disabled) return `${c.source}=off`;
           if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
           const breakerState = c.breaker?.state || 'unknown';
-          const reason = c.breaker?.lastError || c.error || 'fail';
-          return `${c.source}=DEAD(${reason}, breaker=${breakerState})`;
+          // v12.5.11: gebruik diagnostiek-velden van verrijkte healthCheck.
+          // c.httpStatus toont raw HTTP-status (403/429/500/...); c.error
+          // toont safeFetch-foutreden (http_403, empty_body, json_parse_fail,
+          // url_not_safe, no_fetch_api). Veel concreter dan generieke
+          // null_response van pre-v12.5.11.
+          const statusInfo = c.httpStatus ? `http=${c.httpStatus}` : '';
+          const errInfo = c.error || c.breaker?.lastError || 'fail';
+          const parts = [errInfo, statusInfo].filter(Boolean).join(', ');
+          return `${c.source}=DEAD(${parts}, breaker=${breakerState})`;
         }).join(' · ');
         if (formatted) emit({ log: `🔌 Scraper-health: ${formatted}` });
       } catch (e) {

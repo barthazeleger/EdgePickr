@@ -2,6 +2,35 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.11] - 2026-04-26
+
+**Verrijkte scraper-health diagnose · raw HTTP-status + safeFetch error-label**
+
+Aanleiding: v12.5.10 toonde `🔌 Scraper-health: sofascore=DEAD(null_response, breaker=closed) · fotmob=DEAD(null_response, breaker=closed)`. `null_response` is generiek — kan 403 (cloudflare-block), 429 (rate-limit), empty_body, json_parse_fail, of url_not_safe zijn. Verschil materieel voor diagnose: 403 cloudflare = scrapers permanent dood vanaf Render; 429 = rate-limit (wacht); endpoint-change = code-fix nodig.
+
+### Changed
+
+- **`lib/integrations/sources/sofascore.js healthCheck`** — gebruikt nu `safeFetch(url, {returnDetails: true})` i.p.v. `fetchViaBreaker(...)`. Returnt `{healthy, latencyMs, httpStatus, error, breaker}` waar `error` ∈ `{http_403, http_429, empty_body, json_parse_fail, url_not_safe, no_fetch_api, ...}`. Update breaker handmatig (parallel aan oude pad).
+- **`lib/integrations/sources/fotmob.js healthCheck`** — zelfde pattern.
+- **`server.js runPrematch` scraper-health emit** — toont nu `error` + `httpStatus` velden ipv generieke `lastError`. Output:
+  ```
+  🔌 Scraper-health: sofascore=DEAD(http_403, http=403, breaker=closed) · fotmob=DEAD(empty_body, http=200, breaker=closed)
+  ```
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Voor operator
+
+Volgende scan toont concrete diagnose. Drie hoofdscenario's:
+
+1. **`error=http_403, http=403`** → Cloudflare/anti-bot block op Render's IP-segment. Externe service rejected ons. **Oplossing**: alternatieve API's (TheSportsDB, football-data.org), of paid scraping-proxy.
+2. **`error=http_429, http=429`** → Rate-limit van Render's IP. Wacht of pas rate-limiter omhoog. Niet permanent.
+3. **`error=empty_body, http=200`** → Server returnt 200 maar lege body (Cloudflare-challenge soms). Andere headers/cookies nodig.
+4. **`error=json_parse_fail, http=200`** → Endpoint returnt HTML i.p.v. JSON (layout-change of redirect-to-login). Code-fix nodig.
+
 ## [12.5.10] - 2026-04-26
 
 **HOTFIX op v12.5.7 race-conditie · scraper-restore loopt nu NA `loadOperatorState()`**
