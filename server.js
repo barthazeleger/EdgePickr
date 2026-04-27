@@ -1279,7 +1279,14 @@ function _atomicSetPrematch(v) {
   // recordXxxEvaluation `.catch(()=>{})` writes die nog moeten landen.
   // markFinalTop5 is idempotent (UPDATE op SET=true) dus dubbele triggers OK.
   if (arr.length && typeof markFinalTop5 === 'function') {
-    const fingerprint = arr.map(p => `${p?._fixtureMeta?.fixtureId}|${p?._fixtureMeta?.selectionKey}`).sort().join(',');
+    // v12.5.6: sport-prefix in fingerprint zodat dedup-Set niet collideert
+    // tussen sport-scans. api-sports gebruikt per-endpoint fixtureId-namespaces
+    // (football/basketball/hockey/etc): theoretisch kan `fixtureId=12345` in
+    // hockey én basketball voorkomen → pre-v12.5.6 fingerprint collision →
+    // basketball-pick werd silent gedropt uit final_top5 mark queue.
+    const fingerprint = arr.map(p =>
+      `${p?.sport || 'unknown'}:${p?._fixtureMeta?.fixtureId}|${p?._fixtureMeta?.selectionKey}`
+    ).sort().join(',');
     if (!_finalTop5MarkQueued.has(fingerprint)) {
       _finalTop5MarkQueued.add(fingerprint);
       setTimeout(async () => {
@@ -7903,11 +7910,14 @@ app.use('/api', createInfoRouter({
 // eerder opgebouwde tuning. Nu één bron van waarheid.
 // v12.5.5: gedelegeerd naar lib/learning-loop computeMultiplierFromStats
 // zodat rebuild-calib en updateCalibration dezelfde formule gebruiken.
-// `currentMultiplier` arg blijft in signature voor backwards-compat met
-// rebuild-calib call-site (die `prior` doorgeeft); helper gebruikt 'm niet
-// — de v12.5.4 confidence-ramp herrekent altijd from-scratch op stats.n+profit.
+// LET OP — from-scratch herrekening: `currentMultiplier` arg uit de oude
+// signature wordt niet meer gebruikt. v12.5.4 confidence-ramp + profit-driven
+// delta laten de multiplier altijd berekenen uit `stats.n` + `stats.profit`,
+// niet incrementeel op de prior. Voor rebuild-calib is dat correct (we
+// herbouwen vanaf 0); voor live updateCalibration (per settled bet) is
+// elke call ook idempotent omdat mk.profit/mk.n al accumulatief zijn.
 const { computeMultiplierFromStats } = require('./lib/learning-loop');
-function computeMarketMultiplier(stats /* , currentMultiplier = 1.0 */) {
+function computeMarketMultiplier(stats /* , currentMultiplier = 1.0 — ongebruikt sinds v12.5.5 */) {
   return computeMultiplierFromStats(stats);
 }
 

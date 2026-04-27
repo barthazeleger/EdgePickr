@@ -2,6 +2,40 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.6] - 2026-04-26
+
+**Audit-pass v12.4-v12.5.5 · sport-aware final_top5 dedup-fingerprint + UPDATE-filter**
+
+Aanleiding: operator-trigger "doe een audit op alles". Fresh-eyes-agent vond één concrete P1-bug, één P3 doc-clarity. P2 timing-race (clv_pct/sweep-volgorde) is gevalueerd als false-alarm.
+
+### Fixed
+
+- **[P1] `server.js _atomicSetPrematch` dedup-fingerprint sport-aware** — Pre-fix fingerprint was `${fixtureId}|${selectionKey}`. Bij api-sports namespacet elke sport-endpoint zijn eigen fixtureId-ranges (football, basketball, hockey, baseball, american-football, handball) → theoretisch kan `fixtureId=12345` in zowel hockey als basketball voorkomen. Pre-fix gevolg: hockey-scan bouwt fingerprint, queueed `markFinalTop5`. Basketball-scan binnen 60s window met identieke `fixtureId|selectionKey`-set → fingerprint collision → 2e queue silently gedropt → basketball pick_candidates rij krijgt geen `final_top5=true`. Fix: sport-prefix toegevoegd: `${sport}:${fixtureId}|${selectionKey}`.
+- **[P1] `lib/runtime/maintenance-schedulers.js markFinalTop5` UPDATE-query sport-filter** — Zelfde collision-vector op DB-niveau: zonder sport-filter zou `UPDATE pick_candidates SET final_top5=true WHERE fixture_id=12345 AND selection_key='home' AND created_at >= sinceIso` per ongeluk basketball-rij raken bij hockey-scan-trigger. Fix: `or(\`sport.eq.${sport},sport.is.null\`)` clause toegevoegd. `is.null`-fallback voor legacy rijen zonder sport-kolom (pre-v12.4.0).
+- **[P3] `server.js computeMarketMultiplier` doc-clarity** — comment expliciet maakt dat `currentMultiplier` arg niet meer gebruikt wordt sinds v12.5.5 (from-scratch confidence-ramp).
+
+### Verified (audit-vraagstukken)
+
+- **`pick.audit.conviction_route` propagatie**: alle 17 `recordXxxEvaluation` call-sites passeren `convictionSelections: _sportConvictionFor(...)` correct → `pick_candidates.conviction_route` kolom gepopuleerd zoals bedoeld.
+- **selectionKey-mismatch hockey TT**: `'over'/'under'` (parser) ↔ `recordTotalsEvaluation evaluate('over'/'under')` ↔ `pick_candidates.selection_key='over'/'under'` — consistent.
+- **CHANGELOG-claims vs implementatie** voor v12.4.0 t/m v12.5.5: alle claims geverifieerd, geen drift.
+- **Doctrine-cohesie** `evaluateConvictionDoctrine` ↔ `OPERATOR.conviction_route_disabled`: conflict-vrij — twee paden (auto-revert via cron, manual override via endpoint) muteren dezelfde flag, geen dubbele writes.
+- **TDZ-risico** `markFinalTop5` forward-let: typeof-guard in `_atomicSetPrematch` voorkomt undefined-call vóór schedulers-init.
+
+### Niet gefixed (false-alarm of out-of-scope)
+
+- **[P2 → P4] clv_pct timing race**: agent waarschuwde dat doctrine-review (+6h boot) ruwer met clv_pct=null rijen kan zitten als sweep nog niet draaide. Klopt niet feitelijk: paper-sweep is +90min boot (= 4.5h vóór doctrine-review). Daarna sweep dagelijks, doctrine wekelijks. Verder filtert `evaluateConvictionDoctrine` `avgClv` reeds expliciet op `clv_pct != null` rijen — geen blind-spot, alleen kleinere sample voor avgClv. Geen actie.
+
+### Tests (804 → 805)
+
+- **G13** · `_atomicSetPrematch` dedup-fingerprint sport-aware: hockey + basketball met identieke fixtureId/selectionKey → verschillende fingerprints. Plus regressie-vangst: oude formule (zonder sport-prefix) gaf wel collision.
+
+### Verified
+
+- `npm test` 805/805 groen.
+- Geen schema-migratie.
+- Geen runtime/perf-impact.
+
 ## [12.5.5] - 2026-04-26
 
 **Multiplier-formule één bron van waarheid · `computeMultiplierFromStats`**

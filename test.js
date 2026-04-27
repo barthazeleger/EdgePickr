@@ -2850,6 +2850,31 @@ test('learning-loop confidence-ramp (G11): n=20 → 0× delta, n=100 → 1× del
   assert.ok(Math.abs(effective - 0.01875) < 0.001, `n=30 effective delta=${effective.toFixed(4)} (verwachtte ~0.019)`);
 });
 
+test('v12.5.6 (G13): _atomicSetPrematch dedup-fingerprint is sport-aware', () => {
+  // v12.5.6 audit-finding: pre-fix fingerprint was `${fixtureId}|${selectionKey}`,
+  // wat collisions kon geven tussen sporten met overlappende fixtureId-namespaces
+  // (api-sports gebruikt per-endpoint nummering). Hockey + basketball met
+  // dezelfde fixtureId 12345 + selectionKey 'home' kreeg identieke fingerprint
+  // → 2e scan's markFinalTop5 werd silent gedropt uit de queue.
+  // Fix: sport-prefix toegevoegd.
+  const buildFp = (picks) => picks.map(p =>
+    `${p?.sport || 'unknown'}:${p?._fixtureMeta?.fixtureId}|${p?._fixtureMeta?.selectionKey}`
+  ).sort().join(',');
+  const hockeyArr = [{ sport: 'hockey', _fixtureMeta: { fixtureId: 12345, selectionKey: 'home' } }];
+  const basketballArr = [{ sport: 'basketball', _fixtureMeta: { fixtureId: 12345, selectionKey: 'home' } }];
+  assert.notStrictEqual(buildFp(hockeyArr), buildFp(basketballArr),
+    'sport-prefix moet fingerprints scheiden tussen sporten met fixtureId-collision');
+  assert.strictEqual(buildFp(hockeyArr), 'hockey:12345|home');
+  assert.strictEqual(buildFp(basketballArr), 'basketball:12345|home');
+  // Pre-v12.5.6 (zonder sport-prefix): beide zouden '12345|home' geven →
+  // collision. Dit is de regressie-vangst.
+  const buildFpOld = (picks) => picks.map(p =>
+    `${p?._fixtureMeta?.fixtureId}|${p?._fixtureMeta?.selectionKey}`
+  ).sort().join(',');
+  assert.strictEqual(buildFpOld(hockeyArr), buildFpOld(basketballArr),
+    'sanity check: oude formule had wel collision (we testen dat we WEG zijn van die oude formule)');
+});
+
 test('computeMultiplierFromStats (G12): shared helper voor live + rebuild-calib', () => {
   // v12.5.5: één canonieke formule, gebruikt door updateCalibration ÉN
   // rebuild-calib admin-endpoint. Voorheen had server.js een aparte oudere
@@ -3322,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.5');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.6');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
