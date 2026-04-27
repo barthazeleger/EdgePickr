@@ -2671,6 +2671,126 @@ test('recordTotalsEvaluation (v12.5.0 G7i): convictionSelections.has(side) → r
   assert.strictEqual(underRow.conviction_route, false, 'under niet in set → false (default)');
 });
 
+// ── v12.5.1 · Conviction-doctrine evaluator + hot-toggle ─────────────────────
+//
+// `evaluateConvictionDoctrine` vergelijkt CLV + winrate per pick-track over
+// een rollend venster en geeft een decision-aanbeveling. De wekelijkse
+// scheduler past auto-revert toe bij overtuigend slecht bewijs; promote
+// vereist manual approval. mkP's `convictionDisabled` toggle laat de
+// scheduler hot-rollback triggeren zonder code-deploy.
+test('evaluateConvictionDoctrine (G8a): insufficient conviction samples → hold', async () => {
+  const { evaluateConvictionDoctrine } = require('./lib/conviction-doctrine');
+  const fakeSb = {
+    from: () => ({
+      select: () => ({ gte: () => ({ in: () => Promise.resolve({ data: [
+        { conviction_route: true, result: 'W', clv_pct: 1.5 },
+        { conviction_route: true, result: 'L', clv_pct: -0.5 },
+        { conviction_route: false, result: 'W', clv_pct: 0.5 },
+        { conviction_route: false, result: 'L', clv_pct: -1.0 },
+      ], error: null }) }) })
+    })
+  };
+  const r = await evaluateConvictionDoctrine({ supabase: fakeSb, minSamples: 100 });
+  assert.strictEqual(r.decision, 'hold');
+  assert.strictEqual(r.reason, 'insufficient_conviction_samples');
+  assert.strictEqual(r.conviction.n, 2);
+  assert.strictEqual(r.edge.n, 2);
+});
+
+test('evaluateConvictionDoctrine (G8b): conviction CLV ≥2pp slechter EN winrate ≥5pp slechter → revert', async () => {
+  const { evaluateConvictionDoctrine } = require('./lib/conviction-doctrine');
+  // 100 conviction-rijen: 30 wins / 70 losses (winrate 30%), avgCLV -3%.
+  // 100 edge-rijen: 50 wins / 50 losses (winrate 50%), avgCLV +1%.
+  // ΔWinrate = -20pp, ΔCLV = -4pp → revert.
+  const rows = [
+    ...Array.from({length: 30}, () => ({ conviction_route: true, result: 'W', clv_pct: -3 })),
+    ...Array.from({length: 70}, () => ({ conviction_route: true, result: 'L', clv_pct: -3 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'W', clv_pct: 1 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'L', clv_pct: 1 })),
+  ];
+  const fakeSb = { from: () => ({ select: () => ({ gte: () => ({ in: () => Promise.resolve({ data: rows, error: null }) }) }) }) };
+  const r = await evaluateConvictionDoctrine({ supabase: fakeSb, minSamples: 100 });
+  assert.strictEqual(r.decision, 'revert');
+  assert.strictEqual(r.reason, 'underperform_threshold');
+  assert.ok(r.clvDiff < -0.02, 'clvDiff moet onder -2pp zijn');
+  assert.ok(r.winrateDiff < -0.05, 'winrateDiff moet onder -5pp zijn');
+});
+
+test('evaluateConvictionDoctrine (G8c): conviction parity met edge → promote_pending_approval', async () => {
+  const { evaluateConvictionDoctrine } = require('./lib/conviction-doctrine');
+  // 100 conviction-rijen: 51 wins (winrate 51%), avgCLV +1.0%.
+  // 100 edge-rijen: 50 wins (winrate 50%), avgCLV +0.5%.
+  // ΔWinrate = +1pp (within 3pp), ΔCLV = +0.5pp (≥0) → promote.
+  const rows = [
+    ...Array.from({length: 51}, () => ({ conviction_route: true, result: 'W', clv_pct: 1.0 })),
+    ...Array.from({length: 49}, () => ({ conviction_route: true, result: 'L', clv_pct: 1.0 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'W', clv_pct: 0.5 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'L', clv_pct: 0.5 })),
+  ];
+  const fakeSb = { from: () => ({ select: () => ({ gte: () => ({ in: () => Promise.resolve({ data: rows, error: null }) }) }) }) };
+  const r = await evaluateConvictionDoctrine({ supabase: fakeSb, minSamples: 100 });
+  assert.strictEqual(r.decision, 'promote_pending_approval');
+  assert.strictEqual(r.reason, 'on_par_or_better');
+});
+
+test('evaluateConvictionDoctrine (G8d): mixed evidence (slechte CLV maar OK winrate) → hold', async () => {
+  const { evaluateConvictionDoctrine } = require('./lib/conviction-doctrine');
+  // 100 conviction-rijen: 48 wins (winrate 48%), avgCLV -3%. ΔWinrate = -2pp (binnen revert-grens),
+  // ΔCLV = -3.5pp (onder -2pp). winrateDiff niet < -5pp → niet revert.
+  // ΔCLV niet ≥ 0 → niet promote. Dus mixed_evidence hold.
+  const rows = [
+    ...Array.from({length: 48}, () => ({ conviction_route: true, result: 'W', clv_pct: -3 })),
+    ...Array.from({length: 52}, () => ({ conviction_route: true, result: 'L', clv_pct: -3 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'W', clv_pct: 0.5 })),
+    ...Array.from({length: 50}, () => ({ conviction_route: false, result: 'L', clv_pct: 0.5 })),
+  ];
+  const fakeSb = { from: () => ({ select: () => ({ gte: () => ({ in: () => Promise.resolve({ data: rows, error: null }) }) }) }) };
+  const r = await evaluateConvictionDoctrine({ supabase: fakeSb, minSamples: 100 });
+  assert.strictEqual(r.decision, 'hold');
+  assert.strictEqual(r.reason, 'mixed_evidence');
+});
+
+test('evaluateConvictionDoctrine (G8e): query error (conviction_route kolom ontbreekt) → graceful hold', async () => {
+  const { evaluateConvictionDoctrine } = require('./lib/conviction-doctrine');
+  const fakeSb = {
+    from: () => ({
+      select: () => ({ gte: () => ({ in: () => Promise.resolve({ data: null, error: { message: 'column "conviction_route" does not exist' } }) }) })
+    })
+  };
+  const r = await evaluateConvictionDoctrine({ supabase: fakeSb });
+  assert.strictEqual(r.decision, 'hold');
+  assert.strictEqual(r.reason, 'query_failed');
+  // Belangrijke property: schedulers crashen niet als migratie nog niet
+  // uitgevoerd is. Auto-revert mag NIET triggeren op query-fout.
+});
+
+test('buildPickFactory (v12.5.1 G8f): convictionDisabled=true → sigCount≥6 valt terug op 0.03-gate', () => {
+  const { picks, mkP, dropReasons } = buildPickFactory(1.6, {}, {
+    sport: 'football', convictionDisabled: true,
+  });
+  // odd=1.60, boost=0.025 → ep=0.65, ip+0.03=0.655 → drop (zelfde als sigCount [3,5]).
+  // Met convictionDisabled=false zou sigCount=6 dit pushen (G7a).
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.60, 'test', 65, 0.025, null, 'Bet365',
+    ['s1:+1%', 's2:+1%', 's3:+0.5%', 's4:+0.5%', 's5:+0.5%', 's6:+0.5%']);
+  assert.strictEqual(picks.length, 0, 'kill-switch laat sigCount≥6 weer 3pp-gate volgen');
+  assert.strictEqual(dropReasons.ep_too_close_to_market, 1);
+});
+
+test('formatDoctrineDecision (G8g): leesbaar string-output voor inbox-body', () => {
+  const { formatDoctrineDecision } = require('./lib/conviction-doctrine');
+  const evaluation = {
+    decision: 'revert', reason: 'underperform_threshold',
+    conviction: { n: 100, settled: 100, winrate: 0.30, avgClv: -0.03 },
+    edge: { n: 100, settled: 100, winrate: 0.50, avgClv: 0.01 },
+    clvDiff: -0.04, winrateDiff: -0.20,
+    action: 'set OPERATOR.conviction_route_disabled=true',
+  };
+  const s = formatDoctrineDecision(evaluation);
+  assert.ok(s.includes('REVERT'));
+  assert.ok(s.includes('30.0%'), 'winrate moet 30.0% tonen');
+  assert.ok(s.includes('ΔCLV=-4.00pp'), 'clvDiff moet als -4.00pp tonen');
+});
+
 test('createPickContext: normaliseert pick-runtime context met veilige defaults', () => {
   const ctx = createPickContext({
     sport: 'basketball',
@@ -3063,7 +3183,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.0');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);

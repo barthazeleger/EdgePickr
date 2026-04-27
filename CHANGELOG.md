@@ -2,6 +2,71 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.1] - 2026-04-26
+
+**Conviction-doctrine automation · wekelijkse evidence-review + auto-revert + manual-promote endpoint**
+
+Aanleiding: operator wil de v12.5.0 doctrine-decisie geautomatiseerd zien — niet handmatig SQL-queries draaien om te zien of de loosened ep-gap zich uitbetaalt. Doctrine: auto-toggle in conservatieve richting (rollback bij slecht bewijs), manual approval voor verder loosenen.
+
+### Added
+
+- **`lib/conviction-doctrine.js`** (NIEUW) — `evaluateConvictionDoctrine({supabase, windowDays, minSamples})` vergelijkt CLV + winrate per pick-track (`conviction_route=true` vs `=false`) over rollend venster. Returnt `{decision, reason, conviction, edge, clvDiff, winrateDiff, action}`. Drempels conservatief:
+  - `n < minSamples` (default 100) → `hold` (insufficient evidence)
+  - `clvDiff < -2pp AND winrateDiff < -5pp` → `revert` (auto-toepasbaar)
+  - `clvDiff ≥ 0 AND |winrateDiff| ≤ 3pp` → `promote_pending_approval` (manual)
+  - anders → `hold` (mixed)
+  - Plus `formatDoctrineDecision()` voor leesbare inbox-body.
+- **`lib/runtime/maintenance-schedulers.js scheduleConvictionDoctrineReview`** — wekelijkse cron (eerste run +6u na boot, dan 7d-interval) parallel aan `scheduleAutoRetraining`. Roept evaluator, schrijft inbox-notify (`type='conviction_doctrine'`), en voor `revert`-decision: zet `OPERATOR.conviction_route_disabled=true` + persist via `saveOperatorState()`. `hold`-decisions geen notify (anders wekelijks spam).
+- **`OPERATOR.conviction_route_disabled` boolean** — default `false`. Persistent in admin user settings (zelfde mechaniek als bestaande operator-failsafes). Wanneer `true`: `mkP epGap` valt voor sigCount≥6 terug van 0.02 naar 0.03 (= v12.4.x). Hot-rollback zonder code-deploy.
+- **`lib/picks.js createPickContext convictionDisabled`** — propagatie via `buildPickFactory`-wrapper in `server.js` die `!!OPERATOR.conviction_route_disabled` injecteert. Backwards-compat: niet-meegegeven → `false`.
+- **`lib/routes/admin-conviction-doctrine.js`** (NIEUW) — twee endpoints:
+  - `GET /api/admin/v2/conviction-doctrine` — inspect huidige stand + decision-aanbeveling. Query-params: `window_days` (1-60), `min_samples` (10-1000).
+  - `POST /api/admin/v2/conviction-doctrine/apply` — body `{action: 'enable'|'disable'}` toggle `OPERATOR.conviction_route_disabled`.
+  - `requireAdmin` middleware afgedwongen.
+
+### Changed
+
+- **`lib/picks.js mkP`** — `epGap` formule uitgebreid met `convictionDisabled`-toggle:
+  ```js
+  const epGap = convictionDisabled
+    ? (sigCount >= 3 ? 0.03 : 0.04)        // kill-switch: alle ≥3 buckets op v12.4.x-drempel
+    : (sigCount >= 6 ? 0.02 : sigCount >= 3 ? 0.03 : 0.04);  // v12.5.0 default
+  ```
+  `pick.audit.conviction_route` blijft correct: bij `convictionDisabled=true` geldt `epGap === 0.02` nooit, dus de flag blijft `false`.
+
+### Tests (791 → 798, 7 nieuwe)
+
+- **G8a** · `evaluateConvictionDoctrine` met n<minSamples → `hold` `insufficient_conviction_samples`.
+- **G8b** · 30/70 conviction (winrate 30%, CLV -3%) vs 50/50 edge (winrate 50%, CLV +1%) → `revert` `underperform_threshold`.
+- **G8c** · 51/49 conviction (winrate 51%, CLV +1%) vs 50/50 edge (winrate 50%, CLV +0.5%) → `promote_pending_approval`.
+- **G8d** · mixed evidence (CLV slecht, winrate parity) → `hold` `mixed_evidence`.
+- **G8e** · query error (kolom ontbreekt) → graceful `hold` `query_failed` — bewijst dat scheduler niet crasht als migratie nog niet uitgevoerd is.
+- **G8f** · `buildPickFactory({convictionDisabled: true})` met sigCount=6 + ep gap=0.025 → drop `ep_too_close_to_market` (kill-switch werkt).
+- **G8g** · `formatDoctrineDecision` produceert leesbare string met REVERT-header + winrate% + ΔCLVpp.
+
+### Verified
+
+- `npm test` 798/798 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ → REQUIRE_OK v=12.5.1.
+- Geen schema-migratie nodig in v12.5.1 zelf (gebruikt v12.5.0 `conviction_route`-kolom). Doctrine-evaluator graceful op missende kolom (G8e) — operator kan v12.5.0-migratie op eigen tempo uitvoeren.
+
+### Operator-instructie
+
+1. Run de v12.5.0-migratie (eenmalig). Twee opties:
+   - `node scripts/migrate.js docs/migrations-archive/v12.5.0_conviction_route.sql` (vanaf laptop met `.env`).
+   - **Of**: open Supabase → SQL Editor → plak de inhoud van `docs/migrations-archive/v12.5.0_conviction_route.sql` → Run. Idempotent (ALTER TABLE IF NOT EXISTS).
+2. v12.5.1 wordt automatisch uitgerold via Render auto-deploy van master.
+3. Eerste doctrine-review draait +6u na boot, daarna wekelijks. `📊 Conviction-doctrine review`-log in scan-output.
+4. Inspecteer handmatig: `GET /api/admin/v2/conviction-doctrine` (admin-JWT vereist).
+5. Toggle handmatig:  `POST /api/admin/v2/conviction-doctrine/apply` body `{"action":"disable"}` of `"enable"`.
+
+### Out-of-scope (deferred / monitoring)
+
+- **Externe scheduled agent op 10 mei** — niet in deze repo zichtbaar (waarschijnlijk Claude Code web cron). Aanbeveling: als die taak de v12.4.0 deferred items zou afhandelen (auto-promote/demote, top5-mark UPDATE, paper-trading sweep cron), is `auto-promote/demote` nu vervangen door deze v12.5.1 scheduler. De andere twee deferreds staan nog open. Operator kan kiezen: agent annuleren + accepteren dat top5-mark UPDATE nooit gemaakt wordt, of agent verschuiven naar een latere datum + scope herzien.
+- **Auto-promote (verder loosenen)** — bewust manual: 100 settled rijen kan variance-illusie zijn, doctrine "liever 0 picks dan 1 valse edge" weegt zwaarder dan automation-gemak. `promote_pending_approval`-aanbevelingen komen via inbox; operator past zelf aan in `lib/picks.js`.
+- **Per-sport differentiatie** — evaluator agregeert nu over alle sporten. Bij bewijs van sport-specifieke patronen kan v12.5.x sport-axis toevoegen aan de query.
+- **runPaperTradingSweep cron-aanhaakpunt** — sweep-functie staat sinds v12.4.0 / v12.4.1 gefixed klaar maar is nog niet gewired. Conviction-track CLV-evaluatie werkt zonder sweep zolang operator zelf settle (via tracker bet-resoluties of api-sports daily-results-hook). Volle automation: pak deze in v12.5.x of later.
+
 ## [12.5.0] - 2026-04-26
 
 **Doctrine-pivot · confidence-gewogen ep-gap + dataConf-rank-lift + conviction shadow-track**

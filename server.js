@@ -70,6 +70,11 @@ const OPERATOR = {
   // v10.9.0: master-switch voor externe data-aggregatie (sofascore/fotmob/nba-stats/nhl-api/mlb-stats-ext).
   // Default uit → pas inschakelen na productie-smoketest via admin endpoint.
   scraping_enabled: false,
+  // v12.5.1: conviction-route doctrine kill-switch. Default false = v12.5.0
+  // adaptive ep-gap actief. Auto-revert door wekelijkse
+  // scheduleConvictionDoctrineReview als shadow-CLV evidence te zwak is;
+  // operator override via /admin/v2/conviction-doctrine/apply endpoint.
+  conviction_route_disabled: false,
 };
 
 async function loadOperatorState() {
@@ -1454,11 +1459,14 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
   // pick. Geen resolveExecutionMetrics meer hier.
   // v12.4.0: extraCtx (4e arg) propageert onCandidate-hook naar createPickContext
   // zodat sport-scans markt-telemetrie kunnen counten zonder mkP-signature te wijzigen.
+  // v12.5.1: convictionDisabled propageert OPERATOR-state naar mkP zodat de
+  // wekelijkse doctrine-review hot-rollback kan triggeren zonder code-deploy.
   const ctx = createPickContext({
     sport,
     drawdownMultiplier: getDrawdownMultiplier,
     activeUnitEur: getActiveUnitEur(),
     adaptiveMinEdge,
+    convictionDisabled: !!OPERATOR.conviction_route_disabled,
     ...extraCtx,
   });
   return createPickFactory(MIN_ODDS, calibEpBuckets, ctx);
@@ -7222,6 +7230,7 @@ const scheduleBookieConcentrationWatcher = maintenanceSchedulers.scheduleBookieC
 const scheduleHealthAlerts = maintenanceSchedulers.scheduleHealthAlerts;
 const scheduleSignalStatsRefresh = maintenanceSchedulers.scheduleSignalStatsRefresh;
 const scheduleAutoRetraining = maintenanceSchedulers.scheduleAutoRetraining;
+const scheduleConvictionDoctrineReview = maintenanceSchedulers.scheduleConvictionDoctrineReview;
 const checkUnitSizeChange = maintenanceSchedulers.checkUnitSizeChange;
 const computeBookieConcentration = maintenanceSchedulers.computeBookieConcentration;
 const writeTrainingExamplesForSettled = maintenanceSchedulers.writeTrainingExamplesForSettled;
@@ -7288,6 +7297,12 @@ app.use('/api', createAdminQualityRouter({
 // lib/routes/admin-snapshots.js.
 const createAdminSnapshotsRouter = require('./lib/routes/admin-snapshots');
 app.use('/api', createAdminSnapshotsRouter({ supabase, requireAdmin, autoTuneSignalsByClv, loadUsers }));
+
+// v12.5.1: conviction-doctrine inspect + manual override endpoints.
+const createAdminConvictionDoctrineRouter = require('./lib/routes/admin-conviction-doctrine');
+app.use('/api', createAdminConvictionDoctrineRouter({
+  supabase, requireAdmin, operator: OPERATOR, saveOperatorState,
+}));
 
 // ── PUSH + INBOX NOTIFICATIONS ─────────────────────────────────────────────
 // v11.2.0 Phase 5.1: handlers verhuisd naar lib/routes/notifications.js via
@@ -7937,6 +7952,14 @@ app.listen(PORT, () => {
   scheduleScanHeartbeatWatcher();
   scheduleAutotune();
   scheduleBookieConcentrationWatcher();
+  // v12.5.1: wekelijkse conviction-doctrine review. Auto-revert toegestaan
+  // op overtuigend slecht CLV-bewijs; promote-recommendations gaan via inbox.
+  // Operator-toggle via /admin/v2/conviction-doctrine/apply.
+  scheduleConvictionDoctrineReview(
+    (key) => OPERATOR[key],
+    (key, value) => { OPERATOR[key] = value; },
+    saveOperatorState
+  );
 
   // v12.2.14 (D1): rescheduleer pending pre-kickoff/CLV jobs uit DB en
   // zet sweep-loop op (cleanup completed > 7d, mark overdue > 1u).
