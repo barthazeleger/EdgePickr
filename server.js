@@ -7901,13 +7901,14 @@ app.use('/api', createInfoRouter({
 // Voorheen divergeerden beide; rebuild gebruikte hardcoded 0.70/1.10 ipv
 // huidige multiplier als prior. Resultaat: na rebuild verloor je alle
 // eerder opgebouwde tuning. Nu één bron van waarheid.
-function computeMarketMultiplier(stats, currentMultiplier = 1.0) {
-  if (!stats || stats.n < 8) return currentMultiplier;
-  const wr = stats.w / stats.n;
-  const profitPerBet = stats.profit / stats.n;
-  if (profitPerBet < -3 && wr < 0.40) return Math.max(0.55, currentMultiplier - 0.05);
-  if (profitPerBet >  3 && wr > 0.55) return Math.min(1.30, currentMultiplier + 0.03);
-  return +Math.max(0.70, Math.min(1.20, 0.70 + wr * 1.0)).toFixed(3);
+// v12.5.5: gedelegeerd naar lib/learning-loop computeMultiplierFromStats
+// zodat rebuild-calib en updateCalibration dezelfde formule gebruiken.
+// `currentMultiplier` arg blijft in signature voor backwards-compat met
+// rebuild-calib call-site (die `prior` doorgeeft); helper gebruikt 'm niet
+// — de v12.5.4 confidence-ramp herrekent altijd from-scratch op stats.n+profit.
+const { computeMultiplierFromStats } = require('./lib/learning-loop');
+function computeMarketMultiplier(stats /* , currentMultiplier = 1.0 */) {
+  return computeMultiplierFromStats(stats);
 }
 
 // v11.3.13 Phase 5.4u: /api/admin/rebuild-calib + /api/admin/backfill-signals

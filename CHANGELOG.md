@@ -2,6 +2,49 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.5] - 2026-04-26
+
+**Multiplier-formule één bron van waarheid · `computeMultiplierFromStats`**
+
+Aanleiding: operator zag `over×1.18` calibratie-multiplier blijven staan na v12.5.4 confidence-ramp. Diagnose: `lib/learning-loop.js updateCalibration` (live, per settled bet) gebruikte de v12.5.4 ramp, maar `server.js computeMarketMultiplier` (rebuild-calib admin-endpoint) gebruikte een aparte oudere formule (`0.70 + wr * 1.0`). Twee paden, twee formules → rebuild-calib zou de 1.18 niet correct herrekenen volgens v12.5.4-doctrine.
+
+### Changed
+
+- **`lib/learning-loop.js computeMultiplierFromStats`** (NIEUW export) — pure helper met de v12.5.4 confidence-ramp formule:
+  ```js
+  if (stats.n < 20) return 1.0;
+  const profitPerBet = stats.profit / stats.n;
+  const rawDelta = clamp(profitPerBet * 0.03, [-0.30, 0.30]);
+  const confidence = clamp((stats.n - 20) / 80, [0, 1]);
+  return clamp(1.00 + rawDelta * confidence, [0.70, 1.30]);
+  ```
+- **`updateCalibration`** roept nu `computeMultiplierFromStats(mk)` aan i.p.v. inline-formule.
+- **`server.js computeMarketMultiplier`** delegeert ook naar `computeMultiplierFromStats` (oude `0.70 + wr * 1.0` formule verwijderd). `currentMultiplier` arg blijft in signature voor backwards-compat, maar wordt niet meer gebruikt — ramp herrekent altijd from-scratch op `stats.n + profit`.
+
+### Tests (803 → 804)
+
+- **G12** · `computeMultiplierFromStats` shared helper: onder threshold → 1.0; n=20 cliff → 1.0 (0× confidence); operator-rapport reproduceren (n=22 + €6/bet → ~1.005); n=100 + €6/bet → ~1.18; clamp-grens [0.70, 1.30] gerespecteerd; defensive null-input → 1.0.
+
+### Verified
+
+- `npm test` 804/804 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+
+### Operator-instructie
+
+Om de huidige `over×1.18` direct te corrigeren naar v12.5.5-formule (zonder te wachten op volgende settled bet):
+
+```js
+// In browser console (F12) op edgepickr.onrender.com, ingelogd als admin:
+api('/api/admin/rebuild-calib', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({ resetMultipliers: true })
+}).then(r => r.json()).then(console.log)
+```
+
+Resultaat: alle market multipliers worden herberekend met `computeMultiplierFromStats`. Bij n=22 met +€6/bet zal `football_over` van 1.18 naar ~1.005 zakken — variance-thin sample krijgt geen volle delta meer.
+
 ## [12.5.4] - 2026-04-26
 
 **Calibratie confidence-ramp + voetbal pre-mkP funnel-telemetrie**

@@ -2850,6 +2850,35 @@ test('learning-loop confidence-ramp (G11): n=20 → 0× delta, n=100 → 1× del
   assert.ok(Math.abs(effective - 0.01875) < 0.001, `n=30 effective delta=${effective.toFixed(4)} (verwachtte ~0.019)`);
 });
 
+test('computeMultiplierFromStats (G12): shared helper voor live + rebuild-calib', () => {
+  // v12.5.5: één canonieke formule, gebruikt door updateCalibration ÉN
+  // rebuild-calib admin-endpoint. Voorheen had server.js een aparte oudere
+  // formule (`0.70 + wr * 1.0`) terwijl learning-loop al v12.5.4 ramp had →
+  // rebuild gaf andere multipliers dan live updates.
+  const { computeMultiplierFromStats } = require('./lib/learning-loop');
+  // Onder threshold → 1.0 (no learning yet).
+  assert.strictEqual(computeMultiplierFromStats({ n: 5, profit: 50 }), 1.0);
+  assert.strictEqual(computeMultiplierFromStats({ n: 19, profit: 100 }), 1.0);
+  // Op threshold maar 0× confidence → 1.0.
+  assert.strictEqual(computeMultiplierFromStats({ n: 20, profit: 100 }), 1.0);
+  // Operator-rapport reproduceren: football_over n=22 met profitPerBet ≈ +€6 →
+  // rawDelta=0.18, ramp(22)=0.025, delta=0.0045 → multiplier ≈ 1.005.
+  const m22 = computeMultiplierFromStats({ n: 22, profit: 132 });
+  assert.ok(m22 > 1.0 && m22 < 1.01, `n=22 met +6/bet moet bijna 1.0 zijn (kreeg ${m22.toFixed(4)})`);
+  // Bij n=100 + zelfde profitPerBet → volle delta.
+  const m100 = computeMultiplierFromStats({ n: 100, profit: 600 });
+  assert.ok(m100 > 1.17 && m100 < 1.19, `n=100 met +6/bet → multiplier ~1.18 (kreeg ${m100.toFixed(4)})`);
+  // Negatieve profit dempt symmetrisch.
+  const mNeg = computeMultiplierFromStats({ n: 100, profit: -600 });
+  assert.ok(mNeg > 0.81 && mNeg < 0.83, `n=100 met -6/bet → multiplier ~0.82 (kreeg ${mNeg.toFixed(4)})`);
+  // Clamp-grens [0.70, 1.30] niet overschrijden.
+  assert.ok(computeMultiplierFromStats({ n: 1000, profit: 100000 }) <= 1.30);
+  assert.ok(computeMultiplierFromStats({ n: 1000, profit: -100000 }) >= 0.70);
+  // Defensive: ontbrekende stats → 1.0.
+  assert.strictEqual(computeMultiplierFromStats(null), 1.0);
+  assert.strictEqual(computeMultiplierFromStats({}), 1.0);
+});
+
 test('formatDropReasons (G10): sigCount-distributie verrijking — telemetrie voor v12.5.0 pivot-effect', () => {
   // Operator-rapport scan: ep_too_close_to_market=3, ep_below_min=2.
   // v12.5.3 toont per drop-reason gemiddelde sigCount + ≥6-bucket. Doctrine:
@@ -3293,7 +3322,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.4');
+  assert.strictEqual(appMeta.APP_VERSION, '12.5.5');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
