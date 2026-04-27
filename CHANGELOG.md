@@ -2,6 +2,39 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.5.7] - 2026-04-26
+
+**Scrapers werkten niet · master `OPERATOR.scraping_enabled` propageert nu naar per-source toggles**
+
+Aanleiding: operator-rapport "scrapers werken gewoon niet". Diagnose: de scraping-feature heeft TWEE toggles — master `OPERATOR.scraping_enabled` (de operator-failsafe) ÉN per-source `_sourceEnabled` Map in `lib/integrations/scraper-base.js`. Master aanzetten was niet voldoende — de individuele bronnen (sofascore, fotmob, nba-stats, nhl-api, mlb-stats-ext) bleven default `false` totdat ze expliciet via `POST /admin/v2/scrape-sources` werden aangezet. Resultaat: scrapers werden aangeroepen maar returneerden meteen `null` op de `if (!isSourceEnabled(...))` guard → silent skip → `btts_thin_h2h=28` bleef ongewijzigd ondanks operator-actie.
+
+### Fixed
+
+- **`lib/routes/admin-controls.js POST /admin/v2/operator`** — bij `scraping_enabled` toggle wordt nu zij-effect uitgevoerd op alle 5 known sources (`sofascore`, `fotmob`, `nba-stats`, `nhl-api`, `mlb-stats-ext`). Master aan → alle bronnen aan + persist naar `calib.scraper_sources`. Master uit → alle bronnen uit (anders bleef state inconsistent: master uit + per-source aan = scraping nog steeds actief). Per-source override blijft beschikbaar via `/admin/v2/scrape-sources` voor specifieke disable van één bron.
+- **`server.js` boot-time scraper-restore** — naast `persisted[name]===true` herstel-pad: als `OPERATOR.scraping_enabled=true` ÉN `cs.scraper_sources` heeft géén `true`-waardes, default alle 5 known sources op aan. Closes-the-config-gap voor operators die pre-v12.5.7 master aan zetten zonder per-source actie.
+
+### Operator-instructie
+
+Operator's huidige master-state (`scraping_enabled=true`) wordt vanzelf gepropageerd bij eerste boot na deploy. Geen handmatige actie meer nodig — sofascore + fotmob worden vanaf de eerstvolgende scan daadwerkelijk aangeroepen.
+
+Verificatie in Render-log na deploy:
+```
+🔌 Scrape-sources hersteld: 5 source(s) enabled (master-default)
+```
+
+Verificatie in scan-log: pre-mkP funnel `btts_thin_h2h` zou MOETEN dalen (niet noodzakelijk naar 0 — small leagues zoals Cyprus/Egypt/Peru kunnen ook in sofascore/fotmob beperkte coverage hebben).
+
+### Verified
+
+- `npm test` 805/805 groen.
+- `node -e "require('./server.js')"` boot zonder TDZ.
+- Geen schema-migratie.
+
+### Out-of-scope (deferred)
+
+- **Alternatieve data-bronnen voor small-league h2h** — als `btts_thin_h2h` na deze fix nog steeds op ~28/35 hangt, betekent het dat sofascore + fotmob óók geen coverage hebben voor de kleine competities. Dan: API-research naar TheSportsDB / football-data.org / Soccerway / FlashScore. Wachten op data-bewijs uit eerstvolgende post-deploy scan voordat we daarop tijd zetten.
+- **Health-check inbox-warning** — als sofascore/fotmob breaker open trekt (cloudflare-block, layout-change), zou een inbox-notificatie nuttig zijn. Niet acuut.
+
 ## [12.5.6] - 2026-04-26
 
 **Audit-pass v12.4-v12.5.5 · sport-aware final_top5 dedup-fingerprint + UPDATE-filter**

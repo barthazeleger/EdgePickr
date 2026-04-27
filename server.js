@@ -8053,16 +8053,24 @@ app.listen(PORT, () => {
 
   // v10.9.9: herstel persisted scrape-source toggles uit calib. Zonder dit
   // reset elke deploy alle sources naar default off — operationeel irritant.
+  // v12.5.7: als master OPERATOR.scraping_enabled aan staat maar persisted
+  // scraper_sources is leeg/geen-aan, default ze nu allemaal aan. Closure-
+  // van-config-gap: operator zette pre-v12.5.7 master aan, maar per-source
+  // bleef uit → scrapers werden silent geskipt. Master-toggle is nu source-
+  // of-truth, per-source kan handmatig override geven via /scrape-sources.
   try {
     const scraperBase = require('./lib/integrations/scraper-base');
     const cs = loadCalib();
     const persisted = cs.scraper_sources || {};
     const known = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+    const masterOn = !!OPERATOR.scraping_enabled;
+    const noPersistedTrue = !Object.values(persisted).some(v => v === true);
     let applied = 0;
     for (const name of known) {
       if (persisted[name] === true) { scraperBase.setSourceEnabled(name, true); applied++; }
+      else if (masterOn && noPersistedTrue) { scraperBase.setSourceEnabled(name, true); applied++; }
     }
-    if (applied) console.log(`🔌 Scrape-sources hersteld: ${applied} source(s) enabled uit calib`);
+    if (applied) console.log(`🔌 Scrape-sources hersteld: ${applied} source(s) enabled (${masterOn && noPersistedTrue ? 'master-default' : 'calib'})`);
   } catch (e) { console.warn('scrape-sources restore failed:', e.message); }
 
   // v10.9.9: active unit/bankroll bij boot laden zodat pick-ranking vanaf de
