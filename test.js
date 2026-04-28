@@ -3389,7 +3389,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '13.0.3');
+  assert.strictEqual(appMeta.APP_VERSION, '13.1.0-pre1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6864,6 +6864,52 @@ test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten (incl. v12.7.0-pre4 Ten
   assert.strictEqual(tsdb.SPORT_MAP.tennis, 'Tennis');
   assert.strictEqual(tsdb.SPORT_MAP.rugby, 'Rugby');
   assert.strictEqual(tsdb.SPORT_MAP.cricket, 'Cricket');
+});
+
+test('bookie-audit findBetterQuote (v14.0 Phase A.1): detecteert beter rejected quote', () => {
+  const { findBetterQuote } = require('./lib/bookie-audit');
+  const quotes = [
+    { bookie: 'Bet365',  price: 1.85 },
+    { bookie: 'Unibet',  price: 1.92 },
+    { bookie: 'Toto',    price: 1.88 },
+    { bookie: 'BetCity', price: 2.05 },
+  ];
+  // Chosen = Bet365 1.85; BetCity 2.05 is +10.8%, Unibet 1.92 is +3.8%, Toto 1.88 is +1.6%
+  const r = findBetterQuote(quotes, 1.85, 'Bet365', { thresholdPct: 0.02 });
+  assert.ok(r, 'BetCity 2.05 vs Bet365 1.85 = +10.8% > threshold 2%');
+  assert.strictEqual(r.bookie, 'BetCity');
+  assert.ok(r.gapPct > 10);
+});
+
+test('bookie-audit findBetterQuote: skipt chosen-bookie zelf', () => {
+  const { findBetterQuote } = require('./lib/bookie-audit');
+  const quotes = [
+    { bookie: 'Bet365', price: 1.85 },
+    { bookie: 'Bet365', price: 1.90 },  // tweede Bet365-quote
+    { bookie: 'Unibet', price: 1.86 },
+  ];
+  // Chosen = Bet365; alle Bet365-entries skip; Unibet 1.86 vs 1.85 = 0.5% < threshold 2%
+  const r = findBetterQuote(quotes, 1.85, 'Bet365', { thresholdPct: 0.02 });
+  assert.strictEqual(r, null, 'gap onder threshold + chosen-bookie zelf gefilterd');
+});
+
+test('bookie-audit findBetterQuote: respecteert maxPrice cap', () => {
+  const { findBetterQuote } = require('./lib/bookie-audit');
+  const quotes = [
+    { bookie: 'Bet365',   price: 1.85 },
+    { bookie: 'Longshot', price: 8.00 },  // boven cap
+    { bookie: 'Unibet',   price: 1.95 },
+  ];
+  const r = findBetterQuote(quotes, 1.85, 'Bet365', { thresholdPct: 0.02, maxPrice: 4.0 });
+  assert.ok(r);
+  assert.strictEqual(r.bookie, 'Unibet', 'Longshot >maxPrice gefilterd, Unibet wint');
+});
+
+test('bookie-audit findBetterQuote: lege array → null', () => {
+  const { findBetterQuote } = require('./lib/bookie-audit');
+  assert.strictEqual(findBetterQuote([], 1.85, 'Bet365'), null);
+  assert.strictEqual(findBetterQuote(null, 1.85, 'Bet365'), null);
+  assert.strictEqual(findBetterQuote([{ bookie: 'X', price: 2.0 }], 0, 'Bet365'), null);
 });
 
 test('thesportsdb: skip-results worden niet ge-cached (v12.6.1 negative-cache fix)', async () => {

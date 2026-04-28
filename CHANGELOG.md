@@ -2,6 +2,37 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.1.0-pre1] - 2026-04-28
+
+**v14.0 Phase A · Bookie-anomaly logging gewired in 4 hot markets**
+
+Aanleiding: operator-rapport (sessie 2026-04-28, 2x) — hockey-pick toonde Bet365's odd terwijl andere preferred bookies (Unibet/Toto) materieel betere prijzen hadden op zelfde uitkomst. Audit (Phase A) toonde dat `logBookieAnomaly()` (server.js:1450-1473) wel bestond maar uit GEEN sport-scanloop werd aangeroepen, behalve hockey team_totals (v12.4.2). Dit is exact het type bug dat operator-zichtbaarheid hoort te krijgen zonder pick-logica te muteren (settlement-safety blijft).
+
+### Added
+
+- **`lib/bookie-audit.js findBetterQuote()`** — filter-loze variant van bestaande `findRejectedBetterQuote()`. Vindt quote in `all` met materieel hogere prijs dan chosen, ongeacht waarom deze niet gekozen werd. Zonder isAllowed-predicate; sluit alleen chosen-bookie zelf uit. Default threshold 2% (lager dan filter-rejected default 3% omdat preferred-pool gaps ruis-vrijer zijn).
+- **`server.js _auditChoiceVsAll()`** — wrapper helper die `findBetterQuote()` koppelt aan `logBookieAnomaly()` met sport/wedstrijd context. Fail-soft (audit mag scan nooit breken).
+- **Hockey ML 2-way audit** (server.js:3569-3580) — vergelijkt chosen tegen volledige homeOdds/awayOdds incl. 60-min books die scope-filter heeft uitgesloten. Operator krijgt zichtbaarheid op gemiste prijs-gaps; pick blijft scope-filter respecteren.
+- **Hockey ML 3-way audit** (server.js:3760-3774) — idem voor 60-min regulation 3-way.
+- **Voetbal BTTS Yes/No audit** (server.js:6738-6770) — verzamelt alle quotes (incl. non-preferred Pinnacle/sharp-refs) parallel aan preferred-only pick-selection; logt anomaly als non-preferred materieel hoger.
+- **Voetbal DNB Home/Away audit** (server.js:6912-6930) — zelfde patroon.
+
+### Tests (867 → 871)
+
+- `bookie-audit findBetterQuote (v14.0 Phase A.1): detecteert beter rejected quote`
+- `bookie-audit findBetterQuote: skipt chosen-bookie zelf` — multi-quote bookies (Bet365 main vs Bet365 alt)
+- `bookie-audit findBetterQuote: respecteert maxPrice cap` — longshot-filter
+- `bookie-audit findBetterQuote: lege array → null`
+
+### Niet in deze pre1 (komt incrementeel in pre2 t/m H)
+
+- Voetbal ML/1X2 + Double Chance audit-wiring — pattern is klaar, sites volgen
+- Basketball/Baseball/NFL/Handball ML audit-wiring — zelfde pattern uitgerold per loop
+- A.2 dnb_no_market: investigation toont **structureel issue** (api-football coverage gap voor non-EU leagues, geen bug). DNB synthese uit 1X2 is al aanwezig in adjHome2/adjAway2 redistribution; alleen quote ontbreekt waar bookie de markt niet aanbiedt. Niet oplosbaar zonder OddsPapi DNB-coverage uitbreiding.
+- A.3 getMergedForm wiring — door h2h-merge-pattern al deels aanwezig; expliciete form-merge komt na audit-pass
+- A.4 getStandings fallback — komt incrementeel
+- A.5 getLivescore pre-filter — premium-only TSDB v2; deferred
+
 ## [13.0.3] - 2026-04-28
 
 **Hotfix · Stale market-multiplier na revert + UI/docstring doctrine-drift "8+ bets" → "20+ bets"**

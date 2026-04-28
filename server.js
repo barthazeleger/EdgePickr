@@ -1447,6 +1447,26 @@ async function logCheckFailure(type, wedstrijd, reason) {
 //
 // Dedup: 6h per (type + title) zoals logCheckFailure. Niet-persistent zodat
 // "Wis alles" hem opruimt — diagnostische ruis, geen audit-event.
+// v14.0 Phase A.1: helper voor brede bookie-anomaly audit. Vergelijkt de
+// gekozen quote tegen alle quotes in dezelfde markt-bucket (preferred én
+// non-preferred), logt inbox-warning bij materieel betere uitgesloten quote.
+// Operator-rapport (sessie 2026-04-28): hockey toonde Bet365 terwijl andere
+// preferred bookies (Unibet/Toto) betere prijzen hadden — dit dekt zowel
+// scope-filter blindspots als preferred-pool selection-gaps.
+function _auditChoiceVsAll(allQuotes, chosenBookie, chosenPrice, ctx, opts = {}) {
+  if (!Array.isArray(allQuotes) || !chosenBookie || !Number.isFinite(chosenPrice) || chosenPrice <= 0) return;
+  try {
+    const { findBetterQuote } = require('./lib/bookie-audit');
+    const rej = findBetterQuote(allQuotes, chosenPrice, chosenBookie, opts);
+    if (!rej) return;
+    logBookieAnomaly({
+      ...ctx,
+      chosen: { bookie: chosenBookie, price: chosenPrice },
+      rejected: rej,
+    }).catch(() => {});
+  } catch { /* swallow — audit mag scan nooit breken */ }
+}
+
 async function logBookieAnomaly(args) {
   try {
     const { sport, wedstrijd, market, selectionKey, line, chosen, rejected } = args || {};
@@ -3549,6 +3569,17 @@ async function runHockey(emit) {
         const bH = bestFromArr(homeOddsOT.length ? homeOddsOT : homeOdds, { maxPrice: MAX_WINNER_ODDS });
         const bA = bestFromArr(awayOddsOT.length ? awayOddsOT : awayOdds, { maxPrice: MAX_WINNER_ODDS });
 
+        // v14.0 Phase A.1: anomaly-audit hockey ML 2-way. Vergelijk chosen tegen
+        // ALLE quotes (incl. 60-min books die scope-filter heeft uitgesloten)
+        // zodat operator zichtbaarheid heeft op gemiste prijs-gaps. Pick blijft
+        // de filter respecteren (settlement-safety); audit is alleen logging.
+        _auditChoiceVsAll(homeOdds, bH.bookie, bH.price,
+          { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'ml', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(awayOdds, bA.bookie, bA.price,
+          { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'ml', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+
         const homeEdge = bH.price > 0 ? adjHome * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway * bA.price - 1 : -1;
 
@@ -3728,6 +3759,17 @@ async function runHockey(emit) {
           const bH3 = bestFromArr(h3, { maxPrice: MAX_WINNER_ODDS });
           const bD3 = bestFromArr(d3, { maxPrice: 8.00 });
           const bA3 = bestFromArr(a3, { maxPrice: MAX_WINNER_ODDS });
+
+          // v14.0 Phase A.1: anomaly-audit hockey 3-way ML (60-min regulation).
+          _auditChoiceVsAll(h3, bH3.bookie, bH3.price,
+            { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'threeway', selectionKey: 'home', line: null },
+            { maxPrice: MAX_WINNER_ODDS });
+          _auditChoiceVsAll(d3, bD3.bookie, bD3.price,
+            { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'threeway', selectionKey: 'draw', line: null },
+            { maxPrice: 8.00 });
+          _auditChoiceVsAll(a3, bA3.bookie, bA3.price,
+            { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'threeway', selectionKey: 'away', line: null },
+            { maxPrice: MAX_WINNER_ODDS });
 
           const e3H = bH3.price > 0 ? p3.pHome * bH3.price - 1 : -1;
           const e3D = bD3.price > 0 ? p3.pDraw * bD3.price - 1 : -1;
@@ -6693,13 +6735,31 @@ async function runPrematch(emit) {
             };
             let bestYes = { price: 0, bookie: '' };
             let bestNo  = { price: 0, bookie: '' };
+            // v14.0 Phase A.1: parallel verzamel alle quotes (incl non-preferred)
+            // voor anomaly-audit. Pick zelf blijft preferred-only (doctrine §10.A);
+            // audit logt zichtbaarheid op gemiste prijs-gaps tegen non-preferred.
+            const allYesQuotes = [];
+            const allNoQuotes = [];
             for (const b of bttsBk) {
-              if (!isPreferred(b.name)) continue;
               const yesVal = b.values.find(v => v.value === 'Yes');
               const noVal  = b.values.find(v => v.value === 'No');
+              if (yesVal) {
+                const p = parseFloat(yesVal.odd);
+                if (Number.isFinite(p) && p > 1) allYesQuotes.push({ bookie: b.name, price: p });
+              }
+              if (noVal) {
+                const p = parseFloat(noVal.odd);
+                if (Number.isFinite(p) && p > 1) allNoQuotes.push({ bookie: b.name, price: p });
+              }
+              if (!isPreferred(b.name)) continue;
               if (yesVal) { const p = parseFloat(yesVal.odd); if (p > bestYes.price) bestYes = { price: p, bookie: b.name }; }
               if (noVal)  { const p = parseFloat(noVal.odd);  if (p > bestNo.price)  bestNo  = { price: p, bookie: b.name }; }
             }
+            // Anomaly-audit voor BTTS Yes + No tegen volledige (incl-non-preferred) pool.
+            _auditChoiceVsAll(allYesQuotes, bestYes.bookie, bestYes.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'btts', selectionKey: 'yes', line: null });
+            _auditChoiceVsAll(allNoQuotes, bestNo.bookie, bestNo.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'btts', selectionKey: 'no', line: null });
 
             if (bestYes.price >= 1.50 || bestNo.price >= 1.50) {
               // Base BTTS probability from H2H + form
@@ -6861,13 +6921,28 @@ async function runPrematch(emit) {
             };
             let bestDnbH = { price: 0, bookie: '' };
             let bestDnbA = { price: 0, bookie: '' };
+            const allDnbHQuotes = [];
+            const allDnbAQuotes = [];
             for (const b of dnbBk) {
-              if (!_isPreferredDnb(b.name)) continue;
               const homeVal = b.values.find(v => v.value === 'Home');
               const awayVal = b.values.find(v => v.value === 'Away');
+              if (homeVal) {
+                const p = parseFloat(homeVal.odd);
+                if (Number.isFinite(p) && p > 1) allDnbHQuotes.push({ bookie: b.name, price: p });
+              }
+              if (awayVal) {
+                const p = parseFloat(awayVal.odd);
+                if (Number.isFinite(p) && p > 1) allDnbAQuotes.push({ bookie: b.name, price: p });
+              }
+              if (!_isPreferredDnb(b.name)) continue;
               if (homeVal) { const p = parseFloat(homeVal.odd); if (p > bestDnbH.price) bestDnbH = { price: p, bookie: b.name }; }
               if (awayVal) { const p = parseFloat(awayVal.odd); if (p > bestDnbA.price) bestDnbA = { price: p, bookie: b.name }; }
             }
+            // v14.0 Phase A.1: DNB anomaly-audit
+            _auditChoiceVsAll(allDnbHQuotes, bestDnbH.bookie, bestDnbH.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'dnb', selectionKey: 'home', line: null });
+            _auditChoiceVsAll(allDnbAQuotes, bestDnbA.bookie, bestDnbA.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'dnb', selectionKey: 'away', line: null });
 
             // DNB probability: remove draw chance and redistribute
             const dnbHomeP = fp.draw > 0 ? adjHome2 / (adjHome2 + adjAway2) : adjHome2;
