@@ -2,6 +2,27 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.0.1] - 2026-04-28
+
+**Server.js wiring · OddsAPI live in scraper-registry + scan-log health**
+
+Aanleiding: ODDSAPI_KEY is gezet op Render env vars maar adapter sliep nog — geen scraper-registry-entry, niet zichtbaar in scan-log health-line, niet toggleable via admin-panel. Deze patch activeert de adapter in operationele context zonder pick-logica te raken (te risicovol zonder eigen audit-pass).
+
+### Changed
+
+- **`server.js restoreScraperSourcesFromCalib()`** — `known` array uitgebreid met `'oddsapi'`. Bij master `scraping_enabled=true` zonder persisted overrides wordt OddsAPI nu default-on (consistent met andere bronnen). Quota-tracking blijft autonoom in adapter.
+- **`server.js` scan-log health-line** — ftChecks-filter accepteert nu ook `c.source === 'oddsapi'` zodat operator OddsAPI-status (active / degraded / no-key) per scan ziet, naast TheSportsDB.
+- **`index.html`** admin-panel scrape-source list + prompt-text uitgebreid met `oddsapi`.
+
+### Niet in deze patch (komt v13.0.2)
+
+- **`btts_thin_h2h` substitutie via OddsAPI markt-implied prior** — vereist:
+  1. OddsAPI fetchOdds per fixture (~1 quota-call per voetbalwedstrijd → ~30/scan = 90/dag → 2700/maand, ruim boven 500 free-tier limiet)
+  2. Fixture-mapping tussen api-football fixtureId en OddsAPI eventId (verschillende ID-spaces, fuzzy team-naam-match nodig)
+  3. Devigging van Bet365/Pinnacle markt-prijzen naar fair probability
+  4. Conversie totals-2.5 quote → bttsRate-substitute (correlatie ≠ direct mapping, vereist sport-specifieke calibration)
+- Aparte commit met audit-pass om regressie op pick-logica te voorkomen.
+
 ## [13.0.0] - 2026-04-28
 
 **Major version bump · Multi-Source Pivot Cutover · Sport-uitbreiding 6 → 9**

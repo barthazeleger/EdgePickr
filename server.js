@@ -5977,7 +5977,10 @@ async function runPrematch(emit) {
           dataAgg.healthCheckAll(),
           new Promise((_, rej) => setTimeout(() => rej(new Error('health_timeout_4s')), 4000)),
         ]);
-        const ftChecks = (checks || []).filter(c => c && c.source === 'thesportsdb');
+        // v13.0.0: scan-log health-line bevat nu beide multi-source-spelers
+        // (thesportsdb + oddsapi) zodat operator OddsAPI quota-status direct
+        // ziet tijdens scan i.p.v. enkel via /api/status.
+        const ftChecks = (checks || []).filter(c => c && (c.source === 'thesportsdb' || c.source === 'oddsapi'));
         const formatted = ftChecks.map(c => {
           if (c.disabled) return `${c.source}=off`;
           if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
@@ -8167,7 +8170,9 @@ app.listen(PORT, () => {
       const scraperBase = require('./lib/integrations/scraper-base');
       const cs = loadCalib();
       const persisted = cs.scraper_sources || {};
-      const known = ['thesportsdb', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+      // v13.0.0: oddsapi toegevoegd. Default-on bij master scraping_enabled
+      // (consistent met andere sources). Quota-tracking gebeurt in adapter zelf.
+      const known = ['thesportsdb', 'oddsapi', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
       const masterOn = !!OPERATOR.scraping_enabled;
       const noPersistedTrue = !Object.values(persisted).some(v => v === true);
       let applied = 0;
