@@ -1,6 +1,6 @@
 # EdgePickr Private Operating Model
 
-Laatste update: 2026-04-28 (v14.0.0)
+Laatste update: 2026-04-28 (v15.0.0)
 
 Dit document is de actieve productdoctrine voor EdgePickr. Niet het oude
 SaaS-plan, maar de private operator-workflow is leidend.
@@ -49,6 +49,13 @@ zonder point-in-time correctness of scan-integriteit te beschadigen.
 - Stake logic moet bankroll-beschermend zijn.
 - Step-ups vragen bewijs, niet enthousiasme.
 - Alerts en failsafes horen klein, duidelijk en operator-first te zijn.
+
+### v15 self-improving release
+- Runtime-parameters (`MIN_EP`, divergence, NHL OT share, signal CLV/Brier thresholds) komen uit calibratie met defaults als safety-net.
+- Signaalgewichten resolven hiërarchisch: `sport:market:signal` → `sport:signal` → `signal` → default. Shadow/experimentele signalen starten op 0 tot CLV/Brier bewijs ze promoot.
+- Nieuwe bronnen krijgen eerst source-attribution, sharp-anchor logging en playability metadata. Scoring-impact volgt pas na sample-size en point-in-time settlement.
+- Tennis, rugby en cricket draaien paper-only totdat settlement coverage en paper CLV bewezen positief zijn.
+- Execution truth blijft gescheiden van sharp truth: preferred bookies bepalen uitvoerbaarheid; Pinnacle/Betfair/OddsPapi zijn referentie tenzij ze expliciet executable zijn.
 
 ## 4. Beslisregels voor nieuwe features
 

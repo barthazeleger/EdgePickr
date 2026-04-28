@@ -36,6 +36,7 @@ const calMonitor = require('./lib/calibration-monitor');
 const corrDamp = require('./lib/correlation-damp');
 const walkForward = require('./lib/walk-forward');
 const scanGate = require('./lib/runtime/scan-gate');
+const v15Runtime = require('./lib/v15-runtime');
 const { evaluateStakeRegime, computeBankrollMetrics } = require('./lib/stake-regime');
 const { supportsApiSportsInjuries } = require('./lib/integrations/api-sports-capabilities');
 const dailyResults = require('./lib/runtime/daily-results');
@@ -66,7 +67,7 @@ const {
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck,
   normalizeTeamName, teamMatchScore, normalizeSport, detectMarket,
   pitcherAdjustment, pitcherReliabilityFactor, goalieAdjustment,
-  injurySeverityWeight, nbaAvailabilityAdjustment,
+  injurySeverityWeight, nflInjurySignal, nbaAvailabilityAdjustment,
   shotsDifferentialAdjustment, recomputeWl,
   NHL_OT_HOME_SHARE, MODEL_MARKET_DIVERGENCE_THRESHOLD,
   bayesSmooth, hierarchicalMultiplier, HIER_CALIB_PRIOR, HIER_CALIB_MIN_N, HIER_CALIB_K,
@@ -1585,6 +1586,23 @@ test('injurySeverityWeight: nba statuses worden gewogen i.p.v. blind geteld', ()
   assert.strictEqual(injurySeverityWeight('Probable', 'basketball'), 0);
 });
 
+test('nflInjurySignal: berekent diff vóór adj en blijft safe bij missende data', () => {
+  const signal = nflInjurySignal(10, 20, { 10: 1, 20: 5 }, 0.8);
+  assert.deepStrictEqual(signal, {
+    home: 1,
+    away: 5,
+    diff: 4,
+    adj: 0.016,
+  });
+  assert.deepStrictEqual(nflInjurySignal(10, 20, {}, 1), {
+    home: 0,
+    away: 0,
+    diff: 0,
+    adj: 0,
+  });
+  assert.strictEqual(nflInjurySignal(10, 20, { 20: 3 }, 'bad').adj, 0);
+});
+
 test('nbaAvailabilityAdjustment: meer rust en gezondere away-team negatief voor home', () => {
   const r = nbaAvailabilityAdjustment(
     { restDays: 1, injuryLoad: 2.0 },
@@ -2383,12 +2401,18 @@ test('writePickCandidate: rejected pick met reason wordt accepted', async () => 
     bookmaker: 'Bet365', bookmakerOdds: 1.86, fairProb: 0.55, edgePct: 2.3,
     passedFilters: false, rejectedReason: 'edge_below_min (2.3%)',
     signals: ['form:+1.2%'],
+    sourceAttribution: { apiSports: { h2h: 8 }, thesportsdb: { form: 5 } },
+    sharpAnchor: { source: 'oddspapi', bookmaker: 'pinnacle', fairProb: 0.54 },
+    playability: { playable: true, lineQuality: 'high' },
   });
   assert.ok(captured);
   assert.strictEqual(captured.passed_filters, false);
   assert.strictEqual(captured.rejected_reason, 'edge_below_min (2.3%)');
   assert.strictEqual(captured.bookmaker, 'Bet365');
   assert.strictEqual(captured.signals.length, 1);
+  assert.strictEqual(captured.source_attribution.apiSports.h2h, 8);
+  assert.strictEqual(captured.sharp_anchor.source, 'oddspapi');
+  assert.strictEqual(captured.playability.lineQuality, 'high');
 });
 
 test('writePickCandidate: ontbrekende fields → no-op', async () => {
@@ -2592,6 +2616,20 @@ test('buildPickFactory (v12.5.0 G7d): MIN_EP=0.52 floor blijft ongewijzigd ondan
     Array.from({length: 10}, (_, i) => `sig${i}:+0.5%`));
   assert.strictEqual(picks.length, 0, 'longshot-floor moet absoluut blijven');
   assert.strictEqual(dropReasons.ep_below_min, 1);
+});
+
+test('buildPickFactory (v15): resolveMinEp laat per-markt floor sturen zonder code-change', () => {
+  const { picks, mkP } = buildPickFactory(1.6, {}, {
+    sport: 'football',
+    resolveMinEp: ({ marketType }) => marketType === 'btts' ? 0.50 : 0.52,
+  });
+  mkP(
+    'A vs B', 'EPL', '🔥 BTTS Ja', 2.20, 'test', 50, 0.05, null, 'Bet365',
+    Array.from({ length: 6 }, (_, i) => `sig${i}:+0.5%`),
+    null,
+    { fixtureId: 1, marketType: 'btts', selectionKey: 'yes', line: null }
+  );
+  assert.strictEqual(picks.length, 1, 'BTTS gebruikt runtime minEp=0.50 i.p.v. hardcoded 0.52');
 });
 
 test('buildPickFactory (v12.5.0 G7e): extreme_divergence (>20pp) blijft hard-drop ondanks sigCount=10', () => {
@@ -3389,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '14.0.0');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6892,13 +6930,14 @@ test('calib-params h2hConfidence (v14.0 Phase C.3): Bayesian ramp', () => {
   assert.strictEqual(h2hConfidence(NaN), 0, 'NaN → 0');
 });
 
-test('calib-params getMinEp + getDivergenceThreshold + getNhlOtHomeShare', () => {
-  const { getMinEp, getDivergenceThreshold, getNhlOtHomeShare,
-          DEFAULT_MIN_EP, DEFAULT_DIVERGENCE, DEFAULT_NHL_OT_HOME } = require('./lib/calib-params');
+test('calib-params getMinEp + getDivergenceThreshold + getNhlOtHomeShare + signalThresholds', () => {
+  const { getMinEp, getDivergenceThreshold, getNhlOtHomeShare, getSignalThresholds,
+          DEFAULT_MIN_EP, DEFAULT_DIVERGENCE, DEFAULT_NHL_OT_HOME, DEFAULT_SIGNAL_THRESHOLDS } = require('./lib/calib-params');
   const calib = {
     minEp: { ml: 0.50, btts: 0.58, '1x2': 0.32 },
     divergenceThresholds: { football: 0.07, hockey: 0.10 },
     nhlOtHomeShare: { rate: 0.54 },
+    signalThresholds: { killMinN: 75, brierMuteDrift: 0.04, brierDampenDrift: 0.02 },
   };
   assert.strictEqual(getMinEp(calib, 'ml'), 0.50);
   assert.strictEqual(getMinEp(calib, 'btts'), 0.58);
@@ -6911,6 +6950,65 @@ test('calib-params getMinEp + getDivergenceThreshold + getNhlOtHomeShare', () =>
   // Sanity-bounded (out-of-range values fall back)
   assert.strictEqual(getNhlOtHomeShare({ nhlOtHomeShare: { rate: 0.30 } }), DEFAULT_NHL_OT_HOME);
   assert.strictEqual(getNhlOtHomeShare({ nhlOtHomeShare: { rate: 0.70 } }), DEFAULT_NHL_OT_HOME);
+  assert.strictEqual(getSignalThresholds(calib).killMinN, 75);
+  assert.strictEqual(getSignalThresholds(calib).brierMuteDrift, 0.04);
+  assert.strictEqual(getSignalThresholds({}).promoteMinN, DEFAULT_SIGNAL_THRESHOLDS.promoteMinN);
+});
+
+test('signal-weights (v15): resolver volgt sport:market → sport → global → shadow-default', () => {
+  const { resolveSignalWeight, defaultSignalWeight, signalWeightKeys, parseSignalWeightKey } = require('./lib/signal-weights');
+  const weights = {
+    form: 1.1,
+    'football:form': 1.2,
+    'football:btts:form': 1.35,
+    'football:nfl_injury_diff': 0.6,
+  };
+  assert.deepStrictEqual(signalWeightKeys({ sport: 'football', marketType: 'btts', signal: 'form' }), [
+    'football:btts:form',
+    'football:form',
+    'form',
+  ]);
+  assert.strictEqual(resolveSignalWeight(weights, { sport: 'football', marketType: 'btts', signal: 'form' }).weight, 1.35);
+  assert.strictEqual(resolveSignalWeight(weights, { sport: 'football', marketType: 'ml', signal: 'form' }).weight, 1.2);
+  assert.strictEqual(resolveSignalWeight(weights, { sport: 'hockey', marketType: 'ml', signal: 'form' }).weight, 1.1);
+  assert.strictEqual(defaultSignalWeight('nfl_injury_diff'), 0);
+  assert.strictEqual(resolveSignalWeight({}, { sport: 'football', marketType: 'ml', signal: 'nfl_injury_diff' }).weight, 0);
+  assert.deepStrictEqual(parseSignalWeightKey('football:btts:form'), {
+    sport: 'football',
+    marketType: 'btts',
+    signal: 'form',
+    level: 'sport_market',
+  });
+});
+
+test('v15-runtime: TSDB standings fallback + fuzzy lookup normaliseren naar voetbalstats', () => {
+  const stats = v15Runtime.tsdbStandingsRowsToFootballStats([
+    { teamName: 'Arsenal FC', teamId: '101', rank: 1, played: 10, goalsFor: 22, goalsAgainst: 9, form: 'WWLDW' },
+  ]);
+  const merged = v15Runtime.mergeStatsWithFallback({}, stats);
+  const row = v15Runtime.lookupTeamStats(merged, 'Arsenal');
+  assert.ok(row, 'fuzzy lookup should find TSDB row');
+  assert.strictEqual(row.rank, 1);
+  assert.strictEqual(row.goalsFor, 2.2);
+  assert.strictEqual(row.goalsAgainst, 0.9);
+  assert.strictEqual(row.source, 'thesportsdb');
+});
+
+test('v15-runtime: sharp-anchor matcht fixture op teams+tijd en vat OddsPapi quotes compact samen', () => {
+  const kickoff = Date.parse('2026-04-28T18:00:00Z');
+  const anchor = v15Runtime.summarizeSharpAnchor({
+    sources: ['oddspapi'],
+    quotes: [
+      { homeTeam: 'Arsenal', awayTeam: 'Liverpool', commenceTime: '2026-04-28T18:05:00Z', bookie: 'Pinnacle', market: '1X2', selection: 'Arsenal', price: 2.1 },
+      { homeTeam: 'Arsenal', awayTeam: 'Liverpool', commenceTime: '2026-04-28T18:05:00Z', bookie: 'Bet365', market: '1X2', selection: 'Liverpool', price: 3.2 },
+      { homeTeam: 'Ajax', awayTeam: 'PSV', commenceTime: '2026-04-28T18:05:00Z', bookie: 'Pinnacle', market: '1X2', selection: 'Ajax', price: 2.4 },
+    ],
+  }, 'Arsenal FC', 'Liverpool FC', kickoff);
+  assert.strictEqual(anchor.source, 'oddspapi');
+  assert.strictEqual(anchor.quoteCount, 2);
+  assert.strictEqual(anchor.sharpQuoteCount, 1);
+  assert.deepStrictEqual(anchor.markets, ['1X2']);
+  assert.ok(anchor.bookies.includes('Pinnacle'));
 });
 
 test('calcBTTSProb accepteert custom prior + priorK (v14.0 Phase C.1)', () => {
@@ -8253,7 +8351,7 @@ test('admin-signals router: throws bij missing deps', () => {
   assert.throws(() => createAdminSignalsRouter({}), /missing required dep/);
 });
 
-test('admin-signals router: construct met valid deps + 3 routes', () => {
+test('admin-signals router: construct met valid deps + v15 routes', () => {
   const router = createAdminSignalsRouter({
     supabase: { from: () => ({ select: () => ({ not: () => ({ limit: async () => ({ data: [], error: null }) }), order: () => ({}) }) }) },
     requireAdmin: (req, res, next) => next(),
@@ -8266,6 +8364,9 @@ test('admin-signals router: construct met valid deps + 3 routes', () => {
   });
   const routes = router.stack.filter(l => l.route).map(l => l.route.path);
   assert.ok(routes.includes('/admin/v2/signal-performance'));
+  assert.ok(routes.includes('/admin/v15/source-attribution'));
+  assert.ok(routes.includes('/admin/v15/signal-weights'));
+  assert.ok(routes.includes('/admin/v15/sport-activation'));
   assert.ok(routes.includes('/admin/signal-performance'));
   assert.ok(routes.includes('/model-feed'));
 });

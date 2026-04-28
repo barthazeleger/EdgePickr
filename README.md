@@ -1,12 +1,14 @@
-# EdgePickr v14.0.0
+# EdgePickr v15.0.0
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
 overlay. De scanner is het product; de rest bestaat alleen om betere picks,
 strakkere discipline en betrouwbaardere learning te ondersteunen.
 
-**v13.0 multi-source pivot** (28-04-2026): drie data-lagen per sport, sport-
-uitbreiding van 6 → 9, en API-tier-shift voorbereid voor 13-05-2026.
+**v15.0 final self-improving release** (28-04-2026): v14's data-tunable
+fundering is nu runtime-gewired. Picks blijven execution-safe; nieuwe bronnen
+en signalen starten als attribution/shadow data en worden alleen zwaarder als
+CLV/Brier bewijs dat rechtvaardigt.
 
 Geen multi-user SaaS-first denkwijze: EdgePickr optimaliseert voor een private
 operator die zo weinig mogelijk handwerk wil, point-in-time correct wil blijven
@@ -20,7 +22,7 @@ Kernprincipes:
 - Liever 0 picks dan 1 valse edge
 - **"Dubbele data is altijd goed"** — cross-source validatie boven single-bron-vertrouwen
 
-## v13.0 Multi-Source Architectuur
+## v15 Self-Improving Architectuur
 
 Per sport drie data-lagen, met fail-soft fallback en cross-source dedup:
 
@@ -30,17 +32,30 @@ Per sport drie data-lagen, met fail-soft fallback en cross-source dedup:
 | 2 | **OddsPapi V4** (free) | Odds-feed · 350+ bookmakers (Bet365/Pinnacle/Unibet/WilliamHill/DraftKings/FanDuel/Betfair Exchange/...) · h2h+totals+spreads | Gratis (250/mnd) |
 | 3 | **api-sports** | Voetbal Pro vanaf 13-05 ($19,99) · andere sporten free-tier (100/dag) | $19,99 + $0 |
 
-Cross-source disagreement >5% triggert `bookie_anomaly` inbox-warning (v12.4.2 doctrine).
+Cross-source disagreement en betere rejected quotes worden gelogd als
+`bookie_anomaly` inbox-warning. Sharp truth en execution truth blijven
+gescheiden: Pinnacle/Betfair/OddsPapi zijn referentie; Bet365/Unibet/Toto/etc.
+blijven preferred execution books wanneer ze speelbaar zijn.
+
+Runtime-calibratie in v15:
+- `MIN_EP` per markt via `calib.minEp`
+- divergence sanity gates per sport via `calib.divergenceThresholds`
+- NHL inc-OT conversie via `calib.nhlOtHomeShare`
+- signal kill/promote/Brier thresholds via `calib.signalThresholds`
+- signal weights hiërarchisch via `sport:market:signal` → `sport:signal` → `signal`
 
 ## Features
 
 | Feature | Beschrijving |
 |---|---|
-| **9 sporten** | Voetbal · basketball (NBA) · honkbal (MLB) · ijshockey (NHL) · American football (NFL) · handbal · **Tennis · Rugby · Cricket** (v13.0 data-laag) |
+| **6 actief + 3 shadow sporten** | Voetbal · basketball (NBA) · honkbal (MLB) · ijshockey (NHL) · American football (NFL) · handbal actief. **Tennis · Rugby · Cricket** draaien v15 paper-only tot auto-promotiecriteria bewezen zijn |
 | **100+ competities** | Alle top-tier leagues per sport, dynamische seizoenen |
 | **14 signalen** | Thuisvoordeel, vorm, H2H, blessures, standings, team stats, home/away splits, lineup, referee, API predictions, O/U adjustments, weer, Poisson, fixture congestion |
 | **TheSportsDB v13.0** | 13 nieuwe methods: lookuptable (standings), lookuplineup, lookuptimeline, lookupeventstats, lookuptv (TV broadcasts), eventsday/eventslast, lookupvenue, lookup_all_players (roster) + V2 livescore/schedule/full-team |
 | **OddsPapi v13.0** | 350+ bookmakers via één API · sharp (Pinnacle/SBOBet) + EU (Bet365/Unibet/WH) + US (DraftKings/FanDuel) + exchanges (Betfair/Polymarket) · h2h/spreads/totals · auto-degrade bij 90% quota |
+| **v15 source attribution** | `pick_candidates.source_attribution`, `sharp_anchor` en `playability` leggen per kandidaat vast welke bronnen, sharp-quotes en uitvoerbaarheidsregels meespeelden |
+| **v15 hierarchical signal weights** | Proven signalen default 1.0, shadow/experimentele signalen default 0; auto-tune schrijft global/sport/sport-market keys zodra sample-size voldoende is |
+| **v15 bookie anomaly audit** | Uitgebreid naar voetbal 1X2/DC/OU/AH en actieve sport ML/totals/spreads waar paired quotes bestaan |
 | **API usage tracker** | Per-source dashboard op /api/status: api-sports tier-shift indicator (13-05), TSDB call-counter (€9 premium), OddsPapi quota-progress (250/mnd) |
 | **Poisson model** | Per sport afzonderlijk geijkt — markt-multipliers, EP-buckets en signal-gewichten tunen zich automatisch |
 | **Model-vs-market sanity check** | Elke pick wordt gecheckt tegen devigged market consensus; picks waar model > 4% divergeert worden geskipt |
@@ -121,7 +136,7 @@ Rate-limited op 200ms per bet. Return `{ scanned, filled, failed, details }`.
 ## Testsuite
 
 ```bash
-npm test     # 634 tests · scanlogica, signals, CLV, security, scrapers, snapshots, regressies, reviewer-bugs, route-integration
+npm test     # 880 tests · scanlogica, signals, CLV, security, scrapers, snapshots, regressies, reviewer-bugs, route-integration
 ```
 
 ### Test-categorieën
@@ -150,11 +165,10 @@ Zie [docs/_archive/BUSINESS_PLAN.md](./docs/_archive/BUSINESS_PLAN.md) voor het 
 Zie [CHANGELOG.md](./CHANGELOG.md) voor versiegeschiedenis.
 
 ### Huidige roadmap-focus
-- scanner-core modulariseren en drift wegnemen
-- execution-edge signalen verdiepen vóór marktverbreding
-- CLV/excess-CLV learn-lussen aanscherpen
-- bankroll/compounding discipline explicieter maken
-- automation verhogen zonder extra cockpit-ruis
+- data laten beslissen: runtime-calib en signal auto-promote, geen hardcoded tuning
+- source-attribution en playability gebruiken om slechte bron/markt-combinaties sneller te skippen
+- paper-only sportuitbreiding pas actief maken na positieve paper CLV en settlement coverage
+- execution-edge verdiepen vóór marktverbreding
 
 ### Product thesis
 - de markt wordt eerder verslagen op execution timing dan op extra UI

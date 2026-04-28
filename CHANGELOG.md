@@ -2,6 +2,56 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.0] - 2026-04-28
+
+**Final self-improving release · Runtime-calib wiring · Source attribution · Shadow sports**
+
+Aanleiding: v14.0.0 leverde de fundering, maar liet meerdere resolvers, data-bronnen en auditpaden nog half losgekoppeld. v15 sluit die gaten: parameters die in calib staan worden nu echt door runtime gates gebruikt, signalen krijgen hiërarchische weights, nieuwe API-data wordt point-in-time gelogd, en sportuitbreiding begint paper-only in plaats van direct met echte stakes.
+
+### Fixed
+
+- **P1 NFL scan-crash**: NFL gebruikte `nflInjuryDiff` vóór declaratie in de scan-loop. De blessure-diff zit nu in een pure helper `nflInjurySignal()` en wordt berekend vóór `injAdj`. Regressietest toegevoegd zodat die branch niet stil opnieuw kan breken.
+
+### Added
+
+- **v15 handoff document**: `docs/HANDOFF_v15_FINAL_RELEASE.md` met phase-status, risico's, verificatie-log en de eerstvolgende exacte stap. Dit document is bewust als eerste artifact gemaakt en is per fase bijgewerkt.
+- **Pick-candidate attribution migration**: `docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql` voegt `source_attribution`, `sharp_anchor` en `playability` jsonb-velden plus GIN-indexen toe aan `pick_candidates`.
+- **Admin-readouts**:
+  - `GET /api/admin/v15/source-attribution`
+  - `GET /api/admin/v15/signal-weights`
+  - `GET /api/admin/v15/sport-activation`
+- **Hierarchical signal weights**: nieuwe resolver in `lib/signal-weights.js` met volgorde `sport:market:signal` → `sport:signal` → `signal` → default. Proven signalen defaulten naar 1.0; shadow/experimentele signalen naar 0.
+- **Source-attribution payloads**: snapshot helpers schrijven brondata, sharp-anchor samples en playability metadata door naar `pick_candidates` zodra de migratie is toegepast.
+- **v15 runtime helpers**: `lib/v15-runtime.js` normaliseert TSDB standings fallback, fuzzy team lookup, OddsPapi sharp-anchor summaries, livescore matching en source-attribution basispayloads.
+- **Shadow sport scanners**: tennis, rugby en cricket draaien paper-only via de scan-orchestrator. Ze schrijven shadow candidates met `rejectedReason='shadow_sport_activation'` en blijven niet-uitvoerbaar tot data-promotiecriteria positief zijn.
+
+### Changed
+
+- **Runtime tunables echt gewired**:
+  - `getMinEp()` voedt pick-gating per markt.
+  - `getDivergenceThreshold()` voedt sanity/divergence gates per sport.
+  - `getNhlOtHomeShare()` voedt hockey inc-OT conversie.
+  - `getSignalThresholds()` voedt CLV/Brier auto-kill en auto-promote thresholds.
+- **Signal auto-tune schrijft hiërarchisch**: global, sport en sport+market keys kunnen naast elkaar bestaan. Sparse samples vallen terug op global/default in plaats van ruis hard in sport-markt weights te duwen.
+- **Football v15 source wiring**: TSDB livescore pre-filter, TSDB form fallback, TSDB standings fallback, OddsPapi sharp-anchor attribution en scan-log counters zijn aan de voetbal-loop toegevoegd.
+- **Active-sport sharp-anchor attribution**: basketball, hockey, baseball, NFL en handball krijgen fail-soft OddsPapi sharp-anchor summaries in model debug/pick-candidates wanneer de sport/league ondersteund is en quota gezond blijft.
+- **Bookie-anomaly audit uitgebreid**: naast v14 hockey ML/3-way en voetbal BTTS/DNB nu ook voetbal 1X2, Double Chance, O/U, AH en actieve sport ML/totals/spreads waar paired quote-arrays bestaan.
+- **DNB doctrine verduidelijkt in codepad**: geen onbetbare synthetische DNB-picks. 1X2 mag fair probability helpen afleiden, maar uitvoerbare DNB quote blijft vereist.
+- **Source toggles**: `oddspapi` staat nu in admin source toggles en scraping diagnostics.
+- **Info page / README / doctrine**: release-tekst beschrijft actief vs shadow gedrag, v15 runtime-calib, source attribution en sharp/execution truth scheiding.
+
+### Tests
+
+- Testcount: **875 → 880**.
+- Nieuwe/gewijzigde coverage voor NFL injury diff, runtime calib resolvers, hierarchical signal weights, source-attribution snapshots, v15 admin routes, TSDB standings fallback en OddsPapi sharp-anchor matching.
+- Final-release verificatie: `node --check`, `npm test`, `npm run test:coverage` en `npm run audit:high`.
+
+### Post-deploy actie
+
+- Draai migratie: `node scripts/migrate.js docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql`.
+- Draai daarna `POST /api/admin/v2/rebuild-calib` zodat v15 runtime-resolvers verse market/sport calibratie gebruiken.
+- Houd OddsPapi op free-tier als shadow/reference bron; paid quota is optioneel en nooit vereist voor safe operation.
+
 ## [14.0.0] - 2026-04-28
 
 **Major version bump · Final-release cutover · Self-improving product doctrine**

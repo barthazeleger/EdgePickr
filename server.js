@@ -49,6 +49,23 @@ const { fetchSnapshotClosing } = require('./lib/clv-backfill');
 const { logEarlyPayoutShadow, aggregateEarlyPayoutStats } = require('./lib/signals/early-payout');
 const { marketKeyFromBetMarkt: _marketKeyFromBetMarkt, supportsClvForBetMarkt } = require('./lib/clv-match');
 const { createScanTelemetry } = require('./lib/market-telemetry');
+const {
+  getMinEp,
+  getDivergenceThreshold,
+  getNhlOtHomeShare,
+  getSignalThresholds,
+} = require('./lib/calib-params');
+const { resolveSignalWeight, defaultSignalWeight, parseSignalWeightKey } = require('./lib/signal-weights');
+const {
+  tsdbStandingsRowsToFootballStats,
+  lookupTeamStats,
+  mergeStatsWithFallback,
+  collectBookmakerOutcomeQuotes,
+  summarizeSharpAnchor,
+  isLiveFixture,
+  sourceAttributionBase,
+  formSummaryToStats,
+} = require('./lib/v15-runtime');
 
 // Snapshot layer (v2 foundation): point-in-time logging voor learning + backtesting
 const snap = require('./lib/snapshots');
@@ -214,14 +231,14 @@ function adaptiveMinEdge(sport, marktLabel, baseMinEdge) {
 // Pure math & model helpers — geïmporteerd uit lib zodat test.js dezelfde code test
 const modelMath = require('./lib/model-math');
 const {
-  NHL_OT_HOME_SHARE, MODEL_MARKET_DIVERGENCE_THRESHOLD, KELLY_FRACTION,
+  KELLY_FRACTION,
   getKellyFraction, setKellyFraction, KELLY_FRACTION_MIN, KELLY_FRACTION_MAX, KELLY_FRACTION_STEP,
   poisson, poissonOver, poisson3Way,
   devigProportional, consensus3Way, deriveIncOTProbFrom3Way, modelMarketSanityCheck, passesDivergence2Way,
   normalizeTeamName, teamMatchScore, normalizeSport,
   detectMarket, calcKelly, kellyToUnits, kellyScore, epBucketKey,
   pitcherAdjustment, pitcherReliabilityFactor, goalieAdjustment,
-  injurySeverityWeight, nbaAvailabilityAdjustment,
+  injurySeverityWeight, nflInjurySignal, nbaAvailabilityAdjustment,
   shotsDifferentialAdjustment, recomputeWl, summarizeSignalMetrics,
   shrinkFormScore,
 } = modelMath;
@@ -683,6 +700,48 @@ const restoreCalib = calibrationStore.restore;
 
 // detectMarket() komt uit lib/model-math.js
 
+function runtimeCalib() {
+  try { return loadCalib() || {}; }
+  catch (_) { return {}; }
+}
+
+function minEpForMarket(marketType) {
+  return getMinEp(runtimeCalib(), marketType);
+}
+
+function divergenceThresholdFor(sport) {
+  return getDivergenceThreshold(runtimeCalib(), sport);
+}
+
+function sanityForSport(sport, modelProb, marketProb) {
+  return modelMarketSanityCheck(modelProb, marketProb, divergenceThresholdFor(sport));
+}
+
+function divergence2WayForSport(sport, modelProbA, modelProbB, priceA, priceB) {
+  return passesDivergence2Way(modelProbA, modelProbB, priceA, priceB, divergenceThresholdFor(sport));
+}
+
+function signalWeightFor(weights, sport, marketType, signal) {
+  return resolveSignalWeight(weights || {}, { sport, marketType, signal }).weight;
+}
+
+async function fetchV15SharpAnchorOdds(sport, leagueName, opts = {}) {
+  if (!OPERATOR.scraping_enabled) return null;
+  try {
+    const oddspapi = require('./lib/integrations/sources/oddspapi');
+    const usage = oddspapi.getUsage();
+    const remainingFloor = Number.isFinite(opts.remainingFloor) ? opts.remainingFloor : 60;
+    if (!usage?.hasKey || usage.degraded || usage.remaining <= remainingFloor) return null;
+    const agg = require('./lib/integrations/data-aggregator');
+    return await agg.getMergedOdds(sport, {
+      league: leagueName,
+      bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk,sbobet,circa',
+      markets: 'h2h,totals,spreads',
+    });
+  } catch (_) {
+    return null;
+  }
+}
 
 // ── SIGNAL AUTO-TUNING ───────────────────────────────────────────────────────
 // Na 30+ bets per signaal: pas gewicht aan op basis van werkelijke hit rate
@@ -717,11 +776,8 @@ async function saveSignalWeights(w) {
 // als een signal al consistent NEGATIEVE CLV oplevert, daalt zijn weight
 // veel sneller dan via W/L (waar variance maanden duurt om uit te middelen).
 // Returns {tuned: number, adjustments: [...]}.
-// Signal-level kill-switch threshold: bij structureel negatieve CLV → weight = 0
-// (effectief uitgezet). Conservatiever dan tuning: vereist meer samples + harder
-// criterium. Reviewer-aanbeveling: "signalen zonder bewijs van lift eerder uitzetten".
-const SIGNAL_KILL_MIN_N = 50;        // minimum samples voor kill-besluit
-const SIGNAL_KILL_CLV_PCT = -3.0;    // gemiddelde CLV onder -3% → mute
+// Signal-level kill/promote thresholds komen uit calib.signalThresholds zodat
+// operator en auto-tune ze kunnen wijzigen zonder code-deploy.
 
 // ── Kelly-fraction auto-stepup ───────────────────────────────────────────────
 // v10.12.25 DEPRECATED · De stake-regime engine (lib/stake-regime.js, wired
@@ -804,11 +860,21 @@ async function autoTuneSignalsByClv() {
     );
     if (all.length < 30) return { tuned: 0, adjustments: [], note: 'te weinig CLV data (<30)' };
 
-    const signalStats = summarizeSignalMetrics(all.map(b => ({
-      marketKey: `${normalizeSport(b.sport || 'football')}_${detectMarket(b.markt || 'other')}`,
-      clvPct: b.clv_pct,
-      signalNames: parseBetSignals(b.signals).map(s => String(s).split(':')[0]).filter(Boolean),
-    }))).signals;
+    const thresholdCfg = getSignalThresholds(runtimeCalib());
+    const signalRows = all.map(b => {
+      const sport = normalizeSport(b.sport || 'football');
+      const marketType = detectMarket(b.markt || 'other');
+      const signalNames = [];
+      for (const raw of parseBetSignals(b.signals).map(s => String(s).split(':')[0]).filter(Boolean)) {
+        signalNames.push(raw, `${sport}:${raw}`, `${sport}:${marketType}:${raw}`);
+      }
+      return {
+        marketKey: `${sport}_${marketType}`,
+        clvPct: b.clv_pct,
+        signalNames,
+      };
+    });
+    const signalStats = summarizeSignalMetrics(signalRows).signals;
 
     // v10.12.3 Phase A.3: Brier drift context (90d vs 365d) voor elke signal.
     // Triggert extra mute/demping ook als CLV niet negatief genoeg is voor
@@ -838,7 +904,10 @@ async function autoTuneSignalsByClv() {
       if (s.n < 20) continue;
       const avgClv = s.avgClv;
       const edgeClv = s.shrunkExcessClv;
-      const old = weights[name] !== undefined ? weights[name] : 1.0;
+      const parsedWeightKey = parseSignalWeightKey(name);
+      const old = resolveSignalWeight(weights, parsedWeightKey, {
+        defaultWeight: defaultSignalWeight(parsedWeightKey.signal),
+      }).weight;
       const drift = brierDrift.get(name) || null;
       const clearsFDR = fdrPass.has(name);
       let newW = old;
@@ -848,21 +917,21 @@ async function autoTuneSignalsByClv() {
       // als CLV nog neutraal/positief is (ranking kan correct zijn terwijl
       // probability-output drift — Kelly-sizing gebruikt de probability,
       // dus dit raakt stake-correctness direct).
-      if (muteAllowed && drift && drift.n90 >= 50 && drift.drift >= 0.03 && drift.brier90 > drift.brier365) {
+      if (muteAllowed && drift && drift.n90 >= thresholdCfg.brierMuteN90 && drift.drift >= thresholdCfg.brierMuteDrift && drift.brier90 > drift.brier365) {
         newW = 0;
         reason = `brier_drift_mute (90d Brier ${drift.brier90.toFixed(3)} vs 365d ${drift.brier365.toFixed(3)} · drift +${drift.drift.toFixed(3)} over ${drift.n90} samples)`;
         muted++;
         drifted++;
       }
       // KILL-SWITCH op CLV (bestaand gedrag)
-      else if (muteAllowed && s.n >= SIGNAL_KILL_MIN_N && edgeClv <= -1.5 && avgClv <= -0.5) {
+      else if (muteAllowed && s.n >= thresholdCfg.killMinN && edgeClv <= thresholdCfg.killEdgeClvPct && avgClv <= thresholdCfg.killAvgClvPct) {
         newW = 0;
         reason = `auto_disabled (edge_clv ${edgeClv.toFixed(2)}%, raw ${avgClv.toFixed(2)}% over ${s.n} bets)`;
         muted++;
-      } else if (old === 0 && s.n >= SIGNAL_KILL_MIN_N && edgeClv >= 0.75 && avgClv > 0) {
+      } else if (old === 0 && s.n >= thresholdCfg.promoteMinN && edgeClv >= thresholdCfg.promoteEdgeClvPct && avgClv > thresholdCfg.promoteAvgClvPct) {
         // AUTO-PROMOTE: alleen als er GEEN Brier-drift is (drift < 0.03),
         // anders blijft het signaal in shadow tot kalibratie-herstel.
-        if (!drift || drift.drift < 0.03) {
+        if (!drift || drift.drift < thresholdCfg.brierMuteDrift) {
           newW = 0.5;
           reason = `auto_promoted (edge_clv +${edgeClv.toFixed(2)}%, raw +${avgClv.toFixed(2)}% over ${s.n} bets · weight 0 → 0.5)`;
         } else {
@@ -875,7 +944,7 @@ async function autoTuneSignalsByClv() {
       else newW = old * 0.99 + 0.01;
 
       // Soft-dampen bij matige drift (als we niet al gemute hebben)
-      if (newW > 0 && drift && drift.n90 >= 30 && drift.drift >= 0.015 && drift.drift < 0.03 && drift.brier90 > drift.brier365) {
+      if (newW > 0 && drift && drift.n90 >= thresholdCfg.brierDampenN90 && drift.drift >= thresholdCfg.brierDampenDrift && drift.drift < thresholdCfg.brierMuteDrift && drift.brier90 > drift.brier365) {
         newW = +(newW * 0.90).toFixed(3);
         reason = (reason ? reason + ' + ' : '') + `brier_drift_dampen (90d Brier +${drift.drift.toFixed(3)}, n=${drift.n90})`;
         drifted++;
@@ -900,6 +969,10 @@ async function autoTuneSignalsByClv() {
           avgClv: +avgClv.toFixed(2), edgeClv: +edgeClv.toFixed(2), n: s.n,
           brier_drift: drift ? drift.drift : null,
           brier_n90: drift ? drift.n90 : null,
+          hierarchy: parsedWeightKey.level,
+          sport: parsedWeightKey.sport,
+          marketType: parsedWeightKey.marketType,
+          signal: parsedWeightKey.signal,
           fdr_passed: clearsFDR,
           reason
         });
@@ -1511,7 +1584,6 @@ const TOP_FB = new Set([
 // ── PICK FACTORY ──────────────────────────────────────────────────────────────
 const MAX_WINNER_ODDS  = 4.0;   // geen winnaar-bets boven deze koers (Wharton: >4.0 = variance ruin)
 const BLOWOUT_OPP_MAX  = 1.35;  // tegenstander ≤ 1.35 = mismatched wedstrijd
-const MIN_EP           = 0.52;  // minimale geschatte kans (~52%) · boven 50% = meer wins dan losses structureel
 // KELLY_FRACTION komt uit lib/model-math.js (0.50 half-Kelly)
 
 // ── DRAWDOWN PROTECTION ──────────────────────────────────────────────────────
@@ -1544,6 +1616,7 @@ function buildPickFactory(MIN_ODDS = 1.60, calibEpBuckets = {}, sport = 'footbal
     drawdownMultiplier: getDrawdownMultiplier,
     activeUnitEur: getActiveUnitEur(),
     adaptiveMinEdge,
+    resolveMinEp: ({ marketType }) => minEpForMarket(marketType),
     convictionDisabled: !!OPERATOR.conviction_route_disabled,
     ...extraCtx,
   });
@@ -2353,8 +2426,8 @@ function calcGoalProbs(homeAttack, homeDefense, awayAttack, awayDefense, leagueA
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // poisson / poissonOver / poisson3Way / devigProportional / consensus3Way /
-// deriveIncOTProbFrom3Way / modelMarketSanityCheck / NHL_OT_HOME_SHARE /
-// MODEL_MARKET_DIVERGENCE_THRESHOLD komen uit lib/model-math.js
+// deriveIncOTProbFrom3Way / modelMarketSanityCheck komen uit lib/model-math.js.
+// Thresholds en NHL OT-share worden runtime via calib-params opgelost.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MLB STATS API (statsapi.mlb.com)
@@ -2633,6 +2706,7 @@ async function runBasketball(emit) {
       if (!games.length) { emit({ log: `📭 ${league.name}: geen wedstrijden` }); continue; }
       emit({ log: `🏀 ${league.name}: ${games.length} wedstrijd(en)` });
       totalEvents += games.length;
+      const leagueSharpOdds = await fetchV15SharpAnchorOdds('basketball', league.name);
 
       // Standings for form/rank
       await sleep(120);
@@ -2747,6 +2821,9 @@ async function runBasketball(emit) {
         const kickoffMs = new Date(g.date || g.time || g.timestamp * 1000).getTime();
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        const sourceAttribution = sourceAttributionBase('basketball', { apiSports: { odds: true, standings: true } });
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) sourceAttribution.oddspapi.sharpAnchor = true;
 
         // v10.7.24: rest-days (phase 1) — kritiek voor NBA back-to-backs
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -2909,8 +2986,8 @@ async function runBasketball(emit) {
         // Experimenteel: nba_rest_days_diff + nba_injury_diff. Weight start op 0 (logged-only).
         // Auto-promotie via autoTuneSignalsByClv zodra n≥50 en CLV > 0%.
         const _sw = loadSignalWeights();
-        const restWeight = _sw.nba_rest_days_diff !== undefined ? _sw.nba_rest_days_diff : 0;
-        const injWeight = _sw.nba_injury_diff !== undefined ? _sw.nba_injury_diff : 0;
+        const restWeight = signalWeightFor(_sw, 'basketball', 'moneyline', 'nba_rest_days_diff');
+        const injWeight = signalWeightFor(_sw, 'basketball', 'moneyline', 'nba_injury_diff');
         const nbaInjuryHome = +(nbaInjuryLoadMap[hmId] || 0);
         const nbaInjuryAway = +(nbaInjuryLoadMap[awId] || 0);
         const nbaInjuryDiff = +(nbaInjuryAway - nbaInjuryHome).toFixed(2); // + = away meer blessures = home voordeel
@@ -2938,7 +3015,7 @@ async function runBasketball(emit) {
         const nbaTotalTeams = Object.keys(standingsMap).length;
         const hmStakes = calcStakesByRank(hmSt?.rank, nbaTotalTeams, 'basketball');
         const awStakes = calcStakesByRank(awSt?.rank, nbaTotalTeams, 'basketball');
-        const stakesWeight = _sw.stakes !== undefined ? _sw.stakes : 0;
+        const stakesWeight = signalWeightFor(_sw, 'basketball', 'moneyline', 'stakes');
         const stakesAdj = (hmStakes.adj - awStakes.adj) * stakesWeight;
         const stakesNote = (hmStakes.label || awStakes.label) ? ` | Stakes: ${hmStakes.label||'—'} vs ${awStakes.label||'—'}` : '';
 
@@ -2953,6 +3030,12 @@ async function runBasketball(emit) {
         // weg op de post-check <= MAX_WINNER_ODDS.
         const bH = bestFromArr(homeOdds, { maxPrice: MAX_WINNER_ODDS });
         const bA = bestFromArr(awayOdds, { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(homeOdds, bH.bookie, bH.price,
+          { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(awayOdds, bA.bookie, bA.price,
+          { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
 
         const homeEdge = bH.price > 0 ? adjHome * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway * bA.price - 1 : -1;
@@ -2973,6 +3056,7 @@ async function runBasketball(emit) {
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
         // v10.7.24: generic rest-days (phase 1 logging, weight=0) — naast bestaande nbaRestDaysDiff
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
+        if (sharpAnchor.source) matchSignals.push('sharp_anchor:0%');
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
@@ -2994,7 +3078,7 @@ async function runBasketball(emit) {
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
             convictionSelections: _basketballConvictionFor(gameId, 'moneyline', null),
-            debug: { sport: 'basketball', ha, signals: matchSignals },
+            debug: { sport: 'basketball', ha, signals: matchSignals, sourceAttribution, sharpAnchor },
           }).catch(() => {});
         }
 
@@ -3003,7 +3087,7 @@ async function runBasketball(emit) {
         const fxMetaBbA = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'away', line: null };
         // v11.1.2: sanity-gate tegen signal-pushed adjHome/adjAway die ver
         // van market-consensus afligt. Zelfde patroon als hockey ML.
-        const bbMlGate = passesDivergence2Way(adjHome, adjAway, bH.price, bA.price);
+        const bbMlGate = divergence2WayForSport('basketball', adjHome, adjAway, bH.price, bA.price);
         // Moneyline picks
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && bbMlGate.passA)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
@@ -3036,11 +3120,17 @@ async function runBasketball(emit) {
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
+              _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
+                { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
+                { maxPrice: 3.5 });
+              _auditChoiceVsAll(un, bestUn.bookie, bestUn.price,
+                { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line },
+                { maxPrice: 3.5 });
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: safety-gate ook op pure devig O/U (model=market by construction
               // maar guard beschermt tegen outlier-pool skew bij ≥2 bookies). fxMeta added.
-              const ouGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const ouGate = divergence2WayForSport('basketball', overP, 1-overP, bestOv.price, bestUn.price);
               const fxMetaOvBb = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaUnBb = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -3061,7 +3151,7 @@ async function runBasketball(emit) {
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
                   matchSignals,
                   convictionSelections: _basketballConvictionFor(gameId, 'total', line),
-                  debug: { sport: 'basketball' },
+                  debug: { sport: 'basketball', sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
             }
@@ -3079,10 +3169,13 @@ async function runBasketball(emit) {
           const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
           const bH = bestSpreadPick(homeSpr, homeFn, MIN_EDGE + 0.01);
           if (bH && hasDevig(bH.point) && bookieCountAt(bH.point) >= 3) {
+            _auditChoiceVsAll(homeSpr.filter(o => Math.abs(o.point - bH.point) < 0.01), bH.bookie, bH.price,
+              { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bH.point },
+              { maxPrice: 3.8 });
             const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
             const fp = homeFn(bH.point);
             const marketProb = 1 / bH.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('basketball', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${hm} ${pt}`, bH.price,
@@ -3092,10 +3185,13 @@ async function runBasketball(emit) {
           }
           const bA = bestSpreadPick(awaySpr, awayFn, MIN_EDGE + 0.01);
           if (bA && hasDevig(bA.point) && bookieCountAt(bA.point) >= 3) {
+            _auditChoiceVsAll(awaySpr.filter(o => Math.abs(o.point - bA.point) < 0.01), bA.bookie, bA.price,
+              { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bA.point },
+              { maxPrice: 3.8 });
             const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
             const fp = awayFn(bA.point);
             const marketProb = 1 / bA.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('basketball', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 ${aw} ${pt}`, bA.price,
@@ -3129,7 +3225,7 @@ async function runBasketball(emit) {
               const h1OverEdge = h1OverP * h1BestOv.price - 1;
               const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
-              const h1Gate = passesDivergence2Way(h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
+              const h1Gate = divergence2WayForSport('basketball', h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
               const fxMetaH1Ov = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'over', line: h1Line };
               const fxMetaH1Un = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'under', line: h1Line };
 
@@ -3161,7 +3257,7 @@ async function runBasketball(emit) {
             const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
             const fp = homeFn(bH.point);
             const marketProb = 1 / bH.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('basketball', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, bH.price,
@@ -3174,7 +3270,7 @@ async function runBasketball(emit) {
             const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
             const fp = awayFn(bA.point);
             const marketProb = 1 / bA.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('basketball', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, bA.price,
@@ -3309,6 +3405,7 @@ async function runHockey(emit) {
       if (!games.length) { emit({ log: `📭 ${league.name}: geen wedstrijden` }); continue; }
       emit({ log: `🏒 ${league.name}: ${games.length} wedstrijd(en)` });
       totalEvents += games.length;
+      const leagueSharpOdds = await fetchV15SharpAnchorOdds('hockey', league.name);
 
       // Standings
       await sleep(120);
@@ -3391,6 +3488,9 @@ async function runHockey(emit) {
         const kickoffMs = new Date(g.date || g.time || g.timestamp * 1000).getTime();
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        const sourceAttribution = sourceAttributionBase('hockey', { apiSports: { odds: true, standings: true }, thesportsdb: {} });
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) sourceAttribution.oddspapi.sharpAnchor = true;
 
         // v10.7.24: rest-days (phase 1) — kritiek voor NHL back-to-backs
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -3543,14 +3643,14 @@ async function runHockey(emit) {
         const nhlInjAway = nhlInjuryMap[awId] || 0;
         const nhlInjDiff = nhlInjAway - nhlInjHome;
         const _swNhl = loadSignalWeights();
-        const nhlInjW = _swNhl.nhl_injury_diff !== undefined ? _swNhl.nhl_injury_diff : 0;
+        const nhlInjW = signalWeightFor(_swNhl, 'hockey', 'moneyline', 'nhl_injury_diff');
         const nhlInjAdj = nhlInjDiff * 0.005 * nhlInjW;
 
         // Stakes (logged-only scaffolding)
         const nhlTotalTeams = Object.keys(standingsMap).length;
         const hmStakes = calcStakesByRank(hmSt?.rank, nhlTotalTeams, 'hockey');
         const awStakes = calcStakesByRank(awSt?.rank, nhlTotalTeams, 'hockey');
-        const nhlStakesW = _swNhl.stakes !== undefined ? _swNhl.stakes : 0;
+        const nhlStakesW = signalWeightFor(_swNhl, 'hockey', 'moneyline', 'stakes');
         const stakesAdj = (hmStakes.adj - awStakes.adj) * nhlStakesW;
         const stakesNote = (hmStakes.label || awStakes.label) ? ` | Stakes: ${hmStakes.label||'—'} vs ${awStakes.label||'—'}` : '';
 
@@ -3596,6 +3696,7 @@ async function runHockey(emit) {
         if (hmStakes.adj !== 0 || awStakes.adj !== 0) matchSignals.push(`stakes:${((hmStakes.adj - awStakes.adj)*100).toFixed(1)}%`);
         // v10.7.24: generic rest-days (weight=0 logging)
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
+        if (sharpAnchor.source) matchSignals.push('sharp_anchor:0%');
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
@@ -3619,7 +3720,7 @@ async function runHockey(emit) {
 
         // ── 2-way ML MET MARKET-SANITY-CHECK ──
         const marketFairReg = parsed.threeWay?.length ? consensus3Way(parsed.threeWay) : null;
-        const marketFairIncOT = marketFairReg ? deriveIncOTProbFrom3Way(marketFairReg) : null;
+        const marketFairIncOT = marketFairReg ? deriveIncOTProbFrom3Way(marketFairReg, getNhlOtHomeShare(runtimeCalib())) : null;
 
         // v2 snapshots: market_consensus voor 3-way én inc-OT (afgeleid)
         if (marketFairReg) {
@@ -3668,7 +3769,7 @@ async function runHockey(emit) {
                 baselineProb: { home: marketFairIncOT.home, away: marketFairIncOT.away },
                 modelDelta: { home: adjHome - marketFairIncOT.home, away: adjAway - marketFairIncOT.away },
                 finalProb: { home: adjHome, away: adjAway },
-                debug: { lambda_h: expHome, lambda_a: expAway, ha, signals: matchSignals },
+                debug: { lambda_h: expHome, lambda_a: expAway, ha, signals: matchSignals, sourceAttribution, sharpAnchor },
               });
               if (!runId) return;
               // Home candidate
@@ -3688,6 +3789,7 @@ async function runHockey(emit) {
                 fairProb: adjHome, edgePct: homeEdge,
                 passedFilters: homeAccepted, rejectedReason: homeReason,
                 signals: matchSignals,
+                sourceAttribution, sharpAnchor,
               }).catch(() => {});
               // Away candidate
               const awayAccepted = awayEdge >= MIN_EDGE && bA.price >= 1.60 && bA.price <= MAX_WINNER_ODDS && isOTBookieHockey(bA.bookie) && sanityAway?.agree;
@@ -3706,12 +3808,13 @@ async function runHockey(emit) {
                 fairProb: adjAway, edgePct: awayEdge,
                 passedFilters: awayAccepted, rejectedReason: awayReason,
                 signals: matchSignals,
+                sourceAttribution, sharpAnchor,
               }).catch(() => {});
             } catch (e) { /* swallow */ }
           })();
         }
-        const sanityHome = marketFairIncOT ? modelMarketSanityCheck(adjHome, marketFairIncOT.home) : null;
-        const sanityAway = marketFairIncOT ? modelMarketSanityCheck(adjAway, marketFairIncOT.away) : null;
+        const sanityHome = marketFairIncOT ? sanityForSport('hockey', adjHome, marketFairIncOT.home) : null;
+        const sanityAway = marketFairIncOT ? sanityForSport('hockey', adjAway, marketFairIncOT.away) : null;
 
         if (!marketFairIncOT) diag.push('geen 3-way markt → geen 2-way sanity mogelijk');
         if (!homeOddsOT.length) diag.push('geen OT-bookie odds home');
@@ -3787,9 +3890,9 @@ async function runHockey(emit) {
           // Sanity-check Poisson tegen market consensus: als ons model > threshold
           // divergeert van de market, skip de pick. Poisson kan scheef gaan bij
           // teams met extreme vorm-variatie of onvolledige standings.
-          const sanH3 = marketFairReg ? modelMarketSanityCheck(p3.pHome, marketFairReg.home) : { agree: true };
-          const sanD3 = marketFairReg ? modelMarketSanityCheck(p3.pDraw, marketFairReg.draw) : { agree: true };
-          const sanA3 = marketFairReg ? modelMarketSanityCheck(p3.pAway, marketFairReg.away) : { agree: true };
+          const sanH3 = marketFairReg ? sanityForSport('hockey', p3.pHome, marketFairReg.home) : { agree: true };
+          const sanD3 = marketFairReg ? sanityForSport('hockey', p3.pDraw, marketFairReg.draw) : { agree: true };
+          const sanA3 = marketFairReg ? sanityForSport('hockey', p3.pAway, marketFairReg.away) : { agree: true };
 
           const threeNote = ` | λh:${expHome.toFixed(2)} λa:${expAway.toFixed(2)} | 60-min`;
           // v12.4.0: parity met andere markten — fxMeta zodat post-scan gate
@@ -3819,7 +3922,7 @@ async function runHockey(emit) {
               homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
               matchSignals: [...matchSignals, '3way_ml'],
               convictionSelections: _hockeyConvictionFor(gameId, 'threeway', null),
-              debug: { sport: 'hockey', lambda_h: expHome, lambda_a: expAway },
+              debug: { sport: 'hockey', lambda_h: expHome, lambda_a: expAway, sourceAttribution, sharpAnchor },
             }).catch(() => {});
           }
         }
@@ -3912,7 +4015,7 @@ async function runHockey(emit) {
                 pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
                 matchSignals: [...matchSignals, 'team_total_home'],
                 convictionSelections: _hockeyConvictionFor(gameId, 'team_total_home', line),
-                debug: { sport: 'hockey', side: 'home', lambda: lambdaHome },
+                debug: { sport: 'hockey', side: 'home', lambda: lambdaHome, sourceAttribution, sharpAnchor },
               }).catch(() => {});
             }
           }
@@ -3951,7 +4054,7 @@ async function runHockey(emit) {
                 pOver, pUnder, bestOv, bestUn, ovEdge, unEdge, minEdge: MIN_EDGE,
                 matchSignals: [...matchSignals, 'team_total_away'],
                 convictionSelections: _hockeyConvictionFor(gameId, 'team_total_away', line),
-                debug: { sport: 'hockey', side: 'away', lambda: lambdaAway },
+                debug: { sport: 'hockey', side: 'away', lambda: lambdaAway, sourceAttribution, sharpAnchor },
               }).catch(() => {});
             }
           }
@@ -3982,10 +4085,16 @@ async function runHockey(emit) {
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
+              _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
+                { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
+                { maxPrice: 3.5 });
+              _auditChoiceVsAll(un, bestUn.bookie, bestUn.price,
+                { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line },
+                { maxPrice: 3.5 });
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
-              const hkOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const hkOuGate = divergence2WayForSport('hockey', overP, 1-overP, bestOv.price, bestUn.price);
               const fxMetaHkOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaHkUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -4006,7 +4115,7 @@ async function runHockey(emit) {
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
                   matchSignals,
                   convictionSelections: _hockeyConvictionFor(gameId, 'total', line),
-                  debug: { sport: 'hockey' },
+                  debug: { sport: 'hockey', sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
             }
@@ -4035,7 +4144,10 @@ async function runHockey(emit) {
           if (fpHomePuck != null && fpAwayPuck != null) {
             const bH = bestSpreadPick(homeSpr, fpHomePuck, MIN_EDGE + 0.01);
             if (bH) {
-              const sanity = modelMarketSanityCheck(fpHomePuck, 1 / bH.price);
+              _auditChoiceVsAll(homeSpr.filter(o => Math.abs(o.point - bH.point) < 0.01), bH.bookie, bH.price,
+                { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bH.point },
+                { maxPrice: 3.8 });
+              const sanity = sanityForSport('hockey', fpHomePuck, 1 / bH.price);
               if (sanity.agree) {
                 const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
                 const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
@@ -4046,7 +4158,10 @@ async function runHockey(emit) {
             }
             const bA = bestSpreadPick(awaySpr, fpAwayPuck, MIN_EDGE + 0.01);
             if (bA) {
-              const sanity = modelMarketSanityCheck(fpAwayPuck, 1 / bA.price);
+              _auditChoiceVsAll(awaySpr.filter(o => Math.abs(o.point - bA.point) < 0.01), bA.bookie, bA.price,
+                { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bA.point },
+                { maxPrice: 3.8 });
+              const sanity = sanityForSport('hockey', fpAwayPuck, 1 / bA.price);
               if (sanity.agree) {
                 const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
                 const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
@@ -4082,7 +4197,7 @@ async function runHockey(emit) {
               const p1OverEdge = p1OverP * p1BestOv.price - 1;
               const p1UnderEdge = (1-p1OverP) * p1BestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
-              const p1Gate = passesDivergence2Way(p1OverP, 1-p1OverP, p1BestOv.price, p1BestUn.price);
+              const p1Gate = divergence2WayForSport('hockey', p1OverP, 1-p1OverP, p1BestOv.price, p1BestUn.price);
               // v12.4.1: parser deelt P1-totalen via parsed.halfTotals → snapshots.js
               // schrijft als 'half_total'. fxMeta volgt die canonieke schrijfconventie
               // zodat lookupTimeline daadwerkelijk match'et (was no-op met 'period_total').
@@ -4125,7 +4240,7 @@ async function runHockey(emit) {
             const oddP = oeTotal > 0 ? avgOddIP / oeTotal : 0.5;
             const oddEdge = oddP * bestOdd.price - 1;
             const evenEdge = (1-oddP) * bestEven.price - 1;
-            const oeGate = passesDivergence2Way(oddP, 1-oddP, bestOdd.price, bestEven.price);
+            const oeGate = divergence2WayForSport('hockey', oddP, 1-oddP, bestOdd.price, bestEven.price);
             // v12.4.0: parity — odd_even fxMeta voor post-scan gate.
             const fxMetaOeOdd  = { fixtureId: gameId, marketType: 'odd_even', selectionKey: 'odd',  line: null };
             const fxMetaOeEven = { fixtureId: gameId, marketType: 'odd_even', selectionKey: 'even', line: null };
@@ -4297,6 +4412,7 @@ async function runBaseball(emit) {
       if (!games.length) { emit({ log: `📭 ${league.name}: geen wedstrijden` }); continue; }
       emit({ log: `⚾ ${league.name}: ${games.length} wedstrijd(en)` });
       totalEvents += games.length;
+      const leagueSharpOdds = await fetchV15SharpAnchorOdds('baseball', league.name);
 
       // Standings for form/rank
       await sleep(120);
@@ -4364,6 +4480,9 @@ async function runBaseball(emit) {
         const kickoffMs = new Date(g.date || g.time || g.timestamp * 1000).getTime();
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        const sourceAttribution = sourceAttributionBase('baseball', { apiSports: { odds: true, standings: true }, oddspapi: {}, thesportsdb: {} });
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) sourceAttribution.oddspapi.sharpAnchor = true;
 
         // v10.7.24: rest-days (phase 1, logging only)
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -4499,14 +4618,14 @@ async function runBaseball(emit) {
         const mlbInjAway = mlbInjuryMap[awId] || 0;
         const mlbInjDiff = mlbInjAway - mlbInjHome;
         const _swMlb = loadSignalWeights();
-        const mlbInjW = _swMlb.mlb_injury_diff !== undefined ? _swMlb.mlb_injury_diff : 0;
+        const mlbInjW = signalWeightFor(_swMlb, 'baseball', 'moneyline', 'mlb_injury_diff');
         const mlbInjAdj = mlbInjDiff * 0.003 * mlbInjW;
 
         // Stakes (logged-only scaffolding)
         const mlbTotalTeams = Object.keys(standingsMap).length;
         const hmStakesM = calcStakesByRank(hmSt?.rank, mlbTotalTeams, 'baseball');
         const awStakesM = calcStakesByRank(awSt?.rank, mlbTotalTeams, 'baseball');
-        const mlbStakesW = _swMlb.stakes !== undefined ? _swMlb.stakes : 0;
+        const mlbStakesW = signalWeightFor(_swMlb, 'baseball', 'moneyline', 'stakes');
         const stakesAdj = (hmStakesM.adj - awStakesM.adj) * mlbStakesW;
         const stakesNote = (hmStakesM.label || awStakesM.label) ? ` | Stakes: ${hmStakesM.label||'—'} vs ${awStakesM.label||'—'}` : '';
 
@@ -4537,6 +4656,12 @@ async function runBaseball(emit) {
         // weg op de post-check <= MAX_WINNER_ODDS.
         const bH = bestFromArr(homeOdds, { maxPrice: MAX_WINNER_ODDS });
         const bA = bestFromArr(awayOdds, { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(homeOdds, bH.bookie, bH.price,
+          { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(awayOdds, bA.bookie, bA.price,
+          { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
 
         const homeEdge = bH.price > 0 ? adjHome * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway * bA.price - 1 : -1;
@@ -4557,6 +4682,7 @@ async function runBaseball(emit) {
         if (mlbWeatherAdj !== 0) matchSignals.push(`weather:${mlbWeatherAdj>0?'+':''}${(mlbWeatherAdj*100).toFixed(1)}%`);
         // v10.7.24: rest-days (phase 1 logging)
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
+        if (sharpAnchor.source) matchSignals.push('sharp_anchor:0%');
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
@@ -4581,7 +4707,7 @@ async function runBaseball(emit) {
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
             convictionSelections: _baseballConvictionFor(gameId, 'moneyline', null),
-            debug: { sport: 'baseball', ha, pitcher_valid: pitcherSig.valid, signals: matchSignals },
+            debug: { sport: 'baseball', ha, pitcher_valid: pitcherSig.valid, signals: matchSignals, sourceAttribution, sharpAnchor },
           }).catch(() => {});
         }
 
@@ -4589,7 +4715,7 @@ async function runBaseball(emit) {
         const fxMetaMlbH = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'home', line: null };
         const fxMetaMlbA = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'away', line: null };
         // v11.1.2: sanity-gate tegen pitcher/form-signal-pushed adjHome/adjAway.
-        const mlbMlGate = passesDivergence2Way(adjHome, adjAway, bH.price, bA.price);
+        const mlbMlGate = divergence2WayForSport('baseball', adjHome, adjAway, bH.price, bA.price);
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && mlbMlGate.passA)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
             `Consensus: ${(fpHome*100).toFixed(1)}%→${(adjHome*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`,
@@ -4620,10 +4746,16 @@ async function runBaseball(emit) {
               const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + mlbWeatherAdj));
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
+              _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
+                { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
+                { maxPrice: 3.5 });
+              _auditChoiceVsAll(un, bestUn.bookie, bestUn.price,
+                { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line },
+                { maxPrice: 3.5 });
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: safety-gate vangt mlbWeatherAdj die overP ver van markt kan trekken + fxMeta
-              const mlbOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const mlbOuGate = divergence2WayForSport('baseball', overP, 1-overP, bestOv.price, bestUn.price);
               const fxMetaMlbOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaMlbUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -4644,7 +4776,7 @@ async function runBaseball(emit) {
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
                   matchSignals,
                   convictionSelections: _baseballConvictionFor(gameId, 'total', line),
-                  debug: { sport: 'baseball', weatherAdj: mlbWeatherAdj },
+                  debug: { sport: 'baseball', weatherAdj: mlbWeatherAdj, sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
             }
@@ -4673,7 +4805,10 @@ async function runBaseball(emit) {
           if (fpHomeSpread != null && fpAwaySpread != null) {
             const bH = bestSpreadPick(homeSpr, fpHomeSpread, MIN_EDGE + 0.01);
             if (bH) {
-              const sanity = modelMarketSanityCheck(fpHomeSpread, 1 / bH.price);
+              _auditChoiceVsAll(homeSpr.filter(o => Math.abs(o.point - bH.point) < 0.01), bH.bookie, bH.price,
+                { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bH.point },
+                { maxPrice: 3.8 });
+              const sanity = sanityForSport('baseball', fpHomeSpread, 1 / bH.price);
               if (sanity.agree) {
                 const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
                 const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
@@ -4684,7 +4819,10 @@ async function runBaseball(emit) {
             }
             const bA = bestSpreadPick(awaySpr, fpAwaySpread, MIN_EDGE + 0.01);
             if (bA) {
-              const sanity = modelMarketSanityCheck(fpAwaySpread, 1 / bA.price);
+              _auditChoiceVsAll(awaySpr.filter(o => Math.abs(o.point - bA.point) < 0.01), bA.bookie, bA.price,
+                { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bA.point },
+                { maxPrice: 3.8 });
+              const sanity = sanityForSport('baseball', fpAwaySpread, 1 / bA.price);
               if (sanity.agree) {
                 const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
                 const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
@@ -4729,7 +4867,7 @@ async function runBaseball(emit) {
 
           // v11.1.2: sanity-gate. nrfiP is consensus-devig, nrfiAdj pushes tot ±2%.
           // Deze moet dicht bij market-implied blijven (≤ 4% divergence anders fake edge).
-          const nrfiGate = passesDivergence2Way(adjNrfiP, 1 - adjNrfiP, bestNrfi.price, bestYrfi.price);
+          const nrfiGate = divergence2WayForSport('baseball', adjNrfiP, 1 - adjNrfiP, bestNrfi.price, bestYrfi.price);
 
           // v12.0.0 (Claude P0.3): fxMeta toegevoegd. Zonder fxMeta kon
           // applyPostScanGate deze markten niet koppelen aan line-timeline
@@ -4784,7 +4922,7 @@ async function runBaseball(emit) {
 
           // v11.1.2: sanity-gate op F5 ML. f5Home gebruikt pitcher × 3 signal,
           // kan daardoor ver van market-implied drijven bij dubieus pitcher-data.
-          const f5MlGate = passesDivergence2Way(f5Home, f5Away, bF5H.price, bF5A.price);
+          const f5MlGate = divergence2WayForSport('baseball', f5Home, f5Away, bF5H.price, bF5A.price);
 
           // v12.0.0 (Claude P0.3): fxMeta + P1.5 pitcher reliability nu
           // expliciet vereist (voorheen alleen MIN_EDGE + 0.015 bonus).
@@ -4822,7 +4960,7 @@ async function runBaseball(emit) {
               const eOv = bestOv.price > 0 ? adjOverP * bestOv.price - 1 : -1;
               const eUn = bestUn.price > 0 ? (1 - adjOverP) * bestUn.price - 1 : -1;
               // v11.2.1: pitcherUnderBias kan adjOverP trekken; gate tegen markt-consensus
-              const f5OuGate = passesDivergence2Way(adjOverP, 1-adjOverP, bestOv.price, bestUn.price);
+              const f5OuGate = divergence2WayForSport('baseball', adjOverP, 1-adjOverP, bestOv.price, bestUn.price);
 
               // v12.0.0 (Claude P0.3): fxMeta voor F5 totals
               const fxMetaF5Ov = { fixtureId: gameId, marketType: 'f5_total', selectionKey: 'over', line };
@@ -4973,6 +5111,7 @@ async function runFootballUS(emit) {
       if (!games.length) { emit({ log: `📭 ${league.name}: geen wedstrijden` }); continue; }
       emit({ log: `🏈 ${league.name}: ${games.length} wedstrijd(en)` });
       totalEvents += games.length;
+      const leagueSharpOdds = await fetchV15SharpAnchorOdds('american-football', league.name);
 
       // Standings
       await sleep(120);
@@ -5035,6 +5174,9 @@ async function runFootballUS(emit) {
         const kickoffMs = new Date(g.date || g.time || g.timestamp * 1000).getTime();
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        const sourceAttribution = sourceAttributionBase('american-football', { apiSports: { odds: true, standings: true }, oddspapi: {}, thesportsdb: {} });
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) sourceAttribution.oddspapi.sharpAnchor = true;
 
         // v10.7.24: rest-days (phase 1)
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -5150,14 +5292,18 @@ async function runFootballUS(emit) {
         // Experimenteel: nfl_injury_diff. Weight start op 0 (logged-only).
         // Auto-promotie via autoTuneSignalsByClv zodra n≥50 en CLV > 0%.
         const _swNfl = loadSignalWeights();
-        const injWeight = _swNfl.nfl_injury_diff !== undefined ? _swNfl.nfl_injury_diff : 0;
-        const injAdj = nflInjuryDiff * 0.005 * injWeight;
+        const injWeight = signalWeightFor(_swNfl, 'american-football', 'moneyline', 'nfl_injury_diff');
+        const nflInj = nflInjurySignal(hmId, awId, injuryCountMap, injWeight);
+        const injHome = nflInj.home;
+        const injAway = nflInj.away;
+        const nflInjuryDiff = nflInj.diff;
+        const injAdj = nflInj.adj;
 
         // Stakes (logged-only scaffolding)
         const nflTotalTeams = Object.keys(standingsMap).length;
         const hmStakesN = calcStakesByRank(hmSt?.rank, nflTotalTeams, 'american-football');
         const awStakesN = calcStakesByRank(awSt?.rank, nflTotalTeams, 'american-football');
-        const nflStakesW = _swNfl.stakes !== undefined ? _swNfl.stakes : 0;
+        const nflStakesW = signalWeightFor(_swNfl, 'american-football', 'moneyline', 'stakes');
         const stakesAdj = (hmStakesN.adj - awStakesN.adj) * nflStakesW;
         const stakesNote = (hmStakesN.label || awStakesN.label) ? ` | Stakes: ${hmStakesN.label||'—'} vs ${awStakesN.label||'—'}` : '';
 
@@ -5170,14 +5316,15 @@ async function runFootballUS(emit) {
         // weg op de post-check <= MAX_WINNER_ODDS.
         const bH = bestFromArr(homeOdds, { maxPrice: MAX_WINNER_ODDS });
         const bA = bestFromArr(awayOdds, { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(homeOdds, bH.bookie, bH.price,
+          { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(awayOdds, bA.bookie, bA.price,
+          { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
 
         const homeEdge = bH.price > 0 ? adjHome * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway * bA.price - 1 : -1;
-
-        // ── nfl_injury_diff (logged-only) ──
-        const injHome = injuryCountMap[hmId] || 0;
-        const injAway = injuryCountMap[awId] || 0;
-        const nflInjuryDiff = injAway - injHome; // positief = away meer geblesseerd → home voordeel
 
         const matchSignals = [];
         if (ha !== 0) matchSignals.push(`nfl_home:+${(ha*100).toFixed(1)}%`);
@@ -5193,6 +5340,7 @@ async function runFootballUS(emit) {
         if (weatherAdj !== 0) matchSignals.push(`weather:${weatherAdj>0?'+':''}${(weatherAdj*100).toFixed(1)}%`);
         // v10.7.24: rest-days (phase 1)
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
+        if (sharpAnchor.source) matchSignals.push('sharp_anchor:0%');
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
@@ -5212,7 +5360,7 @@ async function runFootballUS(emit) {
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
             convictionSelections: _nflConvictionFor(gameId, 'moneyline', null),
-            debug: { sport: 'american-football', ha, signals: matchSignals },
+            debug: { sport: 'american-football', ha, signals: matchSignals, sourceAttribution, sharpAnchor },
           }).catch(() => {});
         }
 
@@ -5220,7 +5368,7 @@ async function runFootballUS(emit) {
         const fxMetaNflH = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'home', line: null };
         const fxMetaNflA = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'away', line: null };
         // v11.1.2: sanity-gate voor NFL ML (signal-adjusted adjHome/adjAway).
-        const nflMlGate = passesDivergence2Way(adjHome, adjAway, bH.price, bA.price);
+        const nflMlGate = divergence2WayForSport('american-football', adjHome, adjAway, bH.price, bA.price);
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && nflMlGate.passA)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
             `Consensus: ${(fpHome*100).toFixed(1)}%→${(adjHome*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`,
@@ -5252,10 +5400,16 @@ async function runFootballUS(emit) {
               const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + weatherAdj));
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
+              _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
+                { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
+                { maxPrice: 3.5 });
+              _auditChoiceVsAll(un, bestUn.bookie, bestUn.price,
+                { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line },
+                { maxPrice: 3.5 });
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: gate vangt weather-adj die overP ver van markt drijft + fxMeta
-              const nflOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const nflOuGate = divergence2WayForSport('american-football', overP, 1-overP, bestOv.price, bestUn.price);
               const fxMetaNflOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaNflUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -5276,7 +5430,7 @@ async function runFootballUS(emit) {
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
                   matchSignals,
                   convictionSelections: _nflConvictionFor(gameId, 'total', line),
-                  debug: { sport: 'american-football' },
+                  debug: { sport: 'american-football', sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
             }
@@ -5292,8 +5446,11 @@ async function runFootballUS(emit) {
           const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
           const bH = bestSpreadPick(homeSpr, homeFn, MIN_EDGE + 0.01);
           if (bH && hasDevig(bH.point) && bookieCountAt(bH.point) >= 3) {
+            _auditChoiceVsAll(homeSpr.filter(o => Math.abs(o.point - bH.point) < 0.01), bH.bookie, bH.price,
+              { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bH.point },
+              { maxPrice: 3.8 });
             const fp = homeFn(bH.point);
-            const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
+            const sanity = sanityForSport('american-football', fp, 1 / bH.price);
             if (sanity.agree) {
               const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
@@ -5304,8 +5461,11 @@ async function runFootballUS(emit) {
           }
           const bA = bestSpreadPick(awaySpr, awayFn, MIN_EDGE + 0.01);
           if (bA && hasDevig(bA.point) && bookieCountAt(bA.point) >= 3) {
+            _auditChoiceVsAll(awaySpr.filter(o => Math.abs(o.point - bA.point) < 0.01), bA.bookie, bA.price,
+              { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bA.point },
+              { maxPrice: 3.8 });
             const fp = awayFn(bA.point);
-            const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
+            const sanity = sanityForSport('american-football', fp, 1 / bA.price);
             if (sanity.agree) {
               const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
@@ -5329,7 +5489,7 @@ async function runFootballUS(emit) {
             const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
             const fp = homeFn(bH.point);
             const marketProb = 1 / bH.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('american-football', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'home', line: bH.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${hm} ${pt}`, bH.price,
@@ -5342,7 +5502,7 @@ async function runFootballUS(emit) {
             const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
             const fp = awayFn(bA.point);
             const marketProb = 1 / bA.price;
-            const sanity = modelMarketSanityCheck(fp, marketProb);
+            const sanity = sanityForSport('american-football', fp, marketProb);
             if (sanity.agree) {
               const fxMeta = { fixtureId: gameId, marketType: 'half_spread', selectionKey: 'away', line: bA.point };
               mkP(`${hm} vs ${aw}`, league.name, `🎯 1H ${aw} ${pt}`, bA.price,
@@ -5376,7 +5536,7 @@ async function runFootballUS(emit) {
               const h1OverEdge = h1OverP * h1BestOv.price - 1;
               const h1UnderEdge = (1-h1OverP) * h1BestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
-              const h1NflGate = passesDivergence2Way(h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
+              const h1NflGate = divergence2WayForSport('american-football', h1OverP, 1-h1OverP, h1BestOv.price, h1BestUn.price);
               const fxMetaNflH1Ov = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'over', line: h1Line };
               const fxMetaNflH1Un = { fixtureId: gameId, marketType: 'half_total', selectionKey: 'under', line: h1Line };
 
@@ -5506,6 +5666,7 @@ async function runHandball(emit) {
       if (!games.length) { emit({ log: `📭 ${league.name}: geen wedstrijden` }); continue; }
       emit({ log: `🤾 ${league.name}: ${games.length} wedstrijd(en)` });
       totalEvents += games.length;
+      const leagueSharpOdds = await fetchV15SharpAnchorOdds('handball', league.name);
 
       // ── handball_injury_diff (logged-only, conservatief) ──
       await sleep(80);
@@ -5569,6 +5730,9 @@ async function runHandball(emit) {
         const kickoffMs = new Date(g.date || g.time || g.timestamp * 1000).getTime();
         const ko = new Date(kickoffMs).toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        const sourceAttribution = sourceAttributionBase('handball', { apiSports: { odds: true, standings: true }, oddspapi: {}, thesportsdb: {} });
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) sourceAttribution.oddspapi.sharpAnchor = true;
 
         // v10.7.24: rest-days (phase 1)
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -5673,14 +5837,14 @@ async function runHandball(emit) {
         const hbInjAway = hbInjuryMap[awId] || 0;
         const hbInjDiff = hbInjAway - hbInjHome;
         const _swHb = loadSignalWeights();
-        const hbInjW = _swHb.handball_injury_diff !== undefined ? _swHb.handball_injury_diff : 0;
+        const hbInjW = signalWeightFor(_swHb, 'handball', 'moneyline', 'handball_injury_diff');
         const hbInjAdj = hbInjDiff * 0.007 * hbInjW;
 
         // Stakes (logged-only scaffolding)
         const hbTotalTeams = Object.keys(standingsMap).length;
         const hmStakesH = calcStakesByRank(hmSt?.rank, hbTotalTeams, 'handball');
         const awStakesH = calcStakesByRank(awSt?.rank, hbTotalTeams, 'handball');
-        const hbStakesW = _swHb.stakes !== undefined ? _swHb.stakes : 0;
+        const hbStakesW = signalWeightFor(_swHb, 'handball', 'moneyline', 'stakes');
         const stakesAdj = (hmStakesH.adj - awStakesH.adj) * hbStakesW;
         const stakesNote = (hmStakesH.label || awStakesH.label) ? ` | Stakes: ${hmStakesH.label||'—'} vs ${awStakesH.label||'—'}` : '';
 
@@ -5695,6 +5859,12 @@ async function runHandball(emit) {
         // weg op de post-check <= MAX_WINNER_ODDS.
         const bH = bestFromArr(homeOdds, { maxPrice: MAX_WINNER_ODDS });
         const bA = bestFromArr(awayOdds, { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(homeOdds, bH.bookie, bH.price,
+          { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(awayOdds, bA.bookie, bA.price,
+          { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'moneyline', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
 
         const homeEdge = bH.price > 0 ? adjHome * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway * bA.price - 1 : -1;
@@ -5710,6 +5880,7 @@ async function runHandball(emit) {
         if (hmStakesH.adj !== 0 || awStakesH.adj !== 0) matchSignals.push(`stakes:${((hmStakesH.adj - awStakesH.adj)*100).toFixed(1)}%`);
         // v10.7.24: rest-days
         if (restInfo.signals.length) matchSignals.push(...restInfo.signals);
+        if (sharpAnchor.source) matchSignals.push('sharp_anchor:0%');
 
         const posStr = posAdj !== 0 ? ` | Positie: ${posAdj>0?'+':''}${(posAdj*100).toFixed(1)}%` : '';
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-5)||'?'} vs ${awSt?.form?.slice(-5)||'?'}` : '';
@@ -5744,9 +5915,9 @@ async function runHandball(emit) {
 
           // Sanity-check handbal Poisson tegen markt consensus (zelfde principe als hockey)
           marketFairHb = consensus3Way(parsed.threeWay);
-          const sanH3 = marketFairHb ? modelMarketSanityCheck(p3.pHome, marketFairHb.home) : { agree: true };
-          const sanD3 = marketFairHb ? modelMarketSanityCheck(p3.pDraw, marketFairHb.draw) : { agree: true };
-          const sanA3 = marketFairHb ? modelMarketSanityCheck(p3.pAway, marketFairHb.away) : { agree: true };
+          const sanH3 = marketFairHb ? sanityForSport('handball', p3.pHome, marketFairHb.home) : { agree: true };
+          const sanD3 = marketFairHb ? sanityForSport('handball', p3.pDraw, marketFairHb.draw) : { agree: true };
+          const sanA3 = marketFairHb ? sanityForSport('handball', p3.pAway, marketFairHb.away) : { agree: true };
 
           const threeNote = ` | λh:${expHome.toFixed(1)} λa:${expAway.toFixed(1)} | 60-min`;
           // v12.4.0: parity met andere markten — fxMeta zodat post-scan gate
@@ -5776,7 +5947,7 @@ async function runHandball(emit) {
               homeEdge: e3H, drawEdge: e3D, awayEdge: e3A, minEdge: MIN_EDGE,
               matchSignals: [...matchSignals, '3way_ml'],
               convictionSelections: _handballConvictionFor(gameId, 'threeway', null),
-              debug: { sport: 'handball', lambda_h: expHome, lambda_a: expAway },
+              debug: { sport: 'handball', lambda_h: expHome, lambda_a: expAway, sourceAttribution, sharpAnchor },
             }).catch(() => {});
           }
         }
@@ -5797,7 +5968,7 @@ async function runHandball(emit) {
             bH, bA, homeEdge, awayEdge, minEdge: MIN_EDGE,
             maxWinnerOdds: MAX_WINNER_ODDS, matchSignals,
             convictionSelections: _handballConvictionFor(gameId, 'moneyline', null),
-            debug: { sport: 'handball', ha, signals: matchSignals },
+            debug: { sport: 'handball', ha, signals: matchSignals, sourceAttribution, sharpAnchor },
           }).catch(() => {});
         }
 
@@ -5805,7 +5976,7 @@ async function runHandball(emit) {
         const fxMetaHbH = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'home', line: null };
         const fxMetaHbA = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'away', line: null };
         // v11.1.2: sanity-gate voor handball ML (signal-adjusted).
-        const hbMlGate = passesDivergence2Way(adjHome, adjAway, bH.price, bA.price);
+        const hbMlGate = divergence2WayForSport('handball', adjHome, adjAway, bH.price, bA.price);
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && hbMlGate.passA)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
             `Consensus: ${(fpHome*100).toFixed(1)}%→${(adjHome*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`,
@@ -5836,10 +6007,16 @@ async function runHandball(emit) {
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
               const bestOv = bestFromArr(ov);
               const bestUn = bestFromArr(un);
+              _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
+                { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
+                { maxPrice: 3.5 });
+              _auditChoiceVsAll(un, bestUn.bookie, bestUn.price,
+                { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line },
+                { maxPrice: 3.5 });
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: safety-gate + fxMeta
-              const hbOuGate = passesDivergence2Way(overP, 1-overP, bestOv.price, bestUn.price);
+              const hbOuGate = divergence2WayForSport('handball', overP, 1-overP, bestOv.price, bestUn.price);
               const fxMetaHbOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaHbUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -5860,7 +6037,7 @@ async function runHandball(emit) {
                   bestOv, bestUn, ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
                   matchSignals,
                   convictionSelections: _handballConvictionFor(gameId, 'total', line),
-                  debug: { sport: 'handball' },
+                  debug: { sport: 'handball', sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
             }
@@ -5874,8 +6051,11 @@ async function runHandball(emit) {
           const { homeFn, awayFn, hasDevig, bookieCountAt } = buildSpreadFairProbFns(homeSpr, awaySpr, fpHome * 0.50, fpAway * 0.50);
           const bH = bestSpreadPick(homeSpr, homeFn, MIN_EDGE + 0.01);
           if (bH && hasDevig(bH.point) && bookieCountAt(bH.point) >= 3) {
+            _auditChoiceVsAll(homeSpr.filter(o => Math.abs(o.point - bH.point) < 0.01), bH.bookie, bH.price,
+              { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bH.point },
+              { maxPrice: 3.8 });
             const fp = homeFn(bH.point);
-            const sanity = modelMarketSanityCheck(fp, 1 / bH.price);
+            const sanity = sanityForSport('handball', fp, 1 / bH.price);
             if (sanity.agree) {
               const pt = bH.point > 0 ? `+${bH.point}` : `${bH.point}`;
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'home', line: bH.point };
@@ -5886,8 +6066,11 @@ async function runHandball(emit) {
           }
           const bA = bestSpreadPick(awaySpr, awayFn, MIN_EDGE + 0.01);
           if (bA && hasDevig(bA.point) && bookieCountAt(bA.point) >= 3) {
+            _auditChoiceVsAll(awaySpr.filter(o => Math.abs(o.point - bA.point) < 0.01), bA.bookie, bA.price,
+              { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bA.point },
+              { maxPrice: 3.8 });
             const fp = awayFn(bA.point);
-            const sanity = modelMarketSanityCheck(fp, 1 / bA.price);
+            const sanity = sanityForSport('handball', fp, 1 / bA.price);
             if (sanity.agree) {
               const pt = bA.point > 0 ? `+${bA.point}` : `${bA.point}`;
               const fxMeta = { fixtureId: gameId, marketType: 'spread', selectionKey: 'away', line: bA.point };
@@ -5990,6 +6173,8 @@ async function runPrematch(emit) {
     knockoutMatches: 0, knockout1stLeg: 0, knockout2ndLeg: 0,
     aggregateFetched: 0, aggregateLeaderHome: 0, aggregateLeaderAway: 0, aggregateSquare: 0,
     earlySeasonMatches: 0,
+    tsdbLivescoreSkips: 0, tsdbFormHits: 0, tsdbStandingsFallbackHits: 0,
+    oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
   };
 
   // ── Calibratie ───────────────────────────────────────────────────────────
@@ -6096,6 +6281,41 @@ async function runPrematch(emit) {
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = AF_FOOTBALL_LEAGUES.length; // 1 call/league gebruikt in pre-fetch
+  let footballLiveEvents = [];
+  if (OPERATOR.scraping_enabled) {
+    try {
+      const agg = require('./lib/integrations/data-aggregator');
+      footballLiveEvents = await agg.getLivescore('football');
+      if (footballLiveEvents.length) emit({ log: `🛰️ TSDB livescore pre-filter: ${footballLiveEvents.length} live event(s)` });
+    } catch { footballLiveEvents = []; }
+  }
+
+  const ODDS_PAPI_FOOTBALL_KEYS = {
+    epl: 'EPL', laliga: 'La Liga', bundesliga: 'Bundesliga', seriea: 'Serie A',
+    ligue1: 'Ligue 1', eredivisie: 'Eredivisie', ucl: 'CL', uel: 'EL', mls: 'MLS',
+  };
+  let oddspapiSharpCallsThisScan = 0;
+  const loadFootballSharpOdds = async (league) => {
+    if (!OPERATOR.scraping_enabled) return null;
+    if (!ODDS_PAPI_FOOTBALL_KEYS[league.key]) return null;
+    if (oddspapiSharpCallsThisScan >= 2) return null;
+    try {
+      const oddspapi = require('./lib/integrations/sources/oddspapi');
+      const usage = oddspapi.getUsage();
+      if (!usage.hasKey || usage.degraded || usage.remaining <= 25) return null;
+      const agg = require('./lib/integrations/data-aggregator');
+      const merged = await agg.getMergedOdds('football', {
+        league: ODDS_PAPI_FOOTBALL_KEYS[league.key],
+        bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk',
+        markets: 'h2h,totals,spreads',
+      });
+      oddspapiSharpCallsThisScan++;
+      scanTelemetry.oddspapiSharpAnchorCalls++;
+      return merged;
+    } catch {
+      return null;
+    }
+  };
 
   // ── STAP 3: Per competitie fixtures (uit cache) + odds + predictions ────
   for (const league of AF_FOOTBALL_LEAGUES) {
@@ -6107,8 +6327,24 @@ async function runPrematch(emit) {
       emit({ log: `✅ ${league.name}: ${filtered.length} wedstrijd(en)` });
       totalEvents += filtered.length;
 
-      const afStats   = afCache.teamStats[league.key] || {};
+      let afStats   = afCache.teamStats[league.key] || {};
       const afInj     = afCache.injuries[league.key]  || {};
+      let leagueSourceAttribution = sourceAttributionBase('football', {
+        apiSports: { fixtures: true, odds: true, standings: Object.keys(afStats).length > 0 },
+      });
+      if (OPERATOR.scraping_enabled && Object.keys(afStats).length < 2) {
+        try {
+          const agg = require('./lib/integrations/data-aggregator');
+          const tsdbRows = await agg.getStandings('football', league.tsdbId || league.id, league.season);
+          const tsdbStats = tsdbStandingsRowsToFootballStats(tsdbRows);
+          if (Object.keys(tsdbStats).length) {
+            afStats = mergeStatsWithFallback(afStats, tsdbStats);
+            leagueSourceAttribution.thesportsdb.standings = true;
+            scanTelemetry.tsdbStandingsFallbackHits += Object.keys(tsdbStats).length;
+          }
+        } catch { /* TSDB fallback mag scan nooit breken */ }
+      }
+      const leagueSharpOdds = await loadFootballSharpOdds(league);
 
       for (const f of filtered) {
         const fid = f.fixture?.id;
@@ -6123,6 +6359,22 @@ async function runPrematch(emit) {
         const kickoffTime = new Date(kickoffMs).toLocaleTimeString('nl-NL', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
         const ko = new Date(kickoffMs)
           .toLocaleString('nl-NL', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Europe/Amsterdam' });
+        if (footballLiveEvents.length && isLiveFixture(footballLiveEvents, hm, aw, kickoffMs)) {
+          scanTelemetry.tsdbLivescoreSkips++;
+          emit({ log: `⏭️ ${hm} vs ${aw}: live volgens TSDB, pre-match skip` });
+          continue;
+        }
+        const sourceAttribution = {
+          sport: 'football',
+          apiSports: { ...(leagueSourceAttribution.apiSports || {}), fixture: true },
+          thesportsdb: { ...(leagueSourceAttribution.thesportsdb || {}) },
+          oddspapi: {},
+        };
+        const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+        if (sharpAnchor.source) {
+          sourceAttribution.oddspapi.sharpAnchor = true;
+          scanTelemetry.oddspapiSharpAnchorFixtures++;
+        }
 
         // v10.7.24: rest-days signaal (phase 1: logging, weight=0 default)
         let restInfo = { signals: [], note: '', hmDays: null, awDays: null };
@@ -6263,6 +6515,7 @@ async function runPrematch(emit) {
           const predResp = await afGet('v3.football.api-sports.io', '/predictions', { fixture: fid });
           apiCallsUsed++;
           if (predResp?.length) {
+            sourceAttribution.apiSports.predictions = true;
             const pct  = predResp[0]?.predictions?.percent;
             const adv  = predResp[0]?.predictions?.advice || '';
             if (pct) {
@@ -6286,6 +6539,7 @@ async function runPrematch(emit) {
           apiCallsUsed++;
           lineupCertainty = 'neither';
           if (luResp?.length >= 2) {
+            sourceAttribution.apiSports.lineups = true;
             const hmLu = luResp.find(t => t.team?.id === f.teams?.home?.id);
             const awLu = luResp.find(t => t.team?.id === f.teams?.away?.id);
             const hmXI = hmLu?.startXI?.length || 0;
@@ -6309,12 +6563,34 @@ async function runPrematch(emit) {
 
         // ── api-football.com stats: vorm, blessures, scheidsrechter ───
         const hmKey = hm.toLowerCase(), awKey = aw.toLowerCase();
-        const hmSt  = afStats[hmKey], awSt = afStats[awKey];
+        let hmSt  = lookupTeamStats(afStats, hm), awSt = lookupTeamStats(afStats, aw);
         const hmInj = afInj[hmKey] || [], awInj = afInj[awKey] || [];
         const refInfo = afCache.referees[`${hmKey} vs ${awKey}`];
         // Extract referee name directly from fixture data
         const fixtureRef = f.fixture?.referee || '';
         const refereeName = refInfo?.name || (fixtureRef ? fixtureRef.replace(/, \w+$/, '') : null);
+        let tsdbShadowSignals = [];
+        if (OPERATOR.scraping_enabled && (!hmSt?.form || !awSt?.form)) {
+          try {
+            const agg = require('./lib/integrations/data-aggregator');
+            const [hmFormTsdb, awFormTsdb] = await Promise.all([
+              agg.getMergedForm('football', hm),
+              agg.getMergedForm('football', aw),
+            ]);
+            if (hmFormTsdb) {
+              hmSt = formSummaryToStats(hmSt, hmFormTsdb, hmId);
+              tsdbShadowSignals.push('tsdb_form_home:0%');
+              sourceAttribution.thesportsdb.form_home = true;
+              scanTelemetry.tsdbFormHits++;
+            }
+            if (awFormTsdb) {
+              awSt = formSummaryToStats(awSt, awFormTsdb, awId);
+              tsdbShadowSignals.push('tsdb_form_away:0%');
+              sourceAttribution.thesportsdb.form_away = true;
+              scanTelemetry.tsdbFormHits++;
+            }
+          } catch { /* fail-soft */ }
+        }
 
         // ── Positie-aanpassing (api-football rank) ──────────────────
         let posAdj = 0, posStr = '';
@@ -6384,6 +6660,7 @@ async function runPrematch(emit) {
         if (venueCoords && weatherCallsThisScan < MAX_WEATHER_CALLS) {
           weatherData = await fetchMatchWeather(venueCoords.lat, venueCoords.lon, new Date(kickoffMs));
           if (weatherData) {
+            sourceAttribution.openMeteo = { weather: true };
             const parts = [];
             if (weatherData.rain > 5)  { weatherAdj -= 0.03; parts.push(`🌧️ ${weatherData.rain}mm regen`); }
             if (weatherData.wind > 30) { weatherAdj -= 0.02; parts.push(`💨 ${weatherData.wind}km/h wind`); }
@@ -6460,6 +6737,15 @@ async function runPrematch(emit) {
         const bH = bestOdds(bookies, 'h2h', hm);
         const bA = bestOdds(bookies, 'h2h', aw);
         const bD = adjDraw !== null ? bestOdds(bookies, 'h2h', 'Draw') : null;
+        _auditChoiceVsAll(collectBookmakerOutcomeQuotes(bookies, 'h2h', hm), bH.bookie, bH.price,
+          { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: '1x2', selectionKey: 'home', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        _auditChoiceVsAll(collectBookmakerOutcomeQuotes(bookies, 'h2h', aw), bA.bookie, bA.price,
+          { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: '1x2', selectionKey: 'away', line: null },
+          { maxPrice: MAX_WINNER_ODDS });
+        if (bD) _auditChoiceVsAll(collectBookmakerOutcomeQuotes(bookies, 'h2h', 'Draw'), bD.bookie, bD.price,
+          { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: '1x2', selectionKey: 'draw', line: null },
+          { maxPrice: 15.00 });
 
         const homeEdge = bH.price > 0 ? adjHome2 * bH.price - 1 : -1;
         const awayEdge = bA.price > 0 ? adjAway2 * bA.price - 1 : -1;
@@ -6502,6 +6788,8 @@ async function runPrematch(emit) {
           if (aggInfo.signals.length) sigs.push(...aggInfo.signals);
           // v10.7.25: early-season signaal (logging + damping in calc)
           if (seasonInfo.signals.length) sigs.push(...seasonInfo.signals);
+          if (tsdbShadowSignals.length) sigs.push(...tsdbShadowSignals);
+          if (sharpAnchor.source) sigs.push('sharp_anchor:0%');
           return sigs;
         };
         const matchSignals = buildSignals();
@@ -6541,7 +6829,7 @@ async function runPrematch(emit) {
                 baselineProb: baseline,
                 modelDelta: { home: adjHome2 - fp.home, draw: (adjDraw || 0) - (fp.draw || 0), away: adjAway2 - fp.away },
                 finalProb: finalP,
-                debug: { sport: 'football', ha, signals: matchSignals, multipliers: { home: cm.home?.multiplier, draw: cm.draw?.multiplier, away: cm.away?.multiplier } },
+                debug: { sport: 'football', ha, signals: matchSignals, sourceAttribution, sharpAnchor, multipliers: { home: cm.home?.multiplier, draw: cm.draw?.multiplier, away: cm.away?.multiplier } },
               });
               if (!runId) return;
               // v11.3.31 (Codex-finding): sanity_fail reject-reason was onzichtbaar.
@@ -6561,7 +6849,7 @@ async function runPrematch(emit) {
                 else if (ev.best.price < 1.60) rejected = `price_too_low (${ev.best.price})`;
                 else if (ev.side !== 'draw' && ev.best.price > MAX_WINNER_ODDS) rejected = `price_too_high (${ev.best.price})`;
                 else if (!ev.gateOk) rejected = 'blowout_opp_too_low';
-                else if (ev.sanity && ev.sanity.agree === false) rejected = `sanity_fail (div ${(ev.sanity.divergence * 100).toFixed(1)}pp > ${(MODEL_MARKET_DIVERGENCE_THRESHOLD * 100).toFixed(1)}pp)`;
+                else if (ev.sanity && ev.sanity.agree === false) rejected = `sanity_fail (div ${(ev.sanity.divergence * 100).toFixed(1)}pp > ${(divergenceThresholdFor('football') * 100).toFixed(1)}pp)`;
                 else if (ev.edge < adaptiveMin) rejected = `edge_below_min (${(ev.edge * 100).toFixed(1)}% < ${(adaptiveMin * 100).toFixed(1)}%)`;
                 snap.writePickCandidate(supabase, {
                   modelRunId: runId, fixtureId: fid, selectionKey: ev.side,
@@ -6569,6 +6857,8 @@ async function runPrematch(emit) {
                   fairProb: ev.prob, edgePct: ev.edge,
                   passedFilters: !rejected, rejectedReason: rejected,
                   signals: matchSignals,
+                  sourceAttribution, sharpAnchor,
+                  playability: { executable: !!(ev.best && ev.best.price > 0), marketType: '1x2' },
                 }).catch(() => {});
               }
             } catch (e) { /* swallow */ }
@@ -6584,9 +6874,9 @@ async function runPrematch(emit) {
         // v11.1.2: 3-way sanity-gate per zijde tegen markt-consensus fp.
         // adjHome2/adjDraw/adjAway2 zijn signal-adjusted; divergentie > 4pp
         // t.o.v. fp.home/fp.draw/fp.away = geen pick.
-        const sanityHomeFb = fp && typeof fp.home === 'number' ? modelMarketSanityCheck(adjHome2, fp.home) : { agree: true };
-        const sanityAwayFb = fp && typeof fp.away === 'number' ? modelMarketSanityCheck(adjAway2, fp.away) : { agree: true };
-        const sanityDrawFb = fp && typeof fp.draw === 'number' ? modelMarketSanityCheck(adjDraw || 0, fp.draw) : { agree: true };
+        const sanityHomeFb = fp && typeof fp.home === 'number' ? sanityForSport('football', adjHome2, fp.home) : { agree: true };
+        const sanityAwayFb = fp && typeof fp.away === 'number' ? sanityForSport('football', adjAway2, fp.away) : { agree: true };
+        const sanityDrawFb = fp && typeof fp.draw === 'number' ? sanityForSport('football', adjDraw || 0, fp.draw) : { agree: true };
         // v12.5.4 funnel: alle 3 sides disagree → 1x2 markt-mix volledig blocked.
         if (!sanityHomeFb.agree && !sanityAwayFb.agree && !sanityDrawFb.agree) _premkpFunnel.sanity_block_1x2++;
 
@@ -6687,7 +6977,13 @@ async function runPrematch(emit) {
           // v11.2.1: safety-gate. overP is signal-adjusted (tsAdj ±5% + weather ±3%
           // + poisson ±4% + aggPush ±3%). Kan max ~15% divergeren van devigged
           // consensus. Gate zorgt dat we niet op signal-gepushte fake edge inzetten.
-          const fbOuGate = passesDivergence2Way(overP, 1-overP, over.best.price, under.best.price);
+          const fbOuGate = divergence2WayForSport('football', overP, 1-overP, over.best.price, under.best.price);
+          _auditChoiceVsAll(collectBookmakerOutcomeQuotes(bookies, 'totals', 'Over', 2.5), over.best.bookie, over.best.price,
+            { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line: 2.5 },
+            { maxPrice: 3.5 });
+          _auditChoiceVsAll(collectBookmakerOutcomeQuotes(bookies, 'totals', 'Under', 2.5), under.best.bookie, under.best.price,
+            { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'under', line: 2.5 },
+            { maxPrice: 3.5 });
           if (overEdge >= MIN_EDGE && fbOuGate.passA)
             mkP(`${hm} vs ${aw}`, league.name, `⚽ Over 2.5 goals`, over.best.price,
               `O/U consensus: ${(overP*100).toFixed(1)}% over | ${over.best.bookie}: ${over.best.price}${tsNote}${weatherOUNote}${poissonOUNote}${predNote} | ${ko}`,
@@ -6706,7 +7002,7 @@ async function runPrematch(emit) {
               ovEdge: overEdge, unEdge: underEdge, minEdge: MIN_EDGE,
               matchSignals: ouSignals,
               convictionSelections: _footballConvictionFor(fid, 'total', 2.5),
-              debug: { sport: 'football' },
+              debug: { sport: 'football', sourceAttribution, sharpAnchor, playability: { marketType: 'total', executable: true } },
             }).catch(() => {});
           }
         }
@@ -6782,6 +7078,7 @@ async function runPrematch(emit) {
                     h2hN    = merged.n;
                     h2hBTTS = merged.btts;
                     h2hSources = merged.sources || [];
+                    if (h2hSources.length) sourceAttribution.thesportsdb.h2h = true;
                   }
                 } catch { /* swallow: aggregator mag scan nooit breken */ }
               }
@@ -6881,7 +7178,7 @@ async function runPrematch(emit) {
               // mocht — andere markten hadden 7pp-threshold via
               // passesDivergence2Way. bttsDataOk + auditSuspicious bleven, dit
               // is de derde laag tegen door-signaal-gepushte fake edges.
-              const bttsGate = passesDivergence2Way(bttsYesP, bttsNoP, bestYes.price, bestNo.price);
+              const bttsGate = divergence2WayForSport('football', bttsYesP, bttsNoP, bestYes.price, bestNo.price);
 
               // v12.0.0 (Codex P1 + Claude P0): BTTS gebruikt nu eigen
               // calibratie-buckets. Voorheen las scan cm.over / cm.under, terwijl
@@ -6906,7 +7203,7 @@ async function runPrematch(emit) {
                   yesEdge: bttsYesEdge, noEdge: bttsNoEdge, minEdge: MIN_EDGE,
                   matchSignals: bttsSignals,
                   convictionSelections: _footballConvictionFor(fid, 'btts', null),
-                  debug: { sport: 'football', h2hN },
+                  debug: { sport: 'football', h2hN, sourceAttribution, sharpAnchor, playability: { marketType: 'btts', executable: true } },
                 }).catch(() => {});
               }
             }
@@ -6978,7 +7275,7 @@ async function runPrematch(emit) {
             const fxMetaDnbA = null;
             // v11.1.2: sanity-gate vs devigged DNB-market. dnbHomeP/dnbAwayP is
             // model-derived (redistrib); vergelijk met bookmaker-implied.
-            const dnbGate = passesDivergence2Way(dnbHomeP, dnbAwayP, bestDnbH.price, bestDnbA.price);
+            const dnbGate = divergence2WayForSport('football', dnbHomeP, dnbAwayP, bestDnbH.price, bestDnbA.price);
 
             // v12.0.0 (Claude P1): DNB krijgt eigen calibratie-bucket. Voorheen
             // stake zonder multiplier → systematisch onder-gestaked in ranking.
@@ -7021,19 +7318,34 @@ async function runPrematch(emit) {
           let bestHX = { price: 0, bookie: '' };
           let best12 = { price: 0, bookie: '' };
           let bestX2 = { price: 0, bookie: '' };
+          const allHXQuotes = [];
+          const all12Quotes = [];
+          const allX2Quotes = [];
           for (const b of dcBookies) {
-            if (!_isPreferredDc(b.name)) continue;
             for (const o of b.values) {
               const val = String(o.name || '').trim();
               const price = parseFloat(o.price) || 0;
               if (price <= 1.0) continue;
               // Namen variëren per bookie: "Home/Draw", "1X", "1/X", etc.
               const v = val.toLowerCase().replace(/[\/\-\s]/g, '');
+              if (v === '1x' || v === 'homedraw') allHXQuotes.push({ bookie: b.name, price });
+              else if (v === '12' || v === 'homeaway') all12Quotes.push({ bookie: b.name, price });
+              else if (v === 'x2' || v === 'drawaway') allX2Quotes.push({ bookie: b.name, price });
+              if (!_isPreferredDc(b.name)) continue;
               if ((v === '1x' || v === 'homedraw') && price > bestHX.price) bestHX = { price, bookie: b.name };
               else if ((v === '12' || v === 'homeaway') && price > best12.price) best12 = { price, bookie: b.name };
               else if ((v === 'x2' || v === 'drawaway') && price > bestX2.price) bestX2 = { price, bookie: b.name };
             }
           }
+          _auditChoiceVsAll(allHXQuotes, bestHX.bookie, bestHX.price,
+            { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'double_chance', selectionKey: '1x', line: null },
+            { maxPrice: 2.50 });
+          _auditChoiceVsAll(all12Quotes, best12.bookie, best12.price,
+            { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'double_chance', selectionKey: '12', line: null },
+            { maxPrice: 2.50 });
+          _auditChoiceVsAll(allX2Quotes, bestX2.bookie, bestX2.price,
+            { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'double_chance', selectionKey: 'x2', line: null },
+            { maxPrice: 2.50 });
 
           const eHX = bestHX.price > 0 ? pHX * bestHX.price - 1 : -1;
           const e12 = best12.price > 0 ? p12 * best12.price - 1 : -1;
@@ -7044,9 +7356,9 @@ async function runPrematch(emit) {
           const mfHX = fp && typeof fp.home === 'number' && typeof fp.draw === 'number' ? fp.home + fp.draw : null;
           const mf12 = fp && typeof fp.home === 'number' && typeof fp.away === 'number' ? fp.home + fp.away : null;
           const mfX2 = fp && typeof fp.draw === 'number' && typeof fp.away === 'number' ? fp.draw + fp.away : null;
-          const sanDcHX = mfHX != null ? modelMarketSanityCheck(pHX, mfHX) : { agree: true };
-          const sanDc12 = mf12 != null ? modelMarketSanityCheck(p12, mf12) : { agree: true };
-          const sanDcX2 = mfX2 != null ? modelMarketSanityCheck(pX2, mfX2) : { agree: true };
+          const sanDcHX = mfHX != null ? sanityForSport('football', pHX, mfHX) : { agree: true };
+          const sanDc12 = mf12 != null ? sanityForSport('football', p12, mf12) : { agree: true };
+          const sanDcX2 = mfX2 != null ? sanityForSport('football', pX2, mfX2) : { agree: true };
           // v12.4.1: zie DNB hierboven — flattenFootballBookies schrijft
           // double_chance niet, dus fxMeta=null. Gate-no-op blijft hetzelfde
           // gedrag als pre-v12.4.0 voor DC.
@@ -7075,7 +7387,7 @@ async function runPrematch(emit) {
               eHX, e12, eX2, minEdge: MIN_EDGE,
               matchSignals,
               convictionSelections: _footballConvictionFor(fid, 'double_chance', null),
-              debug: { sport: 'football' },
+              debug: { sport: 'football', sourceAttribution, sharpAnchor, playability: { marketType: 'double_chance', executable: true } },
             }).catch(() => {});
           }
         }
@@ -7111,8 +7423,11 @@ async function runPrematch(emit) {
           // "no_devig" oorzaak (te dunne bookie-pool voor de hoofdlijn).
           if (!bAhH || !hasDevig(bAhH.point) || bookieCountAt(bAhH.point) < 3) _premkpFunnel.handicap_no_devig++;
           if (bAhH && hasDevig(bAhH.point) && bookieCountAt(bAhH.point) >= 3) {
+            _auditChoiceVsAll(ahHomeSpr.filter(o => Math.abs(o.point - bAhH.point) < 0.01), bAhH.bookie, bAhH.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'home', line: bAhH.point },
+              { maxPrice: 3.8 });
             const fpAh = homeFn(bAhH.point);
-            const sanity = modelMarketSanityCheck(fpAh, 1 / bAhH.price);
+            const sanity = sanityForSport('football', fpAh, 1 / bAhH.price);
             if (sanity.agree && bAhH.price <= 3.8) {
               const pt = bAhH.point > 0 ? `+${bAhH.point}` : `${bAhH.point}`;
               const fxMeta = { fixtureId: fid, marketType: 'spread', selectionKey: 'home', line: bAhH.point };
@@ -7123,8 +7438,11 @@ async function runPrematch(emit) {
           }
           const bAhA = bestSpreadPick(ahAwaySpr, awayFn, MIN_EDGE + 0.01);
           if (bAhA && hasDevig(bAhA.point) && bookieCountAt(bAhA.point) >= 3) {
+            _auditChoiceVsAll(ahAwaySpr.filter(o => Math.abs(o.point - bAhA.point) < 0.01), bAhA.bookie, bAhA.price,
+              { sport: 'football', wedstrijd: `${hm} vs ${aw}`, market: 'spread', selectionKey: 'away', line: bAhA.point },
+              { maxPrice: 3.8 });
             const fpAh = awayFn(bAhA.point);
-            const sanity = modelMarketSanityCheck(fpAh, 1 / bAhA.price);
+            const sanity = sanityForSport('football', fpAh, 1 / bAhA.price);
             if (sanity.agree && bAhA.price <= 3.8) {
               const pt = bAhA.point > 0 ? `+${bAhA.point}` : `${bAhA.point}`;
               const fxMeta = { fixtureId: fid, marketType: 'spread', selectionKey: 'away', line: bAhA.point };
@@ -7178,7 +7496,7 @@ async function runPrematch(emit) {
     const co  = +legs.reduce((acc, p) => acc * p.odd, 1).toFixed(2);
     if (co < 1.60 || co > MAX_WINNER_ODDS) return;
     const ep  = +legs.reduce((acc, p) => acc * p.ep, 1).toFixed(3);
-    if (ep < MIN_EP) return;
+    if (ep < minEpForMarket('combi')) return;
     const kc  = ((ep*(co-1)) - (1-ep)) / (co-1);
     if (kc <= 0.015) return;
     const hkc = kc * getKellyFraction();
@@ -7294,6 +7612,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
   ];
   emit({ log: telLines.join('\n') });
 
@@ -7585,6 +7904,87 @@ app.use('/api', createNotificationsRouter({
   vapidPublicKey: VAPID_PUBLIC,
 }));
 
+async function runShadowSports(emit) {
+  if (!OPERATOR.scraping_enabled || !_currentModelVersionId) {
+    emit({ log: '🧪 Shadow sports: skip (scraping uit of model-version nog niet klaar)' });
+    return [];
+  }
+  const calib = runtimeCalib();
+  const activation = calib.sportActivation || {};
+  const shadowSports = ['tennis', 'rugby', 'cricket'].filter(s => (activation[s]?.mode || 'shadow') === 'shadow');
+  if (!shadowSports.length) return [];
+
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+  let written = 0;
+  try {
+    const agg = require('./lib/integrations/data-aggregator');
+    for (const sport of shadowSports) {
+      const [todayEvents, tomorrowEvents, mergedOdds] = await Promise.all([
+        agg.getEventSchedule(sport, today).catch(() => []),
+        agg.getEventSchedule(sport, tomorrow).catch(() => []),
+        fetchV15SharpAnchorOdds(sport, null, { remainingFloor: 80 }).catch(() => null),
+      ]);
+      const events = [...(todayEvents || []), ...(tomorrowEvents || [])].slice(0, 12);
+      for (const ev of events) {
+        const fixtureId = ev.eventId || ev.id || `${sport}:${ev.homeTeam || ev.home}:${ev.awayTeam || ev.away}:${ev.commenceTime || ev.date}`;
+        const home = ev.homeTeam || ev.home || '';
+        const away = ev.awayTeam || ev.away || '';
+        if (!fixtureId || !home || !away) continue;
+        const kickoffMs = Date.parse(ev.commenceTime || ev.startTime || ev.date || '');
+        const sharpAnchor = summarizeSharpAnchor(mergedOdds, home, away, kickoffMs);
+        const sample = Array.isArray(sharpAnchor.sample) ? sharpAnchor.sample : [];
+        const quote = sample.find(q => /pinnacle|betfair/i.test(String(q.bookie || ''))) || sample[0];
+        if (!quote || !quote.bookie || !Number.isFinite(Number(quote.price))) continue;
+        const selection = teamMatchScore(quote.selection || '', home) >= teamMatchScore(quote.selection || '', away) ? 'home' : 'away';
+        const fairProb = Math.max(0.01, Math.min(0.99, 1 / Number(quote.price)));
+        await snap.upsertFixture(supabase, {
+          id: fixtureId, sport, leagueId: null, leagueName: ev.league || ev.leagueName || 'shadow',
+          season: null, homeTeamName: home, awayTeamName: away,
+          startTime: Number.isFinite(kickoffMs) ? kickoffMs : null, status: 'scheduled',
+        }).catch(() => {});
+        const runId = await snap.writeModelRun(supabase, {
+          fixtureId, modelVersionId: _currentModelVersionId,
+          marketType: quote.market === '1X2' ? '1x2' : 'moneyline',
+          line: quote.line ?? null,
+          baselineProb: { [selection]: fairProb },
+          modelDelta: {},
+          finalProb: { [selection]: fairProb },
+          debug: { sport, shadow: true, sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true } }), sharpAnchor },
+        });
+        if (!runId) continue;
+        await snap.writePickCandidate(supabase, {
+          modelRunId: runId,
+          fixtureId,
+          selectionKey: selection,
+          bookmaker: quote.bookie,
+          bookmakerOdds: quote.price,
+          fairProb,
+          edgePct: 0,
+          passedFilters: false,
+          rejectedReason: 'shadow_sport_activation',
+          signals: ['sport_shadow:0%', 'sharp_anchor:0%'],
+          shadow: true,
+          finalTop5: false,
+          marketType: quote.market === '1X2' ? '1x2' : 'moneyline',
+          line: quote.line ?? null,
+          marktLabel: selection === 'home' ? `🏠 ${home} wint` : `✈️ ${away} wint`,
+          kickoffMs: Number.isFinite(kickoffMs) ? kickoffMs : null,
+          sport,
+          sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true } }),
+          sharpAnchor,
+          playability: { executable: false, reason: 'shadow_sport_not_promoted' },
+        });
+        written++;
+      }
+      emit({ log: `🧪 ${sport} shadow: ${events.length} fixture(s), ${written} totaal paper-row(s)` });
+    }
+  } catch (e) {
+    emit({ log: `⚠️ Shadow sports fail-soft: ${e.message}` });
+  }
+  return [];
+}
+
 // Prematch scan · SSE streaming (inclusief live check op moment van draaien)
 // ── v10.8.13: shared multi-sport scan pipeline ──────────────────────────────
 // Extractie uit de /api/prematch route zodat zowel de handmatige trigger
@@ -7601,7 +8001,7 @@ let _scanOrchestrator = null;
 function getRunFullScan() {
   if (!_scanOrchestrator) {
     _scanOrchestrator = createScanOrchestrator({
-      runPrematch, runBasketball, runHockey, runBaseball, runFootballUS, runHandball,
+      runPrematch, runBasketball, runHockey, runBaseball, runFootballUS, runHandball, runShadowSports,
       setPreferredBookies, refreshActiveUnitEur, recomputeStakeRegime,
       getActiveUnitEur: () => _activeUnitEur,
       getActiveStartBankroll: () => _activeStartBankroll,

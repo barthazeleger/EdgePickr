@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">14.0.0</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.0.0</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -654,14 +654,14 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 14.0.0</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.0.0</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
       <p style="font-size:13px;color:var(--muted);line-height:1.75" data-i18n-html="info_intro">
-        EdgePickr is een <strong>quantitative market-disagreement engine</strong> voor 6 sporten.
+        EdgePickr is een <strong>quantitative market-disagreement engine</strong> voor 6 actieve sporten plus 3 shadow-sport scanners.
         Markt = baseline truth, model = residual overlay. Volledig autonoom met point-in-time snapshots,
-        CLV-first KPI, kill-switch enforcement, en minimale operator failsafes voor noodgevallen.
+        CLV-first KPI, runtime-calibratie, source-attribution, kill-switch enforcement, en minimale operator failsafes voor noodgevallen.
         Doel: systematisch mispricings vinden, niet "voorspellen wie wint".
       </p>
     </div>
@@ -709,12 +709,12 @@
         <div style="margin-bottom:10px"><strong style="color:var(--text)">7. Point-in-time logging (v2 pipeline)</strong><br>
         Supabase tabellen voor reproduceerbaarheid: fixtures, odds_snapshots (90-min polling + kickoff windows), feature_snapshots, market_consensus, model_runs, pick_candidates (incl. rejected_reason), signal_stats, training_examples, bets (met signals jsonb voor retrospective analyse). Walk-forward backtest endpoint actief.</div>
         <div><strong style="color:var(--text)">8. Experimentele signalen (logged-only, auto-activate)</strong><br>
-        Sommige signalen worden verzameld maar staan op weight=0 (geen scoring impact). Zodra n≥50 picks met dat signaal én avg CLV > 0%, wordt het automatisch geactiveerd op weight 0.5. Web-push/inbox melding bij activatie.<br>
+        Sommige signalen worden verzameld maar staan op weight=0 (geen scoring impact). v15 weegt signalen hiërarchisch: sport+markt+signaal → sport+signaal → globaal. Zodra sample-size, CLV en Brier-score bewijs leveren, mag auto-tune ze activeren zonder codewijziging.<br>
         • <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11.5px">rest_days_*</code> — rest-days home vs away (alle 6 sporten, sinds v10.8.2)<br>
         • <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11.5px">new_season</code> — seizoensindicator met form/h2h damping (v10.8.3)<br>
         • <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11.5px">aggregate_score</code> — 2-leg aggregate push-adjustment (voetbal KO, v10.8.0)<br>
         • <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11.5px">nfl_injury_diff</code> — blessure-aantal verschil (NFL, sinds v10.4.1)<br>
-        Status zichtbaar op Model-tab onder "Huidige Signal Gewichten" en Signal Performance dashboard.</div>
+        Status zichtbaar op Model-tab onder "Huidige Signal Gewichten", Signal Performance dashboard en de v15 admin-readouts.</div>
       </div>
     </div>
 
@@ -740,7 +740,7 @@
           <span style="font-size:20px">📊</span>
           <div>
             <div style="font-weight:600">OddsPapi <span style="font-size:10px;color:var(--green);font-weight:700">FREE TIER · ODDS-FALLBACK</span></div>
-            <div style="color:var(--muted);font-size:12px">v4 API · 250 req/maand · Bet365 · Pinnacle · Unibet · William Hill · DraftKings<br>h2h · spreads · totals · scores · events (geen quota voor scores/events)<br><strong>Sinds 28-04-2026:</strong> gratis · uitbreidbaar naar paid $20/bookie/mnd indien player-props/alternates nodig</div>
+            <div style="color:var(--muted);font-size:12px">v4 API · 250 req/maand · Bet365 · Pinnacle · Unibet · William Hill · DraftKings<br>h2h · spreads · totals · scores · events (geen quota voor scores/events)<br><strong>v15:</strong> quota-aware sharp-anchor shadow logging; nooit vereist voor veilige picks</div>
           </div>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
@@ -774,8 +774,8 @@
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <span style="font-size:20px">🌦️</span>
           <div>
-            <div style="font-weight:600">OpenWeatherMap <span style="font-size:10px;color:var(--green);font-weight:700">GRATIS</span></div>
-            <div style="color:var(--muted);font-size:12px">Wind + regen + temp voor outdoor voetbal/NFL.<br>Free tier (60 calls/min) ruim genoeg voor scan-volume.</div>
+            <div style="font-weight:600">Open-Meteo <span style="font-size:10px;color:var(--green);font-weight:700">GRATIS</span></div>
+            <div style="color:var(--muted);font-size:12px">Wind + regen + temp voor outdoor voetbal/NFL.<br>Gratis publieke weerbron, ruim genoeg voor scan-volume.</div>
           </div>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
@@ -796,7 +796,7 @@
           <span style="font-size:20px">🚀</span>
           <div>
             <div style="font-weight:600;text-decoration:line-through">Google Sheets · Sofascore · Fotmob</div>
-            <div style="color:var(--muted);font-size:12px">Sheets vervangen door Supabase · Sofascore (403 cloudflare-block) en Fotmob (404 endpoint-change) vanaf Render IP-segment dood, v14.0.0 uitgefaseerd</div>
+            <div style="color:var(--muted);font-size:12px">Sheets vervangen door Supabase · Sofascore (403 cloudflare-block) en Fotmob (404 endpoint-change) vanaf Render IP-segment dood, v15.0.0 houdt ze uitgefaseerd</div>
           </div>
         </div>
       </div>
