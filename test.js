@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.6.1');
+  assert.strictEqual(appMeta.APP_VERSION, '12.6.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7072,78 +7072,77 @@ test('aggregator: _summarizeForm telt W/D/L + GF/GA', () => {
 });
 
 test('aggregator: getMergedH2H faalt gracefully als alle sources disabled', async () => {
-  setSourceEnabled('sofascore', false);
-  setSourceEnabled('fotmob', false);
+  // v12.6.2: sofascore + fotmob uit registry, alleen TSDB resteert voor h2h.
+  setSourceEnabled('thesportsdb', false);
   const r = await agg.getMergedH2H('football', 'A', 'B');
   assert.strictEqual(r, null);
 });
 
-test('aggregator: getMergedH2H merged events van meerdere sources (dedup)', async () => {
-  sofa._clearCache(); sofa._breaker.reset();
-  fotmob._clearCache(); fotmob._breaker.reset();
-  setSourceEnabled('sofascore', true);
-  setSourceEnabled('fotmob', true);
-  const now = Math.floor(Date.now() / 1000);
+test('aggregator: getMergedH2H gebruikt TSDB als enige h2h-bron (v12.6.2)', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let phase = 0;
   await withMockFetch(async (url) => {
-    if (url.includes('sofascore') && url.includes('/search/suggestions/')) {
-      const q = decodeURIComponent(url.split('/').pop()).toLowerCase();
-      return { results: [{ type: 'team', entity: { id: q.includes('bromley') ? 1 : 2, name: q.includes('bromley') ? 'Bromley' : 'Cambridge United', sport: { slug: 'football' } } }] };
-    }
-    if (url.includes('sofascore') && url.includes('/h2h/')) {
+    if (url.includes('searchteams.php')) {
+      phase++;
       return {
-        events: [
-          { startTimestamp: now - 86400 * 30, homeTeam: { id: 1, name: 'Bromley' }, awayTeam: { id: 2, name: 'Cambridge United' }, homeScore: { current: 2 }, awayScore: { current: 1 } },
-        ],
+        teams: [{
+          idTeam: phase === 1 ? '1' : '2',
+          strTeam: phase === 1 ? 'Bromley' : 'Cambridge United',
+          strSport: 'Soccer',
+        }],
       };
     }
-    if (url.includes('fotmob') && url.includes('searchapi/suggest')) {
-      const term = url.split('term=')[1];
-      return { suggestions: [[{ type: 'team', id: term.toLowerCase().includes('bromley') ? 11 : 22, name: term.toLowerCase().includes('bromley') ? 'Bromley' : 'Cambridge United' }]] };
-    }
-    if (url.includes('fotmob') && url.includes('/teams?id=')) {
+    if (url.includes('lookuph2h.php')) {
       return {
-        fixtures: {
-          allFixtures: {
-            fixtures: [
-              { status: { finished: true, utcTime: new Date(Date.now() - 86400 * 1000 * 30).toISOString(), scoreStr: '2 - 1' }, home: { id: 11, name: 'Bromley' }, away: { id: 22, name: 'Cambridge United' } },  // zelfde wedstrijd
-              { status: { finished: true, utcTime: new Date(Date.now() - 86400 * 1000 * 60).toISOString(), scoreStr: '0 - 0' }, home: { id: 22, name: 'Cambridge United' }, away: { id: 11, name: 'Bromley' } }, // extra
-            ],
-          },
-        },
+        event: [
+          { strHomeTeam: 'Bromley', strAwayTeam: 'Cambridge United',
+            intHomeScore: '2', intAwayScore: '1', dateEvent: '2026-03-15' },
+        ],
       };
     }
     return {};
   }, async () => {
     const r = await agg.getMergedH2H('football', 'Bromley', 'Cambridge United');
-    assert.ok(r);
-    // sofascore gives 1 game, fotmob gives 2 but 1 overlapt → total dedup = 2
-    assert.ok(r.n >= 1 && r.n <= 2, `verwacht 1-2 unieke events, kreeg ${r.n}`);
-    assert.ok(r.sources.length >= 1);
+    assert.ok(r, 'TSDB als enige bron moet h2h kunnen leveren');
+    assert.strictEqual(r.n, 1);
+    assert.ok(r.sources.includes('thesportsdb'));
   });
 });
 
-test('aggregator: healthCheckAll roept alle sources aan', async () => {
-  setSourceEnabled('sofascore', false);
-  setSourceEnabled('fotmob', false);
+test('aggregator: healthCheckAll roept alle 4 actieve sources aan (v12.6.2)', async () => {
+  // v12.6.2: sofascore + fotmob uit registry → 4 sources i.p.v. 6.
   setSourceEnabled('thesportsdb', false);
   setSourceEnabled('nba-stats', false);
   setSourceEnabled('nhl-api', false);
   setSourceEnabled('mlb-stats-ext', false);
   const r = await agg.healthCheckAll();
-  assert.strictEqual(r.length, 6);  // v12.5.12: thesportsdb toegevoegd
+  assert.strictEqual(r.length, 4);
   assert.ok(r.every(x => x.healthy === null || x.disabled === true || x.healthy === false));
 });
 
-test('aggregator: SPORT_SOURCES bevat thesportsdb voor 5 sporten (v12.6.0 multi-sport)', () => {
-  // Garandeert dat de h2h-fallback via TSDB beschikbaar is voor alle non-volleyball
-  // sporten. Voorkomt regressie waarbij nieuwe sport wordt toegevoegd zonder
-  // TSDB als h2h-fallback (wat sofascore-down-scenario blootlegt).
+test('aggregator: SPORT_SOURCES bevat thesportsdb voor alle 6 actieve sporten (v12.6.2)', () => {
+  // v12.6.2: TSDB is enige h2h-bron voor alle 6 sporten na sofascore+fotmob removal.
   const sportsWithTsdb = ['football', 'basketball', 'hockey', 'baseball', 'handball', 'american-football'];
   for (const sport of sportsWithTsdb) {
     const reg = agg.SPORT_SOURCES[sport];
     assert.ok(reg, `SPORT_SOURCES mist sport=${sport}`);
     const sourceNames = (reg.h2h || []).map(s => s.SOURCE_NAME);
     assert.ok(sourceNames.includes('thesportsdb'), `sport=${sport} mist TSDB in h2h`);
+  }
+});
+
+test('aggregator: SPORT_SOURCES bevat geen sofascore/fotmob meer (v12.6.2 cleanup)', () => {
+  // Regressie-guard: dead-source-removal moet niet stilletjes terugslippen.
+  for (const sport of Object.keys(agg.SPORT_SOURCES)) {
+    const reg = agg.SPORT_SOURCES[sport];
+    for (const dataType of ['h2h', 'form', 'summary']) {
+      const arr = reg[dataType] || [];
+      for (const src of arr) {
+        assert.notStrictEqual(src.SOURCE_NAME, 'sofascore', `sofascore terug in ${sport}.${dataType}`);
+        assert.notStrictEqual(src.SOURCE_NAME, 'fotmob', `fotmob terug in ${sport}.${dataType}`);
+      }
+    }
   }
 });
 

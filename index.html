@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.6.1</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.6.2</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -654,7 +654,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.6.1</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.6.2</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -723,10 +723,31 @@
       <div class="card-title" style="margin-bottom:14px" data-i18n="card_datasources">📡 Databronnen</div>
       <div style="font-size:13px;line-height:1.9">
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <span style="font-size:20px">⚽</span>
+          <div>
+            <div style="font-weight:600">api-sports Football Pro <span style="font-size:10px;color:var(--accent);font-weight:700">PRIMAIR · VOETBAL</span></div>
+            <div style="color:var(--muted);font-size:12px">v3 endpoints · 75.000 calls/dag · alle leagues wereldwijd<br>fixtures · odds · h2h · lineups · predictions · injuries · standings · live · statistics<br><strong>Vanaf 13-05-2026:</strong> $19,99/mnd · vervangt All-Sports-bundle (€85)</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <span style="font-size:20px">🏆</span>
           <div>
-            <div style="font-weight:600">api-sports All Sports <span style="font-size:10px;color:var(--accent);font-weight:700">PRIMAIR</span></div>
-            <div style="color:var(--muted);font-size:12px">6 sporten: voetbal, basketball, baseball, hockey, NFL, handball.<br>7.500 calls/dag per sport · odds, fixtures, standings, H2H, blessures, stats<br><strong>Sinds v10.4.1:</strong> NBA rest-days lookups (-2/-3 dagen) + NFL /injuries endpoint actief voor experimentele signalen.</div>
+            <div style="font-weight:600">TheSportsDB Premium <span style="font-size:10px;color:var(--accent);font-weight:700">PRIMAIR · OVERIGE SPORTEN</span></div>
+            <div style="color:var(--muted);font-size:12px">v1 + v2 API · 100 req/min · multi-sport (basketball/hockey/baseball/NFL/handbal/tennis/rugby/cricket)<br>h2h · lineups · livescores · event-statistics · timeline · venues · player career-data · TV broadcasts<br><strong>Sinds 28-04-2026:</strong> €9/mnd · ondersteunt v13.0 multi-source pivot</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <span style="font-size:20px">📊</span>
+          <div>
+            <div style="font-weight:600">The Odds API <span style="font-size:10px;color:var(--green);font-weight:700">FREE TIER · ODDS-FALLBACK</span></div>
+            <div style="color:var(--muted);font-size:12px">v4 API · 500 req/maand · Bet365 · Pinnacle · Unibet · William Hill · DraftKings<br>h2h · spreads · totals · scores · events (geen quota voor scores/events)<br><strong>Sinds 28-04-2026:</strong> gratis · uitbreidbaar naar paid $20/bookie/mnd indien player-props/alternates nodig</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+          <span style="font-size:20px">🧊</span>
+          <div>
+            <div style="font-weight:600">api-sports overige sporten <span style="font-size:10px;color:var(--green);font-weight:700">FREE TIER · 3E FALLBACK</span></div>
+            <div style="color:var(--muted);font-size:12px">v1 endpoints · 100 calls/dag per sport · basketball/hockey/baseball/NFL/handbal<br>fallback voor injuries/standings die TSDB + OddsAPI niet dekken<br><strong>Vanaf 13-05-2026:</strong> gratis · vervangt All-Sports-bundle voor non-football</div>
           </div>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
@@ -774,8 +795,8 @@
         <div style="display:flex;align-items:flex-start;gap:10px;opacity:0.5">
           <span style="font-size:20px">🚀</span>
           <div>
-            <div style="font-weight:600;text-decoration:line-through">Google Sheets · The Odds API</div>
-            <div style="color:var(--muted);font-size:12px">Beide vervangen — Sheets door Supabase, Odds API door api-sports Pro</div>
+            <div style="font-weight:600;text-decoration:line-through">Google Sheets · Sofascore · Fotmob</div>
+            <div style="color:var(--muted);font-size:12px">Sheets vervangen door Supabase · Sofascore (403 cloudflare-block) en Fotmob (404 endpoint-change) vanaf Render IP-segment dood, v12.6.2 uitgefaseerd</div>
           </div>
         </div>
       </div>
@@ -834,15 +855,55 @@
   <div class="card admin-only" style="margin-bottom:16px;display:none">
     <div class="card-title" style="margin-bottom:14px" data-i18n="card_subscriptions">💳 Abonnementen</div>
     <div style="font-size:13px">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);opacity:0.75">
         <div>
-          <div style="font-weight:600">api-sports All Sports</div>
-          <div style="color:var(--muted);font-size:12px;margin-top:2px">7500 req/dag per sport · voetbal · NBA · MLB · NHL · NFL · handbal</div>
+          <div style="font-weight:600">api-sports All Sports <span style="font-size:10px;color:var(--red);font-weight:700;margin-left:4px">ROLT AF 13-05</span></div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">7500 req/dag per sport · alle 6 sporten · vervangen per 13-05-2026</div>
         </div>
         <div style="text-align:right;flex-shrink:0;margin-left:12px">
-          <div style="font-weight:700;color:var(--accent)">€85/mnd</div>
-          <div style="font-size:11px;color:var(--muted)">Start: 12-04-2026</div>
-          <div style="font-size:11px;color:var(--muted)">Verlengt: 12-05-2026</div>
+          <div style="font-weight:700;color:var(--muted);text-decoration:line-through">€85/mnd</div>
+          <div style="font-size:11px;color:var(--muted)">Eindigt: 12-05-2026</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600">api-sports Football Pro <span style="font-size:10px;color:var(--accent);font-weight:700;margin-left:4px">VANAF 13-05</span></div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">75.000 req/dag · alleen voetbal · alle leagues · v3 endpoints (fixtures/odds/h2h/lineups/predictions/injuries)</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div style="font-weight:700;color:var(--accent)">$19,99/mnd</div>
+          <div style="font-size:11px;color:var(--muted)">Start: 13-05-2026</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600">api-sports overige sporten <span style="font-size:10px;color:var(--green);font-weight:700;margin-left:4px">FREE TIER</span></div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">100 req/dag per sport · basketball · hockey · baseball · NFL · handbal · 3e fallback-laag (na TSDB + OddsAPI)</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div style="font-weight:700;color:var(--green)">Gratis</div>
+          <div style="font-size:11px;color:var(--muted)">Start: 13-05-2026</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600">TheSportsDB Premium <span style="font-size:10px;color:var(--accent);font-weight:700;margin-left:4px">NIEUW · PRIMAIR</span></div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">100 req/min · v2 API (header-auth) · multi-sport h2h · livescores · lineups · event statistics · timeline · venues · player career-data</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div style="font-weight:700;color:var(--accent)">€9/mnd</div>
+          <div style="font-size:11px;color:var(--muted)">Start: 28-04-2026</div>
+          <div style="font-size:11px;color:var(--muted)">Verlengt: 28-05-2026</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:600">The Odds API <span style="font-size:10px;color:var(--green);font-weight:700;margin-left:4px">FREE TIER</span></div>
+          <div style="color:var(--muted);font-size:12px;margin-top:2px">500 req/maand · Bet365 · Pinnacle · Unibet · William Hill · h2h · spreads · totals · 2e fallback-laag voor odds (uitbreidbaar naar paid $20/bookie/mnd indien nodig)</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:12px">
+          <div style="font-weight:700;color:var(--green)">Gratis</div>
+          <div style="font-size:11px;color:var(--muted)">Start: 28-04-2026</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
@@ -5334,7 +5395,7 @@ async function loadScrapeSourcesView() {
   lines.push(`Scraping master: ${r.scraping_enabled ? 'AAN' : 'UIT'}`);
   lines.push('');
   lines.push('Sources (enabled · health · breaker):');
-  const known = ['sofascore', 'fotmob', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+  const known = ['thesportsdb', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
   for (const name of known) {
     const src = (r.sources || []).find(s => s.name === name);
     const enabled = src ? src.enabled : false;
@@ -5345,9 +5406,9 @@ async function loadScrapeSourcesView() {
     lines.push(`  ${enabled ? '✅' : '⬜'} ${name.padEnd(16)} · ${healthStr.padEnd(25)} · ${bStr}`);
   }
   lines.push('');
-  lines.push('Typ een source-naam om te togglen (sofascore/fotmob/nba-stats/nhl-api/mlb-stats-ext):');
-  lines.push('Prefix met "reset:" om circuit breaker te resetten, bv. "reset:sofascore"');
-  lines.push('Prefix met "diag:" om een live-diagnose te draaien, bv. "diag:sofascore" (toont HTTP status + error)');
+  lines.push('Typ een source-naam om te togglen (thesportsdb/nba-stats/nhl-api/mlb-stats-ext):');
+  lines.push('Prefix met "reset:" om circuit breaker te resetten, bv. "reset:thesportsdb"');
+  lines.push('Prefix met "diag:" om een live-diagnose te draaien, bv. "diag:thesportsdb" (toont HTTP status + error)');
   const input = prompt(lines.join('\n'), '');
   if (!input) return;
   if (input.startsWith('diag:')) {

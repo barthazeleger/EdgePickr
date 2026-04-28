@@ -2,6 +2,36 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.6.2] - 2026-04-28
+
+**Doctrine-cleanup · sofascore + fotmob uitgefaseerd · info-page subscriptions/databronnen synced met v13.0 pivot**
+
+Aanleiding: voorbereiding op v13.0 multi-source pivot. Sofascore (cloudflare 403) en Fotmob (404 endpoint-change) zijn vanaf Render's IP-segment al maandenlang dood — geen herstel verwacht. Tegelijk gaan abonnementen schuiven (api-sports All Sports rolt af 13-05, football Pro $19,99 blijft, TheSportsDB Premium €9 binnengehaald 28-04, OddsAPI free tier ingepland). Info-page moet matchen met de nieuwe werkelijkheid voordat de tool zelf de pivot maakt.
+
+Doctrine-context: dit is een hygiene-release, geen feature-toevoeging. Code-cleanup (dead-source removal uit aggregator-registry) + UI/doc-sync. Geen pick-logic-wijzigingen.
+
+### Changed
+
+- **`lib/integrations/data-aggregator.js SPORT_SOURCES`** — sofascore + fotmob volledig verwijderd uit alle sport-entries. TSDB Premium is nu de enige h2h-bron voor de 6 actieve sporten (football/basketball/hockey/baseball/handball/american-football). Volleyball-entry weggehaald (had alleen sofascore en is geen actieve scan-sport). Form-merge call-pattern unified naar `(teamName, sport, limit)`-signature voor alle resterende bronnen.
+- **`lib/integrations/data-aggregator.js healthCheckAll`** — sources-array van 6 → 4 (thesportsdb, nba-stats, nhl-api, mlb-stats-ext).
+- **`server.js`** — known-source list in `restoreScraperSourcesFromCalib()` van 6 → 4. ftChecks-filter in scan-log alleen voor `thesportsdb` (sofascore/fotmob entries verschijnen niet meer in checks). Comments rond H2H-enrichment en master-switch comment ge-update naar v12.6.2-beeld.
+- **`index.html`** — admin-panel scrape-sources prompt-list van 6 → 4 sources. Subscription-card herzien: api-sports All Sports gemarkeerd als "ROLT AF 13-05" (line-through, opacity 0.75), Football Pro $19,99 toegevoegd als "VANAF 13-05", non-football free-tier entry toegevoegd, TheSportsDB Premium €9 ("NIEUW · PRIMAIR") toegevoegd, The Odds API free-tier toegevoegd. Databronnen-card: api-sports gesplitst in Football Pro (PRIMAIR · voetbal) + overige (3E FALLBACK), TSDB Premium uitgebreid (PRIMAIR · overige sporten, v1+v2 endpoints opgesomd), OddsAPI nieuw (FREE TIER · ODDS-FALLBACK). Deprecated-card: Google Sheets + Sofascore + Fotmob (line-through), Odds API uit deprecated-list want is nu actief weer.
+
+### Removed
+
+- Niets uit codebase verwijderd — `lib/integrations/sources/sofascore.js` en `lib/integrations/sources/fotmob.js` blijven op disk voor git-historie en optionele revival mocht Render's IP-segment ooit unblock zijn. Source-tests blijven groen op module-niveau.
+
+### Tests (819 → 820)
+
+- **`aggregator: getMergedH2H gebruikt TSDB als enige h2h-bron (v12.6.2)`** — vervangt oude multi-source-dedup-test (gebruikte sofascore+fotmob mocks die niet meer in registry zitten). Nieuw scenario: TSDB als alleen-bron levert h2h.
+- **`aggregator: SPORT_SOURCES bevat geen sofascore/fotmob meer (v12.6.2 cleanup)`** — regressie-guard: dead-source-removal mag niet stilletjes terugslippen.
+- **`aggregator: healthCheckAll roept alle 4 actieve sources aan`** — count aangepast 6 → 4.
+
+### Niet in deze release
+
+- API-usage tracker in scan-window + status-page — komt in v12.6.3.
+- README volledig herzien — komt in v13.0 cutover (samen met multi-source pivot).
+
 ## [12.6.1] - 2026-04-28
 
 **Hotfix · TheSportsDB negative-cache poisoning · v13.0 multi-source pivot Phase 0**

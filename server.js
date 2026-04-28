@@ -67,7 +67,8 @@ const OPERATOR = {
   signal_auto_kill_enabled: true,
   panic_mode: false,
   max_picks_per_day: 5,
-  // v10.9.0: master-switch voor externe data-aggregatie (sofascore/fotmob/nba-stats/nhl-api/mlb-stats-ext).
+  // v10.9.0: master-switch voor externe data-aggregatie (thesportsdb/nba-stats/nhl-api/mlb-stats-ext).
+  // v12.6.2: sofascore + fotmob uitgefaseerd uit aggregator (Render IP-segment dood).
   // Default uit → pas inschakelen na productie-smoketest via admin endpoint.
   scraping_enabled: false,
   // v12.5.1: conviction-route doctrine kill-switch. Default false = v12.5.0
@@ -5976,7 +5977,7 @@ async function runPrematch(emit) {
           dataAgg.healthCheckAll(),
           new Promise((_, rej) => setTimeout(() => rej(new Error('health_timeout_4s')), 4000)),
         ]);
-        const ftChecks = (checks || []).filter(c => c && (c.source === 'sofascore' || c.source === 'fotmob' || c.source === 'thesportsdb'));
+        const ftChecks = (checks || []).filter(c => c && c.source === 'thesportsdb');
         const formatted = ftChecks.map(c => {
           if (c.disabled) return `${c.source}=off`;
           if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
@@ -6706,7 +6707,7 @@ async function runPrematch(emit) {
               let h2hN    = afN;
               let h2hBTTS = afBTTS;
               let h2hSources = afN > 0 ? ['api-football'] : [];
-              // v10.9.0: enrich H2H met aggregator-data (sofascore + fotmob) als enabled.
+              // v10.9.0: enrich H2H met aggregator-data (thesportsdb v12.6.2) als enabled.
               // Policy: REPLACE in plaats van ADD — voorkomt dubbel-tellen want api-football
               // en scrapers tonen vaak dezelfde recente ontmoetingen. We nemen de bron met
               // meeste samples (grotere n → minder shrinkage in calcBTTSProb).
@@ -8160,7 +8161,7 @@ app.listen(PORT, () => {
       const scraperBase = require('./lib/integrations/scraper-base');
       const cs = loadCalib();
       const persisted = cs.scraper_sources || {};
-      const known = ['sofascore', 'fotmob', 'thesportsdb', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+      const known = ['thesportsdb', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
       const masterOn = !!OPERATOR.scraping_enabled;
       const noPersistedTrue = !Object.values(persisted).some(v => v === true);
       let applied = 0;
