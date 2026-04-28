@@ -5978,9 +5978,9 @@ async function runPrematch(emit) {
           new Promise((_, rej) => setTimeout(() => rej(new Error('health_timeout_4s')), 4000)),
         ]);
         // v13.0.0: scan-log health-line bevat nu beide multi-source-spelers
-        // (thesportsdb + oddsapi) zodat operator OddsAPI quota-status direct
+        // (thesportsdb + oddspapi) zodat operator OddsPapi quota-status direct
         // ziet tijdens scan i.p.v. enkel via /api/status.
-        const ftChecks = (checks || []).filter(c => c && (c.source === 'thesportsdb' || c.source === 'oddsapi'));
+        const ftChecks = (checks || []).filter(c => c && (c.source === 'thesportsdb' || c.source === 'oddspapi'));
         const formatted = ftChecks.map(c => {
           if (c.disabled) return `${c.source}=off`;
           if (c.healthy) return `${c.source}=ok(${c.latencyMs}ms)`;
@@ -7996,9 +7996,10 @@ app.use('/api', createInfoRouter({
   // v12.6.3: TSDB usage-counter doorzetten naar /api/status zodat de
   // status-page TSDB calls-vandaag kan tonen naast api-sports.
   tsdbAdapter: require('./lib/integrations/sources/thesportsdb'),
-  // v12.7.0-pre2: OddsAPI adapter voor monthly-quota tracking via x-requests-*
-  // response headers. Adapter retourneert getUsage() met remaining/used/degraded.
-  oddsApiAdapter: require('./lib/integrations/sources/oddsapi'),
+  // v12.7.0-pre2: OddsPapi adapter voor monthly-quota tracking via response
+  // headers. Adapter retourneert getUsage() met remaining/used/degraded.
+  // v13.0.2: hernoemd van oddsapi → oddspapi (correctie service-naam).
+  oddsApiAdapter: require('./lib/integrations/sources/oddspapi'),
   getCurrentStakeRegime: () => _currentStakeRegime,
   leagues: {
     football:            AF_FOOTBALL_LEAGUES,
@@ -8170,9 +8171,10 @@ app.listen(PORT, () => {
       const scraperBase = require('./lib/integrations/scraper-base');
       const cs = loadCalib();
       const persisted = cs.scraper_sources || {};
-      // v13.0.0: oddsapi toegevoegd. Default-on bij master scraping_enabled
-      // (consistent met andere sources). Quota-tracking gebeurt in adapter zelf.
-      const known = ['thesportsdb', 'oddsapi', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
+      // v13.0.0: oddspapi toegevoegd (v13.0.2 correctie service-naam).
+      // Default-on bij master scraping_enabled (consistent met andere sources).
+      // Quota-tracking (250/maand free-tier) gebeurt in adapter zelf.
+      const known = ['thesportsdb', 'oddspapi', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
       const masterOn = !!OPERATOR.scraping_enabled;
       const noPersistedTrue = !Object.values(persisted).some(v => v === true);
       let applied = 0;

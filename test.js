@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '13.0.1');
+  assert.strictEqual(appMeta.APP_VERSION, '13.0.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7224,17 +7224,17 @@ test('thesportsdb: nieuwe endpoints zijn allen exported (v12.7.0-pre1 contract)'
   }
 });
 
-// ── ODDSAPI (v12.7.0-pre2 · v13.0 Phase 2) ───────────────────────────────
-console.log('\n  Sources/OddsAPI (v12.7.0-pre2 free-tier):');
+// ── ODDSPAPI (v13.0.2 — refactor van OddsAPI naar oddspapi.io) ────────────
+console.log('\n  Sources/OddsPapi (v13.0.2 free-tier 250/maand):');
 
-// OddsAPI test-instantie. Set ODDSAPI_KEY env vóór require zodat HAS_KEY=true
+// OddsPapi test-instantie. Set ODDSPAPI_KEY env vóór require zodat HAS_KEY=true
 // in module-scope. Zonder dit zouden alle tests skippen op no_key.
-process.env.ODDSAPI_KEY = process.env.ODDSAPI_KEY || 'test-key-for-unittests';
-const oddsapi = require('./lib/integrations/sources/oddsapi');
+process.env.ODDSPAPI_KEY = process.env.ODDSPAPI_KEY || 'test-key-for-unittests';
+const oddsapi = require('./lib/integrations/sources/oddspapi');
 
 test('oddsapi: fetchSports parseert /sports list', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
+  setSourceEnabled('oddspapi', true);
   await withMockFetch(async () => ([
     { key: 'soccer_epl', title: 'EPL', group: 'Soccer', active: true, has_outrights: false },
     { key: 'basketball_nba', title: 'NBA', group: 'Basketball', active: true, has_outrights: false },
@@ -7243,13 +7243,13 @@ test('oddsapi: fetchSports parseert /sports list', async () => {
     assert.strictEqual(sports.length, 2);
     assert.strictEqual(sports[0].key, 'soccer_epl');
     assert.strictEqual(sports[1].title, 'NBA');
-    assert.ok(sports.every(s => s.source === 'oddsapi'));
+    assert.ok(sports.every(s => s.source === 'oddspapi'));
   });
 });
 
 test('oddsapi: fetchEvents parseert fixtures (geen quota-cost)', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
+  setSourceEnabled('oddspapi', true);
   await withMockFetch(async () => ([
     { id: 'abc123', sport_key: 'soccer_epl', sport_title: 'EPL', commence_time: '2026-04-30T15:00:00Z', home_team: 'Arsenal', away_team: 'Chelsea' },
   ]), async () => {
@@ -7262,7 +7262,7 @@ test('oddsapi: fetchEvents parseert fixtures (geen quota-cost)', async () => {
 
 test('oddsapi: fetchScores parseert score-array per team', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
+  setSourceEnabled('oddspapi', true);
   await withMockFetch(async () => ([
     { id: 'xyz', completed: true, home_team: 'Arsenal', away_team: 'Chelsea',
       scores: [{ name: 'Arsenal', score: '2' }, { name: 'Chelsea', score: '1' }],
@@ -7278,7 +7278,7 @@ test('oddsapi: fetchScores parseert score-array per team', async () => {
 
 test('oddsapi: fetchOdds parseert nested bookmakers→markets→outcomes', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
+  setSourceEnabled('oddspapi', true);
   await withMockFetch(async () => ([
     { id: 'evt1', commence_time: '2026-04-30T15:00:00Z', home_team: 'A', away_team: 'B',
       bookmakers: [
@@ -7359,13 +7359,13 @@ test('oddsapi: SPORT_KEY_MAP bevat tennis/rugby/cricket (v12.7.0-pre4 Phase 4)',
 
 test('oddsapi: quota-tracking parseert response headers', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
-  // Custom mock met headers-injectie via global.fetch override
+  setSourceEnabled('oddspapi', true);
+  // v13.0.2: quota waarden afgestemd op OddsPapi 250/maand free tier.
   const origFetch = global.fetch;
   global.fetch = async () => {
     const headers = new Map([
-      ['x-requests-remaining', '423'],
-      ['x-requests-used', '77'],
+      ['x-requests-remaining', '170'],
+      ['x-requests-used', '80'],
     ]);
     headers.forEach = (cb) => { for (const [k, v] of headers) cb(v, k); };
     return {
@@ -7379,8 +7379,8 @@ test('oddsapi: quota-tracking parseert response headers', async () => {
   try {
     await oddsapi.fetchSports();
     const usage = oddsapi.getUsage();
-    assert.strictEqual(usage.callsThisMonth, 77, 'x-requests-used moet doorgezet zijn');
-    assert.strictEqual(usage.remaining, 423);
+    assert.strictEqual(usage.callsThisMonth, 80, 'x-requests-used moet doorgezet zijn');
+    assert.strictEqual(usage.remaining, 170);
     assert.ok(usage.updatedAt, 'updatedAt moet timestamp hebben');
   } finally {
     global.fetch = origFetch;
@@ -7389,13 +7389,13 @@ test('oddsapi: quota-tracking parseert response headers', async () => {
 
 test('oddsapi: degraded-state bij quota>=softLimit blokkeert quota-cost calls', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
-  setSourceEnabled('oddsapi', true);
-  // Force high-usage state via quota-headers
+  setSourceEnabled('oddspapi', true);
+  // v13.0.2: 230/250 → boven soft-limit 225 → degraded
   const origFetch = global.fetch;
   global.fetch = async () => {
     const headers = new Map([
-      ['x-requests-remaining', '40'],
-      ['x-requests-used', '460'],
+      ['x-requests-remaining', '20'],
+      ['x-requests-used', '230'],
     ]);
     headers.forEach = (cb) => { for (const [k, v] of headers) cb(v, k); };
     return {
@@ -7406,9 +7406,9 @@ test('oddsapi: degraded-state bij quota>=softLimit blokkeert quota-cost calls', 
     };
   };
   try {
-    // Eerste call (no-quota) brengt counter naar 460/500 — degraded
+    // Eerste call (no-quota) brengt counter naar 230/250 — degraded (>225 soft-limit)
     await oddsapi.fetchSports();
-    assert.ok(oddsapi.getUsage().degraded, 'usage moet degraded zijn na 460/500');
+    assert.ok(oddsapi.getUsage().degraded, 'usage moet degraded zijn na 230/250');
     // Quota-cost call (fetchOdds) moet nu skippen
     const odds = await oddsapi.fetchOdds('soccer_epl', { sport: 'football' });
     assert.deepStrictEqual(odds, [], 'degraded mode → fetchOdds returnt [] zonder fetch');
@@ -7420,7 +7420,7 @@ test('oddsapi: degraded-state bij quota>=softLimit blokkeert quota-cost calls', 
 test('oddsapi: zonder ODDSAPI_KEY → healthCheck=null disabled', () => {
   // Niet trivially testbaar omdat HAS_KEY in module-load wordt vastgelegd.
   // Wel verifieerbaar: het module-export HAS_KEY-flag matcht env-state.
-  const hasKey = (process.env.ODDSAPI_KEY || '').length > 0;
+  const hasKey = (process.env.ODDSPAPI_KEY || process.env.ODDSAPI_KEY || '').length > 0;
   assert.strictEqual(oddsapi.HAS_KEY, hasKey);
 });
 
@@ -7651,7 +7651,7 @@ test('aggregator: healthCheckAll roept alle 5 actieve sources aan (v12.7.0-pre3)
   // v12.6.2: sofascore + fotmob uit registry → 4 sources.
   // v12.7.0-pre3: oddsapi toegevoegd → 5 sources.
   setSourceEnabled('thesportsdb', false);
-  setSourceEnabled('oddsapi', false);
+  setSourceEnabled('oddspapi', false);
   setSourceEnabled('nba-stats', false);
   setSourceEnabled('nhl-api', false);
   setSourceEnabled('mlb-stats-ext', false);
@@ -7708,7 +7708,7 @@ test('aggregator: SPORT_SOURCES bevat tennis/rugby/cricket entries (v12.7.0-pre4
     // h2h via TSDB voor alle 3 nieuwe sporten
     assert.ok(reg.h2h.some(s => s.SOURCE_NAME === 'thesportsdb'), `${sport} mist TSDB in h2h`);
     // Odds via OddsAPI voor alle 3
-    assert.ok(reg.odds.some(s => s.SOURCE_NAME === 'oddsapi'), `${sport} mist OddsAPI in odds`);
+    assert.ok(reg.odds.some(s => s.SOURCE_NAME === 'oddspapi'), `${sport} mist OddsAPI in odds`);
   }
 });
 
@@ -7726,7 +7726,7 @@ test('aggregator: _dedupOdds skipt NaN-prijzen (v12.7.0-pre3 audit P1#1 fix)', (
 test('aggregator: _dedupOdds composite key cross-source (v12.7.0-pre3 audit P1#2 fix)', () => {
   // Zelfde wedstrijd, andere source-eventIds → moet dedupen via teams+commenceTime
   const quotes = [
-    { source: 'oddsapi',     eventId: '3924959', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
+    { source: 'oddspapi',     eventId: '3924959', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
     { source: 'thesportsdb', eventId: '12345',   homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
   ];
   const { quotes: deduped } = agg._dedupOdds(quotes);
@@ -7738,7 +7738,7 @@ test('aggregator: _dedupOdds home/away swap dedupliceert (v12.7.0-pre4 audit P1-
   // wedstrijd. Sort op teams in matchKey moet dat onschadelijk maken.
   // Selection is team-naam (canonical OddsAPI shape), niet 'Home'/'Away'.
   const quotes = [
-    { source: 'oddsapi',     eventId: 'a', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
+    { source: 'oddspapi',     eventId: 'a', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
     { source: 'thesportsdb', eventId: 'b', homeTeam: 'Chelsea', awayTeam: 'Arsenal', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
   ];
   const { quotes: deduped } = agg._dedupOdds(quotes);
@@ -7747,9 +7747,9 @@ test('aggregator: _dedupOdds home/away swap dedupliceert (v12.7.0-pre4 audit P1-
 
 test('aggregator: _dedupOdds met identieke quotes uit verschillende sources', () => {
   const quotes = [
-    { source: 'oddsapi',     eventId: 'e1', bookie: 'Bet365',   market: '1X2', line: null, selection: 'Home', price: 2.10 },
+    { source: 'oddspapi',     eventId: 'e1', bookie: 'Bet365',   market: '1X2', line: null, selection: 'Home', price: 2.10 },
     { source: 'thesportsdb', eventId: 'e1', bookie: 'Bet365',   market: '1X2', line: null, selection: 'Home', price: 2.10 },
-    { source: 'oddsapi',     eventId: 'e1', bookie: 'Pinnacle', market: '1X2', line: null, selection: 'Home', price: 2.05 },
+    { source: 'oddspapi',     eventId: 'e1', bookie: 'Pinnacle', market: '1X2', line: null, selection: 'Home', price: 2.05 },
   ];
   const { quotes: deduped, anomalies } = agg._dedupOdds(quotes);
   // 2 unieke combinaties (Bet365+Home en Pinnacle+Home), eerste duplicate skipped
@@ -7759,7 +7759,7 @@ test('aggregator: _dedupOdds met identieke quotes uit verschillende sources', ()
 
 test('aggregator: _dedupOdds detecteert source-disagreement >5% als anomaly', () => {
   const quotes = [
-    { source: 'oddsapi',     eventId: 'e1', bookie: 'Bet365', market: 'OU', line: 2.5, selection: 'Over', price: 1.90 },
+    { source: 'oddspapi',     eventId: 'e1', bookie: 'Bet365', market: 'OU', line: 2.5, selection: 'Over', price: 1.90 },
     { source: 'thesportsdb', eventId: 'e1', bookie: 'Bet365', market: 'OU', line: 2.5, selection: 'Over', price: 2.10 }, // 10.5% delta
   ];
   const { anomalies } = agg._dedupOdds(quotes);
@@ -7810,7 +7810,7 @@ test('aggregator: getVenueDetails returnt null zonder venueId', async () => {
 
 test('aggregator: healthCheckAll bevat nu ook oddsapi (5 sources)', async () => {
   setSourceEnabled('thesportsdb', false);
-  setSourceEnabled('oddsapi', false);
+  setSourceEnabled('oddspapi', false);
   setSourceEnabled('nba-stats', false);
   setSourceEnabled('nhl-api', false);
   setSourceEnabled('mlb-stats-ext', false);

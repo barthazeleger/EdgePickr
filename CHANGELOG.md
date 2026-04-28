@@ -2,6 +2,45 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.0.2] - 2026-04-28
+
+**Adapter-rename oddsapi → oddspapi · refactor tegen oddspapi.io API (correcte service)**
+
+Aanleiding: post-deploy scan (v13.0.1) toonde `oddsapi=DEAD(http_401)`. Operator confirmed dat de eigenlijke service **oddspapi.io** is — niet the-odds-api.com waar mijn adapter sinds v12.7.0-pre2 tegen draaide. Dit was een aanname-fout uit Phase 2: render.yaml comment zei "OddsPapi free tier (250 req/mnd)" en ik mapte zonder verificatie naar het bekendere "The Odds API" (500 req/mnd, the-odds-api.com). De 250-vs-500 quota-discrepantie en de "OddsPapi" spelling waren signalen die ik genegeerd heb.
+
+OddsPapi.io biedt **350+ bookmakers via één API**: 9 sharp books (Pinnacle/SBOBet/Circa), 17 US (DraftKings/FanDuel/BetMGM/Caesars), 20 UK (Bet365/Betfair/William Hill), 8 Brazil, 8 Asian, 9 crypto/offshore, 6 betting exchanges (Betfair/Polymarket/Kalshi). Dat dekt EdgePickr's execution-set inclusief Pinnacle (sharp anchor) en Bet365/Unibet (NL-execution) ruim.
+
+Doctrine-context: hardware-fout (verkeerde URL) hersteld, geen logica-shift.
+
+### Changed
+
+- **`lib/integrations/sources/oddsapi.js` → `lib/integrations/sources/oddspapi.js`** — git mv. SOURCE_NAME 'oddsapi' → 'oddspapi'. HOST `api.the-odds-api.com` → `api.oddspapi.io`. MONTHLY_QUOTA 500 → 250 (matches free-tier). QUOTA_SOFT_LIMIT 450 → 225.
+- **Endpoint-paths** aangepast aan OddsPapi conventie:
+  - `/v4/sports` (was: zelfde) — sport-list
+  - `/v4/bookmakers` (NEW) — bookmaker-list, OddsPapi-specifiek
+  - `/v4/fixtures?sport={key}` (was: `/v4/sports/{key}/events`)
+  - `/v4/scores?sport={key}` (was: `/v4/sports/{key}/scores`)
+  - `/v4/odds?sport={key}` (was: `/v4/sports/{key}/odds`)
+- **Defensive response-shape parsing** — `_toArray()` helper accepteert top-level array, `{data:[]}`, `{sports:[]}`, `{fixtures:[]}`, `{events:[]}`, `{odds:[]}`, `{scores:[]}` als common REST-conventies. Adapter probeert beide nested-event en flat-row patterns voor odds-parsing.
+- **Env-var canonical**: `ODDSPAPI_KEY` (matches service-naam). `ODDSAPI_KEY` blijft als backwards-compat fallback voor deployments uit v12.7.0-pre2 t/m v13.0.1.
+- **Cache-key prefixes** `oddsapi:*` → `oddspapi:*`.
+- **Source-attribution velden**: `source: 'oddsapi'` → `source: 'oddspapi'`.
+- **`fetchBookmakers()`** nieuwe export — voor toekomstige bookmaker-keylist (sample-driven update van BOOKIE_MAP zonder hardcoded keys).
+- **Price upper-bound** verruimd 1000 → 2000 (Phase 2 audit P2 finding) — voorkomt dat valide live-betting odds (injury-time goals etc.) gedropt worden.
+- **server.js** info-router mount, scraper-source registry, scan-log filter — allemaal `oddsapi` → `oddspapi`.
+- **index.html** admin-prompt list, serviceNames map, info-page subscription/databronnen-cards bijgewerkt naar OddsPapi met 250 req/maand quota.
+- **render.yaml comment** updated voor OddsPapi (was generic "OddsPapi free tier" comment, nu adapter-aware met v13.0.2 reference).
+
+### Tests
+
+Tests blijven 866 (geen netto verschil — bestaande oddsapi-tests hernoemd, quota-test-data bijgewerkt voor 250/maand i.p.v. 500/maand).
+
+### Niet in deze release
+
+- **Sport-keys** (`SPORT_KEY_MAP`) blijven OddsAPI-formaat (`soccer_epl`, `basketball_nba`, etc.). Bij eerste live OddsPapi-call wordt zichtbaar of deze keys werken; zo niet, vereist live-sample-driven update via `/v4/sports`-respons. Adapter logt naam-mismatches via fail-soft `[]` zonder te crashen.
+- **Bookmaker-keys** in BOOKIE_MAP — eveneens OddsAPI-formaat. Live-update via `fetchBookmakers()` na eerste call.
+- Audit-pass voor v13.0.2 — komt na live-scan om health-check te verifiëren.
+
 ## [13.0.1] - 2026-04-28
 
 **Server.js wiring · OddsAPI live in scraper-registry + scan-log health**

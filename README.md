@@ -1,4 +1,4 @@
-# EdgePickr v13.0.1
+# EdgePickr v13.0.2
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
@@ -27,7 +27,7 @@ Per sport drie data-lagen, met fail-soft fallback en cross-source dedup:
 | Laag | Bron | Rol | Kosten |
 |---|---|---|---|
 | 1 | **TheSportsDB Premium V1+V2** | Primair · h2h · standings · lineups · livescores · venues | €9/mnd |
-| 2 | **The Odds API V4** (free) | Odds-feed · Bet365/Pinnacle/Unibet/WilliamHill · h2h+totals+spreads | Gratis (500/mnd) |
+| 2 | **OddsPapi V4** (free) | Odds-feed · 350+ bookmakers (Bet365/Pinnacle/Unibet/WilliamHill/DraftKings/FanDuel/Betfair Exchange/...) · h2h+totals+spreads | Gratis (250/mnd) |
 | 3 | **api-sports** | Voetbal Pro vanaf 13-05 ($19,99) · andere sporten free-tier (100/dag) | $19,99 + $0 |
 
 Cross-source disagreement >5% triggert `bookie_anomaly` inbox-warning (v12.4.2 doctrine).
@@ -40,8 +40,8 @@ Cross-source disagreement >5% triggert `bookie_anomaly` inbox-warning (v12.4.2 d
 | **100+ competities** | Alle top-tier leagues per sport, dynamische seizoenen |
 | **14 signalen** | Thuisvoordeel, vorm, H2H, blessures, standings, team stats, home/away splits, lineup, referee, API predictions, O/U adjustments, weer, Poisson, fixture congestion |
 | **TheSportsDB v13.0** | 13 nieuwe methods: lookuptable (standings), lookuplineup, lookuptimeline, lookupeventstats, lookuptv (TV broadcasts), eventsday/eventslast, lookupvenue, lookup_all_players (roster) + V2 livescore/schedule/full-team |
-| **OddsAPI v13.0** | Bet365/Pinnacle/Unibet/WilliamHill quotes via v4 API · h2h/spreads/totals · auto-degrade bij 90% quota |
-| **API usage tracker** | Per-source dashboard op /api/status: api-sports tier-shift indicator (13-05), TSDB call-counter (€9 premium), OddsAPI quota-progress (500/mnd) |
+| **OddsPapi v13.0** | 350+ bookmakers via één API · sharp (Pinnacle/SBOBet) + EU (Bet365/Unibet/WH) + US (DraftKings/FanDuel) + exchanges (Betfair/Polymarket) · h2h/spreads/totals · auto-degrade bij 90% quota |
+| **API usage tracker** | Per-source dashboard op /api/status: api-sports tier-shift indicator (13-05), TSDB call-counter (€9 premium), OddsPapi quota-progress (250/mnd) |
 | **Poisson model** | Per sport afzonderlijk geijkt — markt-multipliers, EP-buckets en signal-gewichten tunen zich automatisch |
 | **Model-vs-market sanity check** | Elke pick wordt gecheckt tegen devigged market consensus; picks waar model > 4% divergeert worden geskipt |
 | **3-way ML voor hockey/handbal** | Aparte 60-min regulation markt via bivariate Poisson, naast inc-OT 2-way ML |
@@ -62,7 +62,7 @@ Supabase (PostgreSQL)            Bets, users, scan history, notifications, calib
 api-sports.io Football Pro       Voetbal · 75.000 calls/dag (vanaf 13-05-2026, $19,99)
 api-sports.io free tier          5 sporten · 100 calls/dag elk (vanaf 13-05-2026)
 TheSportsDB Premium              9 sporten · 100 req/min · v1+v2 (€9/mnd, sinds 28-04)
-The Odds API v4                  Bet365/Pinnacle/Unibet/WH · 500 req/maand (free)
+OddsPapi v4                      350+ bookmakers · 250 req/maand (free)
 ESPN Scoreboard API              Live scores (gratis, onbeperkt)
 MLB StatsAPI / NHL public        Sport-specifieke summary-bronnen (gratis)
 Web Push (VAPID)                 Operator alerts · picks · CLV · milestones
