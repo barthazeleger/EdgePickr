@@ -35,11 +35,15 @@ services:
       # Free test-key '3' werkt als fallback maar heeft strikte rate-limits.
       - key: TSDB_API_KEY
         sync: false          # TheSportsDB premium API-key
-      # v12.6.0 · OddsPapi free tier (250 req/mnd) — Pinnacle/Bet365/Unibet NL
-      # CLV-anchor. Adapter zelf wordt in v12.6.x of v12.7.0 toegevoegd; key
-      # staat alvast klaar in env voor wanneer de adapter live gaat.
+      # v12.7.0-pre2 · The Odds API free tier (500 req/maand) — Bet365/Pinnacle/
+      # Unibet/William Hill h2h+spreads+totals. 2e fallback-laag voor odds tussen
+      # TSDB Premium (primair) en api-sports (3e). Adapter live sinds v12.7.0-pre2.
+      # Canonical env-var: ODDSAPI_KEY. Legacy ODDSPAPI_KEY (typo uit v12.6.0)
+      # blijft als backwards-compat fallback in adapter werken.
+      - key: ODDSAPI_KEY
+        sync: false          # The Odds API v4 key — set vóór deploy
       - key: ODDSPAPI_KEY
-        sync: false          # OddsPapi key voor selectieve sharp-anchor
+        sync: false          # legacy alias (typo) — blijft voor backwards-compat
       - key: JWT_SECRET
         sync: false          # willekeurige lange string, bijv. 64 hex tekens
       - key: ADMIN_EMAIL

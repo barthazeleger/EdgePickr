@@ -2,6 +2,55 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.7.0-pre2] - 2026-04-28
+
+**v13.0 multi-source pivot Phase 2 · OddsAPI source skeleton (free-tier 500 req/maand)**
+
+Aanleiding: 2e bron-laag voor odds-data nodig tussen TSDB Premium (primair) en api-sports (3e fallback). The Odds API free-tier biedt 500 req/maand met sharp bookmakers (Pinnacle) + EU-execution-books (Bet365/Unibet/William Hill) — exact de bookmaker-set die EdgePickr's CLV-anchor + execution-doctrine onderscheidt. Pre-13-05 nog optioneel; post-13-05 wordt het primaire odds-feed voor non-football sporten (api-sports zakt naar 100/dag/sport free-tier).
+
+Doctrine-context: nieuwe source-module volgt scraper-base pattern, geen aanpassing aan bestaande sources. Aggregator-integration komt in Phase 3 (v12.7.0-pre3); deze release legt foundation + status-page-zichtbaarheid.
+
+### Added
+
+- **`lib/integrations/sources/oddsapi.js`** (NEW, ~270 regels) — adapter voor The Odds API v4. Endpoints:
+  - `fetchSports()` — sport-list (geen quota-cost) · 24h cache
+  - `fetchEvents(sportKey)` — fixtures (geen quota-cost) · 1h cache
+  - `fetchScores(sportKey, daysFrom)` — live + recent scores (geen quota-cost) · 2min cache
+  - `fetchOdds(sportKey, options)` — **wel** quota-cost · 5min cache · default markets `h2h,totals,spreads`, regions `eu,uk`, bookmakers `bet365,pinnacle,unibet_eu,williamhill`
+- **Quota-tracking** — `_quotaUsed` / `_quotaRemaining` in module-state, primair gevuld uit `x-requests-remaining` + `x-requests-used` response-headers (authoritative). Lokaal increment als fallback. Soft-limit 450/500 → `_isDegraded()` blokkeert quota-cost calls (no-cost calls blijven door).
+- **Bookmaker-normalisatie** (`_normalizeBookieKey`) — OddsAPI keys (`bet365`/`pinnacle`/`unibet_eu`/`williamhill`/etc.) → EdgePickr canonical names. 12 bekende bookmakers in `BOOKIE_MAP`, title-case fallback voor onbekende.
+- **Market-normalisatie** (`_mapMarketKey`) — sport-aware h2h-mapping: voetbal/handbal/rugby → `1X2`, andere → `ML`. `totals → OU`, `spreads → AH`, `outrights → OUTRIGHT`.
+- **Sport-key mapping** (`SPORT_KEY_MAP` + `resolveOddsApiKey`) — EdgePickr sport+league → OddsAPI key. Top-leagues per sport (EPL/La Liga/Bundesliga/CL/MLS/NBA/EuroLeague/NHL/MLB/NFL). Tennis/rugby/cricket sport-keys komen in Phase 4.
+- **Per-endpoint TTL-buckets** (`_caches`): sports 24h / odds 5min / scores 2min / events 1h.
+- **`server.js`** — info-router mount krijgt `oddsApiAdapter: require('./lib/integrations/sources/oddsapi')` dep zodat `/api/status` getUsage() data kan tonen.
+- **`lib/routes/info.js`** — `/api/status` `services.oddsApi` sectie uitgebreid met `callsThisMonth/remaining/monthlyQuota/softLimit/degraded` velden uit adapter. Status-string: `planned` (geen key) / `key-set` (geen adapter-call yet) / `active` / `degraded`.
+- **`index.html` status-page** — OddsAPI card uitgebreid met quota-progress-bar wanneer adapter call-counts levert. 4-state status-badge kleur-codering (active=groen, degraded=rood, key-set=geel, planned=grijs).
+- **`render.yaml`** — canonical env-var `ODDSAPI_KEY` toegevoegd; legacy `ODDSPAPI_KEY` (typo uit v12.6.0) blijft als backwards-compat fallback in adapter (`process.env.ODDSAPI_KEY || process.env.ODDSPAPI_KEY`).
+
+### Changed
+
+- **`lib/integrations/scraper-base.js safeFetch`** — `returnDetails=true` retourneert nu ook een `headers` object (lowercase keys). Backwards-compat: bestaande callers zonder `headers`-veld blijven onveranderd werken. Nodig voor OddsAPI quota-tracking via response-headers.
+
+### Tests (839 → 850)
+
+- **`oddsapi: fetchSports parseert /sports list`** — basis-parsing van sport-discovery
+- **`oddsapi: fetchEvents parseert fixtures (geen quota-cost)`** — fixture-shape
+- **`oddsapi: fetchScores parseert score-array per team`** — match-score-by-team-name lookup
+- **`oddsapi: fetchOdds parseert nested bookmakers→markets→outcomes`** — odds-shape end-to-end met Bet365 + Pinnacle dual-source
+- **`oddsapi: h2h-mapping sport-aware (1X2 vs ML)`** — football → 1X2, tennis → ML
+- **`oddsapi: bookie-key normalisatie EdgePickr canonical`** — bet365 → "Bet365" etc.
+- **`oddsapi: resolveOddsApiKey gebruikt league of default`** — sport+league → OddsAPI sport-key resolution
+- **`oddsapi: quota-tracking parseert response headers`** — x-requests-remaining/used → _quotaUsed/_quotaRemaining
+- **`oddsapi: degraded-state bij quota>=softLimit blokkeert quota-cost calls`** — fail-soft op 450/500 mark
+- **`oddsapi: zonder ODDSAPI_KEY → healthCheck=null disabled`** — env-var contract
+- **`oddsapi: contract — required exports zijn aanwezig`** — public API contract-guard
+
+### Niet in deze release
+
+- Aggregator-integration van fetchOdds in `getMergedOdds()` → Phase 3 (v12.7.0-pre3)
+- Sport-uitbreiding (tennis/rugby/cricket sport-keys) → Phase 4 (v12.7.0-pre4)
+- Daadwerkelijke sport-pull tijdens scans → Phase 3+ (server.js scan-loop wiring)
+
 ## [12.7.0-pre1] - 2026-04-28
 
 **v13.0 multi-source pivot Phase 1 · TheSportsDB endpoint-uitbreiding (13 nieuwe methods, v1+v2 mix)**

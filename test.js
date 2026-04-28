@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre1');
+  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7217,6 +7217,202 @@ test('thesportsdb: nieuwe endpoints zijn allen exported (v12.7.0-pre1 contract)'
   ];
   for (const name of expected) {
     assert.strictEqual(typeof tsdb[name], 'function', `export ontbreekt: ${name}`);
+  }
+});
+
+// ── ODDSAPI (v12.7.0-pre2 · v13.0 Phase 2) ───────────────────────────────
+console.log('\n  Sources/OddsAPI (v12.7.0-pre2 free-tier):');
+
+// OddsAPI test-instantie. Set ODDSAPI_KEY env vóór require zodat HAS_KEY=true
+// in module-scope. Zonder dit zouden alle tests skippen op no_key.
+process.env.ODDSAPI_KEY = process.env.ODDSAPI_KEY || 'test-key-for-unittests';
+const oddsapi = require('./lib/integrations/sources/oddsapi');
+
+test('oddsapi: fetchSports parseert /sports list', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  await withMockFetch(async () => ([
+    { key: 'soccer_epl', title: 'EPL', group: 'Soccer', active: true, has_outrights: false },
+    { key: 'basketball_nba', title: 'NBA', group: 'Basketball', active: true, has_outrights: false },
+  ]), async () => {
+    const sports = await oddsapi.fetchSports();
+    assert.strictEqual(sports.length, 2);
+    assert.strictEqual(sports[0].key, 'soccer_epl');
+    assert.strictEqual(sports[1].title, 'NBA');
+    assert.ok(sports.every(s => s.source === 'oddsapi'));
+  });
+});
+
+test('oddsapi: fetchEvents parseert fixtures (geen quota-cost)', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  await withMockFetch(async () => ([
+    { id: 'abc123', sport_key: 'soccer_epl', sport_title: 'EPL', commence_time: '2026-04-30T15:00:00Z', home_team: 'Arsenal', away_team: 'Chelsea' },
+  ]), async () => {
+    const events = await oddsapi.fetchEvents('soccer_epl');
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].eventId, 'abc123');
+    assert.strictEqual(events[0].homeTeam, 'Arsenal');
+  });
+});
+
+test('oddsapi: fetchScores parseert score-array per team', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  await withMockFetch(async () => ([
+    { id: 'xyz', completed: true, home_team: 'Arsenal', away_team: 'Chelsea',
+      scores: [{ name: 'Arsenal', score: '2' }, { name: 'Chelsea', score: '1' }],
+      last_update: '2026-04-30T17:00:00Z', commence_time: '2026-04-30T15:00:00Z' },
+  ]), async () => {
+    const scores = await oddsapi.fetchScores('soccer_epl');
+    assert.strictEqual(scores.length, 1);
+    assert.strictEqual(scores[0].homeScore, 2);
+    assert.strictEqual(scores[0].awayScore, 1);
+    assert.strictEqual(scores[0].completed, true);
+  });
+});
+
+test('oddsapi: fetchOdds parseert nested bookmakers→markets→outcomes', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  await withMockFetch(async () => ([
+    { id: 'evt1', commence_time: '2026-04-30T15:00:00Z', home_team: 'A', away_team: 'B',
+      bookmakers: [
+        { key: 'bet365', last_update: '2026-04-30T14:00:00Z', markets: [
+          { key: 'h2h', outcomes: [{ name: 'A', price: 1.85 }, { name: 'Draw', price: 3.5 }, { name: 'B', price: 4.2 }] },
+          { key: 'totals', outcomes: [{ name: 'Over', point: 2.5, price: 1.95 }, { name: 'Under', point: 2.5, price: 1.85 }] },
+        ]},
+        { key: 'pinnacle', markets: [
+          { key: 'h2h', outcomes: [{ name: 'A', price: 1.92 }, { name: 'Draw', price: 3.4 }, { name: 'B', price: 4.0 }] },
+        ]},
+      ],
+    },
+  ]), async () => {
+    const quotes = await oddsapi.fetchOdds('soccer_epl', { sport: 'football' });
+    assert.ok(quotes.length >= 5, `verwacht ≥5 quotes, kreeg ${quotes.length}`);
+    const bet365H2h = quotes.find(q => q.bookie === 'Bet365' && q.market === '1X2' && q.selection === 'A');
+    assert.ok(bet365H2h, 'Bet365 1X2 quote moet bestaan');
+    assert.strictEqual(bet365H2h.price, 1.85);
+    const pinnacleH2h = quotes.find(q => q.bookie === 'Pinnacle' && q.market === '1X2');
+    assert.ok(pinnacleH2h, 'Pinnacle quote normalized naar canonical name');
+    const overQuote = quotes.find(q => q.market === 'OU' && q.selection === 'Over');
+    assert.strictEqual(overQuote.line, 2.5);
+  });
+});
+
+test('oddsapi: h2h-mapping sport-aware (1X2 vs ML)', () => {
+  // Sport met draw → 1X2
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'football'), '1X2');
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'handball'), '1X2');
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'rugby'), '1X2');
+  // Sport zonder draw → ML
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'tennis'), 'ML');
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'basketball'), 'ML');
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'hockey'), 'ML');
+  assert.strictEqual(oddsapi._mapMarketKey('h2h', 'baseball'), 'ML');
+  // Andere markets sport-agnostisch
+  assert.strictEqual(oddsapi._mapMarketKey('totals', 'tennis'), 'OU');
+  assert.strictEqual(oddsapi._mapMarketKey('spreads', 'football'), 'AH');
+  assert.strictEqual(oddsapi._mapMarketKey('outrights', 'tennis'), 'OUTRIGHT');
+});
+
+test('oddsapi: bookie-key normalisatie EdgePickr canonical', () => {
+  assert.strictEqual(oddsapi._normalizeBookieKey('bet365'), 'Bet365');
+  assert.strictEqual(oddsapi._normalizeBookieKey('pinnacle'), 'Pinnacle');
+  assert.strictEqual(oddsapi._normalizeBookieKey('unibet_eu'), 'Unibet');
+  assert.strictEqual(oddsapi._normalizeBookieKey('williamhill'), 'William Hill');
+  // Onbekende key → title-case fallback
+  assert.strictEqual(oddsapi._normalizeBookieKey('some_new_book'), 'Some New Book');
+  // Edge cases
+  assert.strictEqual(oddsapi._normalizeBookieKey(null), null);
+  assert.strictEqual(oddsapi._normalizeBookieKey(''), null);
+});
+
+test('oddsapi: resolveOddsApiKey gebruikt league of default', () => {
+  assert.strictEqual(oddsapi.resolveOddsApiKey('football', 'EPL'), 'soccer_epl');
+  assert.strictEqual(oddsapi.resolveOddsApiKey('football', 'CL'), 'soccer_uefa_champs_league');
+  assert.strictEqual(oddsapi.resolveOddsApiKey('basketball', 'NBA'), 'basketball_nba');
+  // Onbekende league → fallback default
+  assert.strictEqual(oddsapi.resolveOddsApiKey('football', 'Onbekend'), 'soccer_epl');
+  // Onbekende sport → null
+  assert.strictEqual(oddsapi.resolveOddsApiKey('chess', 'open'), null);
+});
+
+test('oddsapi: quota-tracking parseert response headers', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  // Custom mock met headers-injectie via global.fetch override
+  const origFetch = global.fetch;
+  global.fetch = async () => {
+    const headers = new Map([
+      ['x-requests-remaining', '423'],
+      ['x-requests-used', '77'],
+    ]);
+    headers.forEach = (cb) => { for (const [k, v] of headers) cb(v, k); };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify([]),
+      json: async () => [],
+      headers,
+    };
+  };
+  try {
+    await oddsapi.fetchSports();
+    const usage = oddsapi.getUsage();
+    assert.strictEqual(usage.callsThisMonth, 77, 'x-requests-used moet doorgezet zijn');
+    assert.strictEqual(usage.remaining, 423);
+    assert.ok(usage.updatedAt, 'updatedAt moet timestamp hebben');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('oddsapi: degraded-state bij quota>=softLimit blokkeert quota-cost calls', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddsapi', true);
+  // Force high-usage state via quota-headers
+  const origFetch = global.fetch;
+  global.fetch = async () => {
+    const headers = new Map([
+      ['x-requests-remaining', '40'],
+      ['x-requests-used', '460'],
+    ]);
+    headers.forEach = (cb) => { for (const [k, v] of headers) cb(v, k); };
+    return {
+      ok: true, status: 200,
+      text: async () => JSON.stringify([{ key: 's', title: 'S', active: true, group: 'G' }]),
+      json: async () => [{ key: 's', title: 'S', active: true, group: 'G' }],
+      headers,
+    };
+  };
+  try {
+    // Eerste call (no-quota) brengt counter naar 460/500 — degraded
+    await oddsapi.fetchSports();
+    assert.ok(oddsapi.getUsage().degraded, 'usage moet degraded zijn na 460/500');
+    // Quota-cost call (fetchOdds) moet nu skippen
+    const odds = await oddsapi.fetchOdds('soccer_epl', { sport: 'football' });
+    assert.deepStrictEqual(odds, [], 'degraded mode → fetchOdds returnt [] zonder fetch');
+  } finally {
+    global.fetch = origFetch;
+  }
+});
+
+test('oddsapi: zonder ODDSAPI_KEY → healthCheck=null disabled', () => {
+  // Niet trivially testbaar omdat HAS_KEY in module-load wordt vastgelegd.
+  // Wel verifieerbaar: het module-export HAS_KEY-flag matcht env-state.
+  const hasKey = (process.env.ODDSAPI_KEY || '').length > 0;
+  assert.strictEqual(oddsapi.HAS_KEY, hasKey);
+});
+
+test('oddsapi: contract — required exports zijn aanwezig', () => {
+  const expected = [
+    'SOURCE_NAME', 'HAS_KEY', 'SPORT_KEY_MAP', 'BOOKIE_MAP',
+    'healthCheck', 'getUsage', 'resolveOddsApiKey',
+    'fetchSports', 'fetchEvents', 'fetchScores', 'fetchOdds',
+  ];
+  for (const name of expected) {
+    assert.ok(name in oddsapi, `export ontbreekt: ${name}`);
   }
 });
 

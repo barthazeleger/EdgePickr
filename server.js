@@ -7993,6 +7993,9 @@ app.use('/api', createInfoRouter({
   // v12.6.3: TSDB usage-counter doorzetten naar /api/status zodat de
   // status-page TSDB calls-vandaag kan tonen naast api-sports.
   tsdbAdapter: require('./lib/integrations/sources/thesportsdb'),
+  // v12.7.0-pre2: OddsAPI adapter voor monthly-quota tracking via x-requests-*
+  // response headers. Adapter retourneert getUsage() met remaining/used/degraded.
+  oddsApiAdapter: require('./lib/integrations/sources/oddsapi'),
   getCurrentStakeRegime: () => _currentStakeRegime,
   leagues: {
     football:            AF_FOOTBALL_LEAGUES,
