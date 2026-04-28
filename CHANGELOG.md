@@ -2,6 +2,48 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.7.0-pre4] - 2026-04-28
+
+**v13.0 multi-source pivot Phase 4 · Sport-uitbreiding Tennis/Rugby/Cricket (data-laag) + Phase 3 audit fixes**
+
+Aanleiding: Phase 4 voegt 3 nieuwe sporten toe op data-bron-laag (TSDB SPORT_MAP + OddsAPI sport-keys + aggregator SPORT_SOURCES). Server.js scan-loop en index.html UI sport-filter wiring komen incrementeel — niet in deze release om audit-discipline te bewaren ("uitgebreid testen, geen ruimte voor fouten" per user-doctrine).
+
+Tegelijk worden 3 P1 + 1 P2 findings uit Phase 3 audit (Explore-agent) geadresseerd:
+1. P1: `_dedupOdds()` skipte NaN-prijs-validatie → NaN-quotes glipten door anomaly-detection
+2. P1: cross-source dedup-key gebruikte source-specific eventId → zelfde wedstrijd kreeg dubbele entries (OddsAPI eventId ≠ TSDB eventId)
+3. P1: `getEventSchedule()` date-filter ignoreerde timezone → UTC ↔ Europe/Amsterdam kalender-mismatch op middernacht-fixtures
+
+### Added (Phase 4 sport-uitbreiding)
+
+- **`SPORT_MAP` in `lib/integrations/sources/thesportsdb.js`** — `tennis: 'Tennis'`, `rugby: 'Rugby'`, `cricket: 'Cricket'`. TSDB strSport-strings exact zoals in database (case-sensitive in V1 search filtering).
+- **`SPORT_KEY_MAP` in `lib/integrations/sources/oddsapi.js`** — 3 nieuwe sport-entries:
+  - tennis: ATP/WTA/Wimbledon/US Open/Australian Open + default tennis_atp_french_open
+  - rugby: NRL (default) / Six Nations / Premiership / Top 14 / Super Rugby
+  - cricket: IPL/BBL/Test (default)/ODI/T20/PSL
+- **`SPORT_SOURCES` in `lib/integrations/data-aggregator.js`** — entries voor tennis/rugby/cricket met alle 9 categorieën (h2h/form/odds/lineups/livescore/schedule/venue/standings/summary). Tennis heeft `lineups: []` + `standings: []` (niet relevant voor tennis-format).
+
+### Fixed (Phase 3 audit P1+P2)
+
+- **`_dedupOdds()` NaN-prijs validatie** — `if (!Number.isFinite(q.price) || q.price <= 1.0) continue` aan het begin van dedup-loop. Voorkomt dat NaN-prijzen door anomaly-berekening glippen waar `(NaN - NaN) / NaN > threshold` altijd false is.
+- **Composite dedup-key cross-source-stable** — key gebruikt nu `${commenceTime}::${normalizeTeamKey(homeTeam)}::${normalizeTeamKey(awayTeam)}` ipv source-specific `eventId`. Falls back op eventId als teams ontbreken. Zelfde wedstrijd uit verschillende sources dedupeert correct.
+- **Anomaly-detection na complete dedup-loop** — refactor: detection in tweede loop over `seen.values()` ipv binnen-loop. Voorkomt duplicate anomaly-rapportage bij 3+ sources.
+- **`getEventSchedule()` timezone-aware filter** — `commenceTime.slice(0,10)` vervangen door `new Date(ev.commenceTime).toLocaleDateString('sv-SE', { timeZone })`. Default timezone Europe/Amsterdam (operator-locale uit CLAUDE.md), overrideable via `options.timezone`.
+
+### Tests (861 → 865)
+
+- `thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten (incl. v12.7.0-pre4 Tennis/Rugby/Cricket)`
+- `oddsapi: SPORT_KEY_MAP bevat tennis/rugby/cricket (v12.7.0-pre4 Phase 4)`
+- `aggregator: SPORT_SOURCES bevat tennis/rugby/cricket entries (v12.7.0-pre4 Phase 4)`
+- `aggregator: _dedupOdds skipt NaN-prijzen (v12.7.0-pre3 audit P1#1 fix)` — regressie-guard voor NaN-skip
+- `aggregator: _dedupOdds composite key cross-source (v12.7.0-pre3 audit P1#2 fix)` — locks-in cross-source-stable dedup
+
+### Niet in deze release
+
+- Server.js scan-loop wiring voor tennis/rugby/cricket (sport-aware market-types, schedule-detection per sport-cadence, OPERATOR.scanned_sports update) → komt na live-test van data-laag
+- index.html UI sport-filter checkboxes + per-sport bookie-balance entries → komt parallel met server.js wiring
+- Sport-aware signal-doctrine audit (welke signals applicable zijn per nieuwe sport, conform shadow-mode promotion)
+- Coverage-audit Phase B sporten (MMA/F1/Golf/Darts/Snooker) → Phase 5 (v13.0 cutover preparatie)
+
 ## [12.7.0-pre3] - 2026-04-28
 
 **v13.0 multi-source pivot Phase 3 · Aggregator uitgebreid met odds/lineups/livescore/schedule/venue/standings**

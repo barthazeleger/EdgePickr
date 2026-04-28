@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre3');
+  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre4');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6808,16 +6808,20 @@ test('thesportsdb: findTeamId multi-sport — hockey verwacht Ice Hockey strSpor
   });
 });
 
-test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten', () => {
+test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten (incl. v12.7.0-pre4 Tennis/Rugby/Cricket)', () => {
   // Garandeert dat geen sport-key zonder TSDB-mapping naar een query gaat
   // (anders default '_strSportFor → Soccer' filter blokkeert legitieme matches).
-  const required = ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'];
+  const required = ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball',
+                    'tennis', 'rugby', 'cricket'];
   for (const sport of required) {
     assert.ok(tsdb.SPORT_MAP[sport], `SPORT_MAP mist ${sport}`);
   }
   assert.strictEqual(tsdb.SPORT_MAP.football, 'Soccer');
   assert.strictEqual(tsdb.SPORT_MAP.hockey, 'Ice Hockey');
   assert.strictEqual(tsdb.SPORT_MAP['american-football'], 'American Football');
+  assert.strictEqual(tsdb.SPORT_MAP.tennis, 'Tennis');
+  assert.strictEqual(tsdb.SPORT_MAP.rugby, 'Rugby');
+  assert.strictEqual(tsdb.SPORT_MAP.cricket, 'Cricket');
 });
 
 test('thesportsdb: skip-results worden niet ge-cached (v12.6.1 negative-cache fix)', async () => {
@@ -7338,6 +7342,21 @@ test('oddsapi: resolveOddsApiKey gebruikt league of default', () => {
   assert.strictEqual(oddsapi.resolveOddsApiKey('chess', 'open'), null);
 });
 
+test('oddsapi: SPORT_KEY_MAP bevat tennis/rugby/cricket (v12.7.0-pre4 Phase 4)', () => {
+  assert.ok(oddsapi.SPORT_KEY_MAP.tennis,  'tennis-mapping mist');
+  assert.ok(oddsapi.SPORT_KEY_MAP.rugby,   'rugby-mapping mist');
+  assert.ok(oddsapi.SPORT_KEY_MAP.cricket, 'cricket-mapping mist');
+  // Tennis defaults to ATP key
+  assert.strictEqual(oddsapi.resolveOddsApiKey('tennis', 'Wimbledon'), 'tennis_atp_wimbledon');
+  assert.ok(oddsapi.resolveOddsApiKey('tennis', null).startsWith('tennis_'));
+  // Rugby NRL specifiek
+  assert.strictEqual(oddsapi.resolveOddsApiKey('rugby', 'NRL'), 'rugbyleague_nrl');
+  assert.strictEqual(oddsapi.resolveOddsApiKey('rugby', 'Six Nations'), 'rugbyunion_six_nations');
+  // Cricket per format
+  assert.strictEqual(oddsapi.resolveOddsApiKey('cricket', 'IPL'), 'cricket_ipl');
+  assert.strictEqual(oddsapi.resolveOddsApiKey('cricket', 'T20'), 'cricket_international_t20');
+});
+
 test('oddsapi: quota-tracking parseert response headers', async () => {
   oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
   setSourceEnabled('oddsapi', true);
@@ -7676,6 +7695,42 @@ test('aggregator: SPORT_SOURCES bevat odds/lineups/livescore/schedule/venue/stan
       assert.ok(Array.isArray(reg[cat]), `sport=${sport} mist categorie ${cat}`);
     }
   }
+});
+
+test('aggregator: SPORT_SOURCES bevat tennis/rugby/cricket entries (v12.7.0-pre4 Phase 4)', () => {
+  for (const sport of ['tennis', 'rugby', 'cricket']) {
+    const reg = agg.SPORT_SOURCES[sport];
+    assert.ok(reg, `${sport} mist in SPORT_SOURCES`);
+    // Alle 9 categorieën moeten arrays zijn (mogelijk leeg, niet undefined)
+    for (const cat of ['h2h', 'form', 'odds', 'lineups', 'livescore', 'schedule', 'venue', 'standings', 'summary']) {
+      assert.ok(Array.isArray(reg[cat]), `${sport}.${cat} moet array zijn`);
+    }
+    // h2h via TSDB voor alle 3 nieuwe sporten
+    assert.ok(reg.h2h.some(s => s.SOURCE_NAME === 'thesportsdb'), `${sport} mist TSDB in h2h`);
+    // Odds via OddsAPI voor alle 3
+    assert.ok(reg.odds.some(s => s.SOURCE_NAME === 'oddsapi'), `${sport} mist OddsAPI in odds`);
+  }
+});
+
+test('aggregator: _dedupOdds skipt NaN-prijzen (v12.7.0-pre3 audit P1#1 fix)', () => {
+  const quotes = [
+    { source: 'a', eventId: 'e1', homeTeam: 'A', awayTeam: 'B', commenceTime: '2026-04-30T15:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 2.10 },
+    { source: 'b', eventId: 'e1', homeTeam: 'A', awayTeam: 'B', commenceTime: '2026-04-30T15:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: NaN },
+    { source: 'c', eventId: 'e1', homeTeam: 'A', awayTeam: 'B', commenceTime: '2026-04-30T15:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 0.5 },  // <=1.0 → skip
+  ];
+  const { quotes: deduped, anomalies } = agg._dedupOdds(quotes);
+  assert.strictEqual(deduped.length, 1, 'alleen valide prijs (2.10) moet doorkomen');
+  assert.strictEqual(anomalies.length, 0, 'NaN/invalid skip → geen anomaly');
+});
+
+test('aggregator: _dedupOdds composite key cross-source (v12.7.0-pre3 audit P1#2 fix)', () => {
+  // Zelfde wedstrijd, andere source-eventIds → moet dedupen via teams+commenceTime
+  const quotes = [
+    { source: 'oddsapi',     eventId: '3924959', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 2.10 },
+    { source: 'thesportsdb', eventId: '12345',   homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 2.10 },
+  ];
+  const { quotes: deduped } = agg._dedupOdds(quotes);
+  assert.strictEqual(deduped.length, 1, 'cross-source dedup moet 1 entry leveren ondanks verschillende eventIds');
 });
 
 test('aggregator: _dedupOdds met identieke quotes uit verschillende sources', () => {
