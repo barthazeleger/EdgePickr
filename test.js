@@ -7164,6 +7164,50 @@ test('thesportsdb: fetchScheduleByVenue (V2) weigert ongeldige direction', async
   assert.deepStrictEqual(r, []);
 });
 
+test('thesportsdb: ID-input-validatie weigert lege/malformed IDs (v12.7.0-pre1 audit P2)', async () => {
+  // Audit-P2: alle 13 nieuwe methods met ID-arg moeten lege/non-string IDs
+  // weigeren zonder cache-write of fetch-call. Voorkomt cache-pollution via
+  // malformed input.
+  setSourceEnabled('thesportsdb', true);
+  let fetchHits = 0;
+  await withMockFetch(async () => { fetchHits++; return { table: [] }; }, async () => {
+    assert.deepStrictEqual(await tsdb.fetchStandings(''), []);
+    assert.deepStrictEqual(await tsdb.fetchStandings(null), []);
+    assert.deepStrictEqual(await tsdb.fetchEventLineup(undefined), []);
+    assert.deepStrictEqual(await tsdb.fetchEventStats('  '), []);
+    assert.deepStrictEqual(await tsdb.fetchEventTimeline('a'.repeat(200)), []); // > 64 chars
+    assert.deepStrictEqual(await tsdb.fetchEventTV('id with spaces'), []);
+    assert.deepStrictEqual(await tsdb.fetchLeagueNext(0), []); // 0 → null id
+    assert.strictEqual(await tsdb.fetchVenue(''), null);
+    assert.deepStrictEqual(await tsdb.fetchTeamRoster('id;DROP'), []); // semicolon
+    assert.deepStrictEqual(await tsdb.fetchTeamFullSchedule(''), []);
+    assert.deepStrictEqual(await tsdb.fetchScheduleByVenue(null, 'next'), []);
+    assert.strictEqual(fetchHits, 0, 'malformed ID mag GEEN fetch triggeren');
+  });
+});
+
+test('thesportsdb: fetchTeamFormEvents bound limit naar 100 (audit P2 cache-bloat fix)', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async (url) => {
+    if (url.includes('searchteams.php')) return { teams: [{ idTeam: '500', strTeam: 'X', strSport: 'Soccer' }] };
+    if (url.includes('eventslast.php')) {
+      // Genereer 200 events om bound-clamping te testen
+      const events = [];
+      for (let i = 0; i < 200; i++) {
+        events.push({ strHomeTeam: 'X', strAwayTeam: `Y${i}`, intHomeScore: '1', intAwayScore: '0', dateEvent: '2026-01-01' });
+      }
+      return { results: events };
+    }
+    return {};
+  }, async () => {
+    const r1 = await tsdb.fetchTeamFormEvents('X', 'football', 999999);
+    assert.ok(r1.length <= 100, `bound moet ≤100 zijn, kreeg ${r1.length}`);
+    const r2 = await tsdb.fetchTeamFormEvents('X', 'football', -5);
+    assert.ok(r2.length > 0 && r2.length <= 100, 'invalid limit valt terug op default 10, niet crash');
+  });
+});
+
 test('thesportsdb: nieuwe endpoints zijn allen exported (v12.7.0-pre1 contract)', () => {
   const expected = [
     'fetchStandings', 'fetchEventLineup', 'fetchEventStats', 'fetchEventTimeline',
