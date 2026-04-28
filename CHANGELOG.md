@@ -2,6 +2,39 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.2] - 2026-04-28
+
+**API-utilization · Pick-funnel observability · League scoring baseline · Settlement-coverage diagnose**
+
+Aanleiding: na v15.0.1 vroeg operator om actie i.p.v. nóg een research-pass. Twee concrete observaties: ~35 TSDB-calls per scan voelde laag (Premium-budget is 100/min ≈ 30k+/dag), en 15 voetbalfixtures → 3 candidates → 0 picks bewees dat we óf API-data laten liggen óf gates blind dichthouden zonder zicht op waar candidates sneuvelen. Deze slice levert observability die toekomstige threshold-discussies bewijsgedreven maakt en wirethird één ongebruikt TSDB Premium-pad in als additieve OU-prior.
+
+### Added
+
+- **Per-endpoint TSDB telemetry** (`lib/integrations/sources/thesportsdb.js`): `getUsage()` returnt nu `byEndpoint` breakdown (lookuph2h, eventslast, livescore, …). `_endpointKeyFromUrl` is geëxporteerd voor tests. Beantwoordt direct de operator-vraag "waar gaan die 35 calls heen?".
+- **`GET /api/admin/v2/pick-funnel`** (`lib/routes/admin-inspect.js`): één-pane funnel-view over de gate-cascade in `lib/picks.js`. Returnt drops per stage in canonieke volgorde (`price_too_low → ep_below_min → ep_too_close_to_market → kelly_too_low → no_signals → extreme_divergence → edge_below_adaptive → execution_gate_skip → playability_dropped`), per-sport en per-market breakdown. Bevat near-miss telemetrie voor `extreme_divergence`: accepted picks met |probGap| ∈ [15,20]pp die net door de 20pp-gate kwamen — input voor de "moeten we de v12.2.31 verlaging terugdraaien?"-discussie zonder de gate aan te raken.
+- **`GET /api/admin/v2/settlement-coverage`** (`lib/routes/admin-inspect.js`): diagnose-endpoint voor settlement-velocity. Toont aging-buckets (24h/48h/7d) van open bets, settled-velocity over laatste N dagen, per-sport en per-bookie breakdown, top-25 oudste open bets. Optionele `?probe=1` doet één gratis OddsPapi `/scores`-call per sport om coverage te checken. Doel: settled-bets stuck op 65 zichtbaar maken zodat v15.0.3 een auto-settle bridge kan onderbouwen.
+- **League scoring baseline signal** (`lib/signals/league-scoring-baseline.js` + `lib/integrations/data-aggregator.js`): nieuwe pure helper berekent Bayesian-shrunk gemiddelde-goals/match per liga uit TSDB `fetchLeaguePast` (eerder ongebruikt). `getLeagueScoringBaseline(sport, leagueId, opts)` aggregator-method. In `server.js` geïntegreerd als additieve OU-prior signal voor voetbal, achter env-flag `TSDB_LEAGUE_BASELINE=1` zodat operator op Render kan aan/uit zonder redeploy. Adds ~10 TSDB-calls/scan (1 per actieve liga, day-cached). Cap ±2pp prob-nudge zodat het signaal nooit overheerst.
+
+### Changed
+
+- **Scan-log uitgebreid**: nieuwe `tsdb_league_baseline=N/applied=M` metric in de `🛰️ v15 sources` regel zodat baseline-uptake per scan zichtbaar is.
+- **`scanTelemetry`** (`server.js`): nieuwe counters `tsdbLeagueBaselineHits` (per liga succesvolle fetch) en `tsdbLeagueBaselineApplied` (per fixture daadwerkelijk gebruikt).
+- **Admin-inspect docstring**: header lijst nu `pick-funnel` en `settlement-coverage` als endpoints.
+
+### Tests
+
+- TheSportsDB byEndpoint counter (3 nieuwe tests inclusief URL-parsing edge cases en reset-roundtrip).
+- League scoring baseline pure-math (7 nieuwe tests: empty/null guards, NaN-skip, Bayesian shrinkage, nudge cap, signal-naam OU-filter compatibility, directional sign).
+- Pick-funnel integration (3 nieuwe tests: leeg → canonieke volgorde gegarandeerd, drops + near-miss telt, hours param geclamped).
+- Settlement-coverage integration (1 nieuwe test: aging-buckets + velocity + bySport breakdown).
+
+### Niet gewijzigd (bewust)
+
+- **Geen threshold-verlagingen**. Operator was expliciet in v15.0.1 handoff: "Do not blindly lower thresholds". v15.0.2 levert eerst evidence (funnel + near-miss); aanpassen mag pas als CLV-bewijs uit settled bets dat rechtvaardigt.
+- **Geen sport-promoties**. Tennis/rugby/cricket blijven shadow tot settlement-velocity aantrekt (v15.0.3 / settlement-coverage-data-driven).
+- **Geen auto-settle**. v15.0.2 is alleen diagnose; de daadwerkelijke `bets.uitkomst`-update via OddsPapi-scores hoort in een aparte PR met manual-review veiligheidsklep.
+- **Picks.js cascade ongewijzigd**. Near-miss telemetrie is volledig server-side reconstructed uit `pick_candidates.fair_prob` + `bookmaker_odds`, geen instrumentatie in `mkP` nodig.
+
 ## [15.0.1] - 2026-04-28
 
 **Hotfix · v15 source telemetry zichtbaar op 0-pick dagen**

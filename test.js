@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.1');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7127,6 +7127,67 @@ test('thesportsdb: getUsage() telt skip-cases NIET (v12.6.3)', async () => {
   });
 });
 
+test('thesportsdb: _endpointKeyFromUrl pakt v1 path-tail zonder .php', () => {
+  assert.strictEqual(tsdb._endpointKeyFromUrl('https://www.thesportsdb.com/api/v1/json/123/lookuph2h.php?id=42'), 'lookuph2h');
+  assert.strictEqual(tsdb._endpointKeyFromUrl('https://www.thesportsdb.com/api/v1/json/123/eventslast.php?id=99'), 'eventslast');
+  assert.strictEqual(tsdb._endpointKeyFromUrl('https://www.thesportsdb.com/api/v1/json/3/searchteams.php?t=Arsenal'), 'searchteams');
+});
+
+test('thesportsdb: _endpointKeyFromUrl pakt v2 type-segment', () => {
+  assert.strictEqual(tsdb._endpointKeyFromUrl('https://www.thesportsdb.com/api/v2/json/livescore/Soccer'), 'livescore');
+  assert.strictEqual(tsdb._endpointKeyFromUrl('https://www.thesportsdb.com/api/v2/json/schedule/full/team/12'), 'schedule');
+});
+
+test('thesportsdb: _endpointKeyFromUrl is robuust tegen malformed input', () => {
+  assert.strictEqual(tsdb._endpointKeyFromUrl(null), 'unknown');
+  assert.strictEqual(tsdb._endpointKeyFromUrl(''), 'unknown');
+  assert.strictEqual(tsdb._endpointKeyFromUrl('not a url'), 'unknown');
+});
+
+test('thesportsdb: getUsage() bouwt byEndpoint breakdown op (v15.0.2)', async () => {
+  // v15.0.2: per-endpoint counter zodat operator zicht heeft op call-distributie.
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  tsdb._resetUsage();
+  setSourceEnabled('thesportsdb', true);
+  let phase = 0;
+  await withMockFetch(async (url) => {
+    phase++;
+    if (url.includes('searchteams.php')) {
+      return { teams: [{ idTeam: String(900 + phase), strTeam: 'X', strSport: 'Soccer' }] };
+    }
+    if (url.includes('lookuph2h.php')) return { event: [] };
+    if (url.includes('eventslast.php')) return { results: [] };
+    return {};
+  }, async () => {
+    await tsdb.findTeamId('Alpha', 'football');     // searchteams
+    await tsdb.findTeamId('Beta', 'football');      // searchteams (2)
+    await tsdb.fetchTeamFormEvents('Gamma', 'football', 5); // searchteams (3) + eventslast
+    const u = tsdb.getUsage();
+    assert.ok(u.callsToday >= 4, 'minimaal 4 calls verwacht, kreeg ' + u.callsToday);
+    assert.ok(u.byEndpoint && typeof u.byEndpoint === 'object', 'byEndpoint moet object zijn');
+    assert.ok(u.byEndpoint.searchteams >= 3, `searchteams >=3 verwacht, kreeg ${u.byEndpoint.searchteams}`);
+    assert.ok(u.byEndpoint.eventslast >= 1, 'eventslast moet ge-track zijn');
+  });
+});
+
+test('thesportsdb: _resetUsage wist byEndpoint én callsToday', async () => {
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  tsdb._resetUsage();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({ teams: [{ idTeam: '1', strTeam: 'Z', strSport: 'Soccer' }] }), async () => {
+    await tsdb.findTeamId('Z', 'football');
+    let u = tsdb.getUsage();
+    assert.ok(u.callsToday > 0);
+    assert.ok(Object.keys(u.byEndpoint).length > 0);
+    tsdb._resetUsage();
+    u = tsdb.getUsage();
+    assert.strictEqual(u.callsToday, 0);
+    assert.deepStrictEqual(u.byEndpoint, {});
+  });
+});
+
 test('thesportsdb: legitieme empty-response wordt wél ge-cached', async () => {
   // Counterpart: als de API daadwerkelijk antwoordt met "geen match",
   // dan IS dat een legitiem cacheable resultaat (24h) — niet elke scan
@@ -8824,6 +8885,81 @@ test('early-payout rules: Unibet / Pinnacle hebben geen regels', () => {
 test('early-payout rules: Over/Under totals hebben nooit EP', () => {
   assert.strictEqual(earlyPayoutRules.getEarlyPayoutRule('Bet365', 'football', 'total'), null);
   assert.strictEqual(earlyPayoutRules.getEarlyPayoutRule('Bet365', 'football', 'btts'), null);
+});
+
+// ── LEAGUE SCORING BASELINE (v15.0.2) ────────────────────────────────────────
+console.log('\n  Signals/League scoring baseline (v15.0.2):');
+
+const leagueBaseline = require('./lib/signals/league-scoring-baseline');
+
+test('league-baseline: returnt null bij empty input', () => {
+  assert.strictEqual(leagueBaseline.computeLeagueBaseline([]), null);
+  assert.strictEqual(leagueBaseline.computeLeagueBaseline(null), null);
+  assert.strictEqual(leagueBaseline.computeLeagueBaseline(undefined), null);
+});
+
+test('league-baseline: returnt null bij sample < 3 (default)', () => {
+  const events = [
+    { homeScore: 1, awayScore: 1 },
+    { homeScore: 2, awayScore: 0 },
+  ];
+  assert.strictEqual(leagueBaseline.computeLeagueBaseline(events), null);
+});
+
+test('league-baseline: skipt events met NaN/missing scores', () => {
+  const events = [
+    { homeScore: NaN, awayScore: 1 },
+    { homeScore: 'foo', awayScore: 'bar' },
+    { homeScore: -1, awayScore: 0 },           // negative ⇒ skip
+    { homeScore: 1, awayScore: 1 },             // valid
+    { homeScore: 2, awayScore: 0 },             // valid
+    { homeScore: 3, awayScore: 1 },             // valid
+  ];
+  const r = leagueBaseline.computeLeagueBaseline(events);
+  assert.ok(r, 'moet niet null zijn met 3 valid events');
+  assert.strictEqual(r.sample, 3);
+  assert.strictEqual(r.avgGoals, +((1+1+2+0+3+1) / 3).toFixed(2));
+});
+
+test('league-baseline: Bayesian shrinkage trekt thin sample naar prior', () => {
+  // 5 fixtures met allemaal 5 goals → raw avg 5.0; prior 2.65, K=30.
+  // Shrunk = (5*5 + 2.65*30) / (5+30) = (25 + 79.5) / 35 = 2.99
+  const events = Array.from({ length: 5 }, () => ({ homeScore: 3, awayScore: 2 }));
+  const r = leagueBaseline.computeLeagueBaseline(events);
+  assert.ok(r);
+  assert.strictEqual(r.avgGoals, 5.00);
+  assert.ok(r.shrunk < 3.50, `shrunk moet richting prior trekken bij thin sample, kreeg ${r.shrunk}`);
+  assert.ok(r.shrunk > 2.65, 'shrunk moet wel boven de prior liggen');
+});
+
+test('league-baseline: nudge cap op ±2pp', () => {
+  // Extreme: 30 fixtures met allemaal 6 goals → shrunk ~4.3 (delta 1.8). Nudge gecapt op +2pp.
+  const events = Array.from({ length: 30 }, () => ({ homeScore: 3, awayScore: 3 }));
+  const r = leagueBaseline.computeLeagueBaseline(events);
+  assert.ok(r);
+  assert.ok(Math.abs(r.nudge) <= leagueBaseline.SIGNAL_MAGNITUDE_CAP + 1e-9, `nudge moet binnen cap blijven, kreeg ${r.nudge}`);
+});
+
+test('league-baseline: signal-string bevat "over" zodat picks.js OU-filter het pakt', () => {
+  const events = Array.from({ length: 10 }, (_, i) => ({ homeScore: i % 4, awayScore: (i+1) % 3 }));
+  const r = leagueBaseline.computeLeagueBaseline(events);
+  assert.ok(r);
+  // Picks.js relevantSignals filter (regel 169-174) accepteert OU-signaal
+  // op pattern /(weather|poisson|team_stats|over|under|goals|o2\.5|u2\.5)/
+  // — naam moet één van die termen bevatten.
+  assert.match(r.signal, /over/);
+});
+
+test('league-baseline: nudge richt zich naar shrunk-line delta', () => {
+  // Hoog-scoring liga (bv. NL Eredivisie soms): shrunk > 2.5 → nudge positief.
+  const high = Array.from({ length: 15 }, () => ({ homeScore: 3, awayScore: 1 }));
+  const rHigh = leagueBaseline.computeLeagueBaseline(high);
+  assert.ok(rHigh.nudge > 0, 'high-scoring liga moet positieve nudge geven');
+
+  // Laag-scoring liga: shrunk < 2.5 → nudge negatief.
+  const low = Array.from({ length: 15 }, () => ({ homeScore: 0, awayScore: 1 }));
+  const rLow = leagueBaseline.computeLeagueBaseline(low);
+  assert.ok(rLow.nudge < 0, 'low-scoring liga moet negatieve nudge geven');
 });
 
 // ── EARLY-PAYOUT EVALUATOR + SHADOW-LOG (v11.1.0) ────────────────────────────
@@ -11988,6 +12124,183 @@ test('integration: GET /admin/v2/scan-by-sport leeg → bySport={}', async () =>
   assert.strictEqual(res.statusCode, 200);
   assert.strictEqual(res.body.total, 0);
   assert.deepStrictEqual(res.body.bySport, {});
+});
+
+// v15.0.2: pick-funnel endpoint geeft één-pane funnel-view over de gate-cascade.
+test('integration: GET /admin/v2/pick-funnel leeg → stages array intact, nul drops', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/pick-funnel',
+    query: { hours: '24' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.total, 0);
+  assert.strictEqual(res.body.accepted, 0);
+  // Canonieke volgorde moet altijd in response zitten, ook bij lege data:
+  const stageNames = res.body.stages.map(s => s.name);
+  assert.deepStrictEqual(stageNames, [
+    'price_too_low', 'ep_below_min', 'ep_too_close_to_market', 'kelly_too_low',
+    'no_signals', 'extreme_divergence', 'edge_below_adaptive', 'execution_gate_skip',
+    'playability_dropped',
+  ], 'stages volgorde moet exact de cascade in lib/picks.js volgen');
+  for (const s of res.body.stages) assert.strictEqual(s.dropped, 0);
+  assert.strictEqual(res.body.nearMiss.extreme_divergence.count, 0);
+});
+
+test('integration: GET /admin/v2/pick-funnel telt drops langs cascade en near-miss', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const now = new Date().toISOString();
+  // Mix: 1 accepted, 4 drops verspreid over stages, 1 near-miss accepted (probGap=18pp).
+  const mockCandidates = [
+    // accepted clean: model 60%, baseline 1/2.0=50% → probGap=10pp (geen near-miss)
+    { id: 1, sport: 'football', market_type: '1x2', selection_key: 'home', bookmaker: 'bet365', bookmaker_odds: 2.00, fair_prob: 0.60, edge_pct: 20, passed_filters: true, rejected_reason: null, playability: { playable: true }, created_at: now },
+    // near-miss accepted: model 73%, baseline 1/1.82=55% → probGap=18pp (binnen [15,20])
+    { id: 2, sport: 'football', market_type: 'ou', selection_key: 'over_2.5', bookmaker: 'unibet', bookmaker_odds: 1.82, fair_prob: 0.73, edge_pct: 30, passed_filters: true, rejected_reason: null, playability: { playable: true }, created_at: now },
+    // dropped on ep_below_min
+    { id: 3, sport: 'football', market_type: '1x2', selection_key: 'draw', bookmaker: 'bet365', bookmaker_odds: 3.50, fair_prob: 0.20, edge_pct: -30, passed_filters: false, rejected_reason: 'ep_below_min', playability: {}, created_at: now },
+    // dropped on extreme_divergence
+    { id: 4, sport: 'hockey', market_type: 'ml', selection_key: 'home', bookmaker: 'bet365', bookmaker_odds: 2.50, fair_prob: 0.70, edge_pct: 75, passed_filters: false, rejected_reason: 'extreme_divergence', playability: {}, created_at: now },
+    // dropped on execution_gate_skip
+    { id: 5, sport: 'football', market_type: 'btts', selection_key: 'yes', bookmaker: 'pinnacle', bookmaker_odds: 1.95, fair_prob: 0.55, edge_pct: 7, passed_filters: false, rejected_reason: 'execution_gate_skip (no_target_bookie)', playability: {}, created_at: now },
+    // dropped post-mkP via playability
+    { id: 6, sport: 'football', market_type: 'ou', selection_key: 'under_2.5', bookmaker: 'bet365', bookmaker_odds: 1.95, fair_prob: 0.55, edge_pct: 7, passed_filters: true, rejected_reason: null, playability: { playable: false, lineQuality: 'low' }, created_at: now },
+  ];
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: () => ({ order: () => ({ limit: () => Promise.resolve({ data: mockCandidates, error: null }) }) }),
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/pick-funnel',
+    query: { hours: '24' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.total, 6);
+  assert.strictEqual(res.body.accepted, 2);              // id 1 + 2
+  assert.strictEqual(res.body.playabilityDropped, 1);    // id 6
+  const stageMap = Object.fromEntries(res.body.stages.map(s => [s.name, s]));
+  assert.strictEqual(stageMap.ep_below_min.dropped, 1);
+  assert.strictEqual(stageMap.extreme_divergence.dropped, 1);
+  assert.strictEqual(stageMap.execution_gate_skip.dropped, 1);
+  assert.strictEqual(stageMap.playability_dropped.dropped, 1);
+  // SurvivingAfter check op laatste stage moet equal aan accepted zijn.
+  const lastStage = res.body.stages[res.body.stages.length - 1];
+  assert.strictEqual(lastStage.survivingAfter, 2, 'na alle stages moeten alleen 2 accepted overblijven');
+  // Near-miss: precies 1 (id 2 met probGap=18pp).
+  assert.strictEqual(res.body.nearMiss.extreme_divergence.count, 1);
+  assert.strictEqual(res.body.nearMiss.extreme_divergence.samples.length, 1);
+  assert.strictEqual(res.body.nearMiss.extreme_divergence.samples[0].id, 2);
+  // model 73% vs baseline 100/1.82 = 54.945% → gap ≈ 18.05, 1-decimal rounded.
+  assert.ok(res.body.nearMiss.extreme_divergence.samples[0].prob_gap_pp >= 18 && res.body.nearMiss.extreme_divergence.samples[0].prob_gap_pp <= 19, 'prob_gap_pp moet ~18pp zijn');
+  // bySport breakdown bestaat
+  assert.ok(res.body.bySport.football, 'football bucket moet bestaan');
+  assert.ok(res.body.bySport.hockey, 'hockey bucket moet bestaan');
+});
+
+// v15.0.2: settlement-coverage diagnose endpoint.
+test('integration: GET /admin/v2/settlement-coverage telt aging buckets en velocity', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  // Datum-formaat in DB is "DD-MM-YYYY". Gebruik vaste anchor zodat ageDays deterministisch is.
+  const today = new Date();
+  const fmt = (d) => `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
+  const daysAgo = (n) => fmt(new Date(today.getTime() - n * 86400000));
+  const mockBets = [
+    // Settled bets (3 W, 2 L, recent)
+    { bet_id: 1, sport: 'football', tip: 'Bet365', uitkomst: 'W', datum: daysAgo(2), markt: '1X2', wedstrijd: 'A vs B' },
+    { bet_id: 2, sport: 'football', tip: 'Bet365', uitkomst: 'L', datum: daysAgo(3), markt: 'O/U', wedstrijd: 'C vs D' },
+    { bet_id: 3, sport: 'hockey',   tip: 'Unibet', uitkomst: 'W', datum: daysAgo(1), markt: 'ML',  wedstrijd: 'X vs Y' },
+    // Open bets met verschillende leeftijden
+    { bet_id: 10, sport: 'football', tip: 'Bet365', uitkomst: 'Open', datum: daysAgo(0), markt: '1X2', wedstrijd: 'recent vs new' },          // <24h
+    { bet_id: 11, sport: 'football', tip: 'Bet365', uitkomst: 'Open', datum: daysAgo(2), markt: 'O/U', wedstrijd: 'mid vs age' },             // 48h-7d
+    { bet_id: 12, sport: 'football', tip: 'Unibet', uitkomst: 'Open', datum: daysAgo(10), markt: '1X2', wedstrijd: 'oud vs older' },          // >7d
+    { bet_id: 13, sport: 'hockey',   tip: 'Unibet', uitkomst: 'Open', datum: daysAgo(15), markt: 'ML', wedstrijd: 'very vs old' },            // >7d
+    { bet_id: 14, sport: 'football', tip: 'Bet365', uitkomst: 'Open', datum: 'invalid-date', markt: '1X2', wedstrijd: 'mal vs formed' },      // unknown age
+  ];
+  const mockSupabase = {
+    from: () => ({
+      select: () => Promise.resolve({ data: mockBets, error: null }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/settlement-coverage',
+    query: { days: '14' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.total, 8);
+  assert.strictEqual(res.body.settled, 3);
+  assert.strictEqual(res.body.open, 5);
+  // Aging
+  assert.strictEqual(res.body.aging.open_under_24h, 1);            // bet 10
+  assert.strictEqual(res.body.aging.open_48h_to_7d, 1);            // bet 11
+  assert.strictEqual(res.body.aging.open_older_than_7d, 2);        // bet 12 + 13
+  assert.strictEqual(res.body.aging.open_unknown_age, 1);          // bet 14
+  // Velocity heeft 14 dagen entries
+  assert.strictEqual(res.body.velocity.length, 14);
+  // BySport
+  assert.ok(res.body.bySport.football);
+  assert.strictEqual(res.body.bySport.football.settled, 2);
+  assert.strictEqual(res.body.bySport.football.open, 4);
+  // Oldest-open lijst bevat de >7 day bets
+  assert.ok(Array.isArray(res.body.oldestOpen));
+  assert.ok(res.body.oldestOpen.length >= 2, 'oldestOpen moet ≥2 entries hebben');
+  assert.ok(res.body.oldestOpen[0].ageDays >= 7);
+  // Geen probe gevraagd → null
+  assert.strictEqual(res.body.scoreProbe, null);
+});
+
+test('integration: GET /admin/v2/pick-funnel hours param wordt geclamped op 168', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  let observedSinceIso = null;
+  const mockSupabase = {
+    from: () => ({
+      select: () => ({
+        gte: (col, iso) => { observedSinceIso = iso; return { order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }; },
+      }),
+    }),
+  };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/pick-funnel',
+    query: { hours: '999999' }, user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.body.windowHours, 168);
+  // sinceIso moet ongeveer 168u terug zijn (binnen 5s tolerance).
+  const expectedMs = Date.now() - 168 * 3600 * 1000;
+  const actualMs = Date.parse(observedSinceIso);
+  assert.ok(Math.abs(expectedMs - actualMs) < 5000, 'sinceIso moet ~168u terug zijn');
 });
 
 test('integration: GET /model-feed filtert scan-ruis uit mirrored notifications', async () => {

@@ -30,6 +30,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 | Post-deploy migration | Done | v15 pick-candidate attribution columns/indexes applied directly against Supabase. |
 | Post-deploy calibration | Done | Calibration rebuilt from 65 admin settled bets and v15 default sections backfilled into existing calibration JSON. |
 | v15.0.1 hotfix | Done | Source telemetry now logs on 0-pick football days; bookie-anomaly no longer alerts on sharp-reference books. |
+| v15.0.2 observability + API utilization | Done | Per-endpoint TSDB telemetry, `pick-funnel` + `settlement-coverage` admin-inspect endpoints, league scoring baseline signal (env-gated), CHANGELOG/README/version pins refreshed. |
 
 ## Risks
 
@@ -53,6 +54,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 - 2026-04-28: calibration rebuilt and verified: `65` settled admin bets, `34` wins, profit `13.82`, `9` market keys, v15 defaults present.
 - 2026-04-28: v15.0.1 hotfix pushed after `npm test` passed with `880 passed / 0 failed`, `npm run audit:high` passed, and `node --check server.js` passed.
 - 2026-04-28: cleaned existing sharp-reference spam from inbox: scanned `76` recent `bookie_anomaly` rows, deleted `57` rows mentioning Pinnacle/Betfair/Circa/SBOBet/Polymarket/Kalshi, left other anomaly rows untouched.
+- 2026-04-28 (v15.0.2): Build B/A/C/D shipped — `npm test` results pending agent run (verwacht 880 → ~894). `node --check` op alle aangeraakte files moet groen blijven; `npm run audit:high` ongewijzigd 0 vulnerabilities. Pre-deploy verificatie staat in CHANGELOG entry.
 
 ## Post-Deploy State
 
@@ -64,6 +66,28 @@ The latest observed scan proves v15 code is active:
 - `oddspapi=ok(...)` appeared in scraper health.
 - Tennis/rugby/cricket shadow scanners emitted rows/logs.
 - 0 picks were produced because gates rejected candidates, not because scan execution failed.
+
+## v15.0.2 Build Notes (Claude follow-up after Codex hand-off)
+
+Operator vroeg om actie i.p.v. nóg een audit. Gebouwd:
+
+1. **`thesportsdb._callsToday`** is nu `{total, byEndpoint}`. `getUsage()` returnt per-endpoint breakdown. URL → key parser (V1: file zonder `.php`; V2: type-segment) is geëxporteerd als `_endpointKeyFromUrl` voor tests.
+2. **`/api/admin/v2/pick-funnel`**: cascade-aggregaat over `pick_candidates` met canonieke STAGES-volgorde. Near-miss-telemetrie reconstrueert |probGap| ∈ [15,20]pp uit `fair_prob` + `bookmaker_odds` zonder `picks.js` aan te raken.
+3. **`/api/admin/v2/settlement-coverage`**: aging-buckets (24h/48h/7d), velocity over N dagen, oldestOpen list, optionele `?probe=1` voor OddsPapi `/scores` coverage check (gratis quota).
+4. **League scoring baseline**: `lib/signals/league-scoring-baseline.js` (pure math, Bayesian shrink) + `getLeagueScoringBaseline()` aggregator-method. Signal naam bevat `over_under` zodat de OU-relevantSignals-filter in `picks.js:169-174` het meetelt. Wiring zit achter `process.env.TSDB_LEAGUE_BASELINE === '1'` zodat operator op Render kan aan/uit zonder redeploy.
+
+Wat NIET gedaan is en waarom:
+- Geen threshold-verlagingen (operator-instructie staat in §Risks).
+- Geen sport-promoties (settlement-velocity moet eerst groeien).
+- Geen auto-settle (apart pad met manual-review klep, hoort in v15.0.3).
+- `fetchEventStats/Timeline/TV/Roster/TeamFullSchedule` blijven ongebruikt: alleen relevant voor in-play of niet-cross-source-injury — geen positieve EV-case zonder verdere infrastructure.
+
+## Aanbevolen volgende stappen (post v15.0.2)
+
+1. **Run minimaal 7 dagen met huidige changes** zodat funnel + settlement-coverage rijke data hebben.
+2. **Toggle `TSDB_LEAGUE_BASELINE=1`** op Render en bekijk `tsdbLeagueBaselineApplied` in scan-log; als ≥10/dag een nudge krijgen, evalueer in week 2.
+3. **Beslis op basis van funnel-evidence** of `extreme_divergence` terug naar 22pp of 25pp moet (geen verlaging zonder ≥30 near-miss samples + positieve CLV-trend).
+4. **Plan v15.0.3 settlement-bridge** zodra `settlement-coverage.aging.open_older_than_7d > 10` en OddsPapi `/scores` consistent matcht op fixture-level.
 
 ## Request For Next Colleague
 

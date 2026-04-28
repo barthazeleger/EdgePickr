@@ -6206,6 +6206,7 @@ async function runPrematch(emit) {
     aggregateFetched: 0, aggregateLeaderHome: 0, aggregateLeaderAway: 0, aggregateSquare: 0,
     earlySeasonMatches: 0,
     tsdbLivescoreSkips: 0, tsdbFormHits: 0, tsdbStandingsFallbackHits: 0,
+    tsdbLeagueBaselineHits: 0, tsdbLeagueBaselineApplied: 0,
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
   };
 
@@ -6375,6 +6376,23 @@ async function runPrematch(emit) {
             scanTelemetry.tsdbStandingsFallbackHits += Object.keys(tsdbStats).length;
           }
         } catch { /* TSDB fallback mag scan nooit breken */ }
+      }
+
+      // v15.0.2: League scoring baseline (env-flag TSDB_LEAGUE_BASELINE=1).
+      // Pakt laatste-15 fixtures van de liga via TSDB en berekent Bayesian-
+      // shrunk gemiddelde-goals/match. Wordt als additieve OU-prior signal in
+      // het mkP-pad gehangen. Day-cached, +1 TSDB-call per actieve liga/dag.
+      // Achter env-flag zodat we op Render aan/uit kunnen zonder redeploy.
+      let leagueBaseline = null;
+      if (OPERATOR.scraping_enabled && process.env.TSDB_LEAGUE_BASELINE === '1') {
+        try {
+          const agg = require('./lib/integrations/data-aggregator');
+          leagueBaseline = await agg.getLeagueScoringBaseline('football', league.tsdbId || league.id, { line: 2.5 });
+          if (leagueBaseline) {
+            scanTelemetry.tsdbLeagueBaselineHits++;
+            leagueSourceAttribution.thesportsdb.leagueBaseline = true;
+          }
+        } catch { /* baseline mag scan nooit breken */ }
       }
       const leagueSharpOdds = await loadFootballSharpOdds(league);
 
@@ -6996,6 +7014,16 @@ async function runPrematch(emit) {
             aggOUNote = ` | Aggregate-push Over: +${(aggOUAdj*100).toFixed(1)}%`;
           }
 
+          // v15.0.2: League scoring baseline nudge (additief, cap ±2pp).
+          // Alleen wanneer baseline berekend kon worden (n>=3) en signal magnitude
+          // niet triviaal is. Houd nudge VOOR het edge-berekenen zodat overP
+          // bij onzekere markets toch op de baseline gepulled wordt.
+          let leagueBaselineOUAdj = 0;
+          if (leagueBaseline && Math.abs(leagueBaseline.nudge) >= 0.0025) {
+            leagueBaselineOUAdj = leagueBaseline.nudge;
+            overP = Math.max(0.10, Math.min(0.90, overP + leagueBaselineOUAdj));
+            scanTelemetry.tsdbLeagueBaselineApplied++;
+          }
           const overEdge  = overP * over.best.price - 1;
           const underEdge = under.best.price > 0 ? (1-overP) * under.best.price - 1 : -1;
           const ouSignals = [...matchSignals];
@@ -7003,6 +7031,7 @@ async function runPrematch(emit) {
           if (weatherOUAdj !== 0) ouSignals.push(`weather_ou:${(weatherOUAdj*100).toFixed(1)}%`);
           if (Math.abs(poissonOUAdj) >= 0.005) ouSignals.push(`poisson_ou:${poissonOUAdj>0?'+':''}${(poissonOUAdj*100).toFixed(1)}%`);
           if (aggOUAdj !== 0) ouSignals.push(`aggregate_push_ou:+${(aggOUAdj*100).toFixed(1)}%`);
+          if (leagueBaselineOUAdj !== 0) ouSignals.push(leagueBaseline.signal);
           // v10.12.7 Phase A.1b: totals market is 2-way (over/under), line=2.5
           const fxMetaOver  = { fixtureId: fid, marketType: 'total', selectionKey: 'over',  line: 2.5 };
           const fxMetaUnder = { fixtureId: fid, marketType: 'total', selectionKey: 'under', line: 2.5 };
@@ -7632,7 +7661,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
   ];
   emit({ log: telLines.join('\n') });
 
