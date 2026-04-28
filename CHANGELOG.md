@@ -2,6 +2,50 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.7.0-pre1] - 2026-04-28
+
+**v13.0 multi-source pivot Phase 1 · TheSportsDB endpoint-uitbreiding (13 nieuwe methods, v1+v2 mix)**
+
+Aanleiding: TSDB Premium (€9/mnd, sinds 28-04) werd onderbenut — alleen `searchteams.php` + `lookuph2h.php` van v1 in gebruik. Voor de v13.0 multi-source pivot is brede TSDB-coverage nodig zodat het primaire datalaag-rol kan vervullen voor non-football sporten (na 13-05 tier-shift) én parallelle data kan leveren voor football (cross-validation tegen api-football). Endpoint-keuze gebaseerd op `thedatadb.readme.io`-screenshots: 80% v1 (rijker dan eerder aangenomen) + 20% v2 (livescore + schedule-by-venue + full-team-schedule, v2-specifieke meerwaarde).
+
+Doctrine-context: additieve uitbreiding, geen breaking changes. Bestaande `findTeamId`/`fetchH2HEvents`/`fetchTeamFormEvents`/`getUsage` exports ongewijzigd. Aggregator integration komt in Phase 3 (v12.7.0-pre3); deze release legt de foundation.
+
+### Added
+
+- **`fetchTeamFormEvents(teamName, sport, limit)`** — was placeholder die `[]` returnde, nu echte v1 `eventslast.php` impl. Parseert per-event home/away score → `{myScore, oppScore, oppName}` shape compatible met aggregator's `_dedupFormEvents`/`_summarizeForm`. Sport-aware via bestaande `findTeamId`. Cache 6h.
+- **`fetchStandings(leagueId, season)`** — v1 `lookuptable.php`. Returnt `[{rank, teamId, teamName, played, wins, draws, losses, goalsFor/Against, goalDiff, points, form}]`. Vervangt api-sports `/standings` voor TSDB-coverage sporten (post-tier-shift fallback). Cache 6h.
+- **`fetchEventLineup(eventId)`** — v1 `lookuplineup.php`. Per-player `{playerId, name, position, teamId, isSubstitute, formation}`. TTL 30min (lineups veranderen tot kickoff). Voor lineup-strength signal in v13.0 Phase 4.
+- **`fetchEventStats(eventId)`** — v1 `lookupeventstats.php`. Match stats (shots/possession/corners/fouls). TTL 30min.
+- **`fetchEventTimeline(eventId, isFinal)`** — v1 `lookuptimeline.php`. Per-minute events. TTL 30min als live, 7d als final (immutable). Caller signal `isFinal` bepaalt cache-bucket.
+- **`fetchEventTV(eventId)`** — v1 `lookuptv.php`. TV broadcasts per match → live-betting timing-signal (welke matches op TV = traffic-spike-window). TTL 24h.
+- **`fetchSchedulesByDate(date, sport)`** — v1 `eventsday.php?d={ISO-DATE}&s={strSport}`. Multi-sport fixtures-by-day. Sport-aware via `SPORT_MAP`. Strict regex op date-input (defensive). TTL 1h.
+- **`fetchLeagueNext(leagueId)` / `fetchLeaguePast(leagueId)`** — v1 `eventsnextleague.php` / `eventspastleague.php`. League fixture-feed. TTL 1h.
+- **`fetchVenue(venueId)`** — v1 `lookupvenue.php`. `{name, capacity, city, country, sport}` voor home-advantage signal-refinement. TTL 7d.
+- **`fetchTeamRoster(teamId)`** — v1 `lookup_all_players.php`. Squad voor injury-cross-check. TTL 6h.
+- **`fetchLivescore(sport)`** — v2 `livescore/{strSport}` (premium-only, header-auth). Active-events met live scores. TTL 30s. Free-key skip via `_get(useV2=true, !IS_PREMIUM) → called=false → []`.
+- **`fetchTeamFullSchedule(teamId)`** — v2 `schedule/full/team/{id}` (premium-only). Rijker dan v1's `eventsnext.php` (top-5 only). TTL 6h.
+- **`fetchScheduleByVenue(venueId, direction)`** — v2 `schedule/{next\|previous}/venue/{id}` (premium-only). Venue-context fixtures. TTL 1h.
+
+### Changed
+
+- **Cache-architectuur:** één globale 24h-`cache` vervangen door 6 per-TTL `_caches` buckets (`livescore` 30s / `short` 30min / `hour` 1h / `medium` 6h / `day` 24h / `week` 7d). Bestaande `cache` alias blijft op `_caches.day` voor backwards-compat van `findTeamId`/`fetchH2HEvents`. Voorkomt dat livescore-data 24h stale wordt of venues elke scan refetched worden.
+- **`_clearCache()` test-hook** clears alle 6 buckets ipv één.
+- **Module header-comment** uitgebreid met endpoint-overzicht v1 + v2.
+
+### Tests (822 → 837)
+
+- 1 test per nieuwe method (mock fetch + parsing assertions)
+- Premium-gating-test voor `fetchLivescore` — branched op `IS_PREMIUM`-flag, zorgt dat free-key niets fetcht
+- Defensive-input-tests: `fetchSchedulesByDate('not-a-date')` → `[]`, `fetchScheduleByVenue('50', 'invalid')` → `[]`
+- Cache-TTL-test: `fetchEventTimeline(isFinal=true)` 2x → 1 fetch (week-cache hit)
+- Contract-test: alle 13 nieuwe methods exported als function
+
+### Niet in deze release
+
+- Aggregator-integration van nieuwe methods → Phase 3 (v12.7.0-pre3)
+- OddsAPI source-module → Phase 2 (v12.7.0-pre2)
+- Sport-uitbreiding (Tennis/Rugby/Cricket) → Phase 4
+
 ## [12.6.3] - 2026-04-28
 
 **API usage tracker · TSDB call-counter + tier-shift indicator + OddsAPI placeholder**

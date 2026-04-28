@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.6.3');
+  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6929,6 +6929,251 @@ test('thesportsdb: fetchH2HEvents propageert sport in event-shape', async () => 
     assert.strictEqual(events[0].homeScore, 3);
     assert.strictEqual(events[0].awayScore, 2);
   });
+});
+
+// ── v12.7.0-pre1 NIEUWE TSDB ENDPOINTS ─────────────────────────────────────
+console.log('\n  Sources/TheSportsDB (v12.7.0-pre1 endpoint expansion):');
+
+test('thesportsdb: fetchTeamFormEvents (v12.7.0-pre1 real impl ipv stub)', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let phase = 0;
+  await withMockFetch(async (url) => {
+    if (url.includes('searchteams.php')) {
+      phase++;
+      return { teams: [{ idTeam: '500', strTeam: 'Bromley', strSport: 'Soccer' }] };
+    }
+    if (url.includes('eventslast.php')) {
+      return {
+        results: [
+          { strHomeTeam: 'Bromley', strAwayTeam: 'Cambridge', intHomeScore: '2', intAwayScore: '1', dateEvent: '2026-04-20' },
+          { strHomeTeam: 'Crewe',   strAwayTeam: 'Bromley',  intHomeScore: '0', intAwayScore: '0', dateEvent: '2026-04-13' },
+        ],
+      };
+    }
+    return {};
+  }, async () => {
+    const form = await tsdb.fetchTeamFormEvents('Bromley', 'football', 5);
+    assert.strictEqual(form.length, 2);
+    assert.strictEqual(form[0].myScore, 2, 'home wedstrijd 2-1: myScore=2 als Bromley thuis was');
+    assert.strictEqual(form[0].oppScore, 1);
+    assert.strictEqual(form[0].oppName, 'Cambridge');
+    assert.strictEqual(form[1].myScore, 0, 'away 0-0: myScore=0');
+    assert.strictEqual(form[1].oppName, 'Crewe');
+    assert.ok(form.every(f => f.source === 'thesportsdb'));
+  });
+});
+
+test('thesportsdb: fetchStandings parseert lookuptable.php response', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    table: [
+      { intRank: '1', idTeam: '101', strTeam: 'Arsenal', intPlayed: '38', intWin: '28', intDraw: '6', intLoss: '4', intGoalsFor: '90', intGoalsAgainst: '30', intGoalDifference: '60', intPoints: '90', strForm: 'WWWWW' },
+      { intRank: '2', idTeam: '102', strTeam: 'Liverpool', intPlayed: '38', intWin: '25', intDraw: '8', intLoss: '5', intGoalsFor: '85', intGoalsAgainst: '40', intGoalDifference: '45', intPoints: '83', strForm: 'WWLDW' },
+    ],
+  }), async () => {
+    const rows = await tsdb.fetchStandings('4328', '2025-2026');
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].rank, 1);
+    assert.strictEqual(rows[0].teamName, 'Arsenal');
+    assert.strictEqual(rows[0].points, 90);
+    assert.strictEqual(rows[0].goalDiff, 60);
+    assert.strictEqual(rows[1].form, 'WWLDW');
+  });
+});
+
+test('thesportsdb: fetchEventLineup parseert lookuplineup.php', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    lineup: [
+      { idPlayer: '1', strPlayer: 'GK Smith',     strPosition: 'GK', idTeam: '101', strSubstitute: 'No',  strFormation: '4-3-3' },
+      { idPlayer: '2', strPlayer: 'DEF Jones',    strPosition: 'CB', idTeam: '101', strSubstitute: 'No',  strFormation: '4-3-3' },
+      { idPlayer: '3', strPlayer: 'MID Williams', strPosition: 'CM', idTeam: '101', strSubstitute: 'Yes', strFormation: '4-3-3' },
+    ],
+  }), async () => {
+    const lineup = await tsdb.fetchEventLineup('999');
+    assert.strictEqual(lineup.length, 3);
+    assert.strictEqual(lineup[0].position, 'GK');
+    assert.strictEqual(lineup[2].isSubstitute, true);
+    assert.ok(lineup.every(p => p.source === 'thesportsdb'));
+  });
+});
+
+test('thesportsdb: fetchEventStats parseert lookupeventstats.php', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    eventstats: [
+      { strStat: 'Shots',         intHome: '14', intAway: '8' },
+      { strStat: 'Possession (%)', intHome: '62', intAway: '38' },
+    ],
+  }), async () => {
+    const stats = await tsdb.fetchEventStats('999');
+    assert.strictEqual(stats.length, 2);
+    assert.strictEqual(stats[0].statType, 'Shots');
+    assert.strictEqual(stats[0].home, '14');
+    assert.strictEqual(stats[1].away, '38');
+  });
+});
+
+test('thesportsdb: fetchEventTimeline isFinal=true gebruikt week-cache', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let fetchCount = 0;
+  await withMockFetch(async () => {
+    fetchCount++;
+    return { timeline: [{ strTimeline: 'Goal', intTime: '23', strTeam: 'Home', strHomeGoalDetails: 'Player A' }] };
+  }, async () => {
+    const final1 = await tsdb.fetchEventTimeline('888', true);
+    const final2 = await tsdb.fetchEventTimeline('888', true);
+    assert.strictEqual(final1.length, 1);
+    assert.strictEqual(final2.length, 1);
+    assert.strictEqual(fetchCount, 1, 'tweede call moet uit cache komen (final timeline TTL=7d)');
+    assert.strictEqual(final1[0].minute, 23);
+    assert.strictEqual(final1[0].type, 'Goal');
+  });
+});
+
+test('thesportsdb: fetchEventTV parseert lookuptv.php broadcasts', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    tvevents: [
+      { strChannel: 'Sky Sports', strCountry: 'United Kingdom', strLogo: 'https://logo.png' },
+      { strChannel: 'beIN Sports', strCountry: 'France' },
+    ],
+  }), async () => {
+    const tv = await tsdb.fetchEventTV('999');
+    assert.strictEqual(tv.length, 2);
+    assert.strictEqual(tv[0].channel, 'Sky Sports');
+    assert.strictEqual(tv[1].country, 'France');
+  });
+});
+
+test('thesportsdb: fetchSchedulesByDate filtert op sport via strSport', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let capturedUrl = null;
+  await withMockFetch(async (url) => {
+    capturedUrl = url;
+    return {
+      events: [
+        { idEvent: '1', idLeague: '4328', strLeague: 'EPL', strHomeTeam: 'A', strAwayTeam: 'B', dateEvent: '2026-04-30', strTime: '15:00', idVenue: '50', strVenue: 'Old Ground', strStatus: 'Not Started' },
+      ],
+    };
+  }, async () => {
+    const fixtures = await tsdb.fetchSchedulesByDate('2026-04-30', 'football');
+    assert.ok(capturedUrl.includes('s=Soccer'), 'football → strSport=Soccer in URL');
+    assert.strictEqual(fixtures.length, 1);
+    assert.strictEqual(fixtures[0].leagueName, 'EPL');
+    assert.strictEqual(fixtures[0].venueName, 'Old Ground');
+  });
+});
+
+test('thesportsdb: fetchSchedulesByDate weigert ongeldige date', async () => {
+  setSourceEnabled('thesportsdb', true);
+  const r = await tsdb.fetchSchedulesByDate('not-a-date', 'football');
+  assert.deepStrictEqual(r, []);
+});
+
+test('thesportsdb: fetchLeagueNext + fetchLeaguePast endpoints', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async (url) => {
+    if (url.includes('eventsnextleague.php')) {
+      return { events: [{ idEvent: 'A1', strHomeTeam: 'X', strAwayTeam: 'Y', dateEvent: '2026-05-05' }] };
+    }
+    if (url.includes('eventspastleague.php')) {
+      return { events: [{ idEvent: 'P1', strHomeTeam: 'X', strAwayTeam: 'Y', dateEvent: '2026-04-20', intHomeScore: '1', intAwayScore: '0', strStatus: 'Match Finished' }] };
+    }
+    return {};
+  }, async () => {
+    const next = await tsdb.fetchLeagueNext('4328');
+    const past = await tsdb.fetchLeaguePast('4328');
+    assert.strictEqual(next.length, 1);
+    assert.strictEqual(next[0].eventId, 'A1');
+    assert.strictEqual(past[0].eventId, 'P1');
+    assert.strictEqual(past[0].homeScore, 1);
+  });
+});
+
+test('thesportsdb: fetchVenue parseert lookupvenue.php', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    venues: [{
+      idVenue: '50', strVenue: 'Wembley Stadium', intCapacity: '90000',
+      strCity: 'London', strCountry: 'England', strSport: 'Soccer',
+    }],
+  }), async () => {
+    const venue = await tsdb.fetchVenue('50');
+    assert.strictEqual(venue.name, 'Wembley Stadium');
+    assert.strictEqual(venue.capacity, 90000);
+    assert.strictEqual(venue.city, 'London');
+  });
+});
+
+test('thesportsdb: fetchTeamRoster parseert lookup_all_players.php', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    player: [
+      { idPlayer: '1', strPlayer: 'Player A', strPosition: 'GK',  strNationality: 'England', dateBorn: '1995-01-01' },
+      { idPlayer: '2', strPlayer: 'Player B', strPosition: 'DEF', strNationality: 'France',  dateBorn: '1998-06-15' },
+    ],
+  }), async () => {
+    const roster = await tsdb.fetchTeamRoster('101');
+    assert.strictEqual(roster.length, 2);
+    assert.strictEqual(roster[0].position, 'GK');
+    assert.strictEqual(roster[1].nationality, 'France');
+  });
+});
+
+test('thesportsdb: fetchLivescore (V2 premium) returnt [] op free-key', async () => {
+  // Met test-key '3' (free) is IS_PREMIUM=false, V2-calls geven {data:null, called:false}
+  // → fetchLivescore moet [] returnen zonder fetch te doen.
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let fetchHits = 0;
+  await withMockFetch(async () => { fetchHits++; return { livescore: [] }; }, async () => {
+    const live = await tsdb.fetchLivescore('football');
+    if (tsdb.IS_PREMIUM) {
+      // Premium-key zou wél fetchen + parseren
+      assert.strictEqual(fetchHits, 1, 'premium moet V2 endpoint hitten');
+    } else {
+      assert.strictEqual(fetchHits, 0, 'free-key moet V2 skippen zonder fetch');
+      assert.deepStrictEqual(live, []);
+    }
+  });
+});
+
+test('thesportsdb: fetchTeamFullSchedule (V2) fail-soft op free-key', async () => {
+  tsdb._clearCache(); tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({ schedule: [] }), async () => {
+    const fixtures = await tsdb.fetchTeamFullSchedule('101');
+    assert.ok(Array.isArray(fixtures), 'free-key moet [] returnen, niet throwen');
+  });
+});
+
+test('thesportsdb: fetchScheduleByVenue (V2) weigert ongeldige direction', async () => {
+  setSourceEnabled('thesportsdb', true);
+  const r = await tsdb.fetchScheduleByVenue('50', 'invalid');
+  assert.deepStrictEqual(r, []);
+});
+
+test('thesportsdb: nieuwe endpoints zijn allen exported (v12.7.0-pre1 contract)', () => {
+  const expected = [
+    'fetchStandings', 'fetchEventLineup', 'fetchEventStats', 'fetchEventTimeline',
+    'fetchEventTV', 'fetchSchedulesByDate', 'fetchLeagueNext', 'fetchLeaguePast',
+    'fetchVenue', 'fetchTeamRoster',
+    'fetchLivescore', 'fetchTeamFullSchedule', 'fetchScheduleByVenue',
+  ];
+  for (const name of expected) {
+    assert.strictEqual(typeof tsdb[name], 'function', `export ontbreekt: ${name}`);
+  }
 });
 
 // ── NBA-STATS ──────────────────────────────────────────────────────────
