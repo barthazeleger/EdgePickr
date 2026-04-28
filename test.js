@@ -3389,7 +3389,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '13.1.0-pre1');
+  assert.strictEqual(appMeta.APP_VERSION, '13.1.0-pre2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6864,6 +6864,62 @@ test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten (incl. v12.7.0-pre4 Ten
   assert.strictEqual(tsdb.SPORT_MAP.tennis, 'Tennis');
   assert.strictEqual(tsdb.SPORT_MAP.rugby, 'Rugby');
   assert.strictEqual(tsdb.SPORT_MAP.cricket, 'Cricket');
+});
+
+test('calib-params getBttsPrior (v14.0 Phase C.1): per-sport priors uit calib', () => {
+  const { getBttsPrior, DEFAULT_BTTS_PRIOR_RATE, DEFAULT_BTTS_PRIOR_K } = require('./lib/calib-params');
+  const calib = {
+    bttsPriors: {
+      football: { rate: 0.55, k: 10 },
+      basketball: { rate: 0.85, k: 8 },
+    },
+  };
+  assert.deepStrictEqual(getBttsPrior(calib, 'football'), { rate: 0.55, k: 10 });
+  assert.deepStrictEqual(getBttsPrior(calib, 'basketball'), { rate: 0.85, k: 8 });
+  // Onbekende sport → defaults
+  assert.deepStrictEqual(getBttsPrior(calib, 'unknown'), { rate: DEFAULT_BTTS_PRIOR_RATE, k: DEFAULT_BTTS_PRIOR_K });
+  // Geen calib → defaults
+  assert.deepStrictEqual(getBttsPrior(null, 'football'), { rate: DEFAULT_BTTS_PRIOR_RATE, k: DEFAULT_BTTS_PRIOR_K });
+});
+
+test('calib-params h2hConfidence (v14.0 Phase C.3): Bayesian ramp', () => {
+  const { h2hConfidence } = require('./lib/calib-params');
+  assert.strictEqual(h2hConfidence(0), 0,   'n=0 → 0 (geen data, blockable)');
+  assert.strictEqual(h2hConfidence(5), 0.5, 'n=5 → 0.5 (halve confidence, was binary cliff in pre-v14)');
+  assert.strictEqual(h2hConfidence(10), 1,  'n=10 → 1 (volle confidence)');
+  assert.strictEqual(h2hConfidence(50), 1,  'n=50+ → clamp 1');
+  assert.strictEqual(h2hConfidence(-5), 0,  'invalid → 0');
+  assert.strictEqual(h2hConfidence(NaN), 0, 'NaN → 0');
+});
+
+test('calib-params getMinEp + getDivergenceThreshold + getNhlOtHomeShare', () => {
+  const { getMinEp, getDivergenceThreshold, getNhlOtHomeShare,
+          DEFAULT_MIN_EP, DEFAULT_DIVERGENCE, DEFAULT_NHL_OT_HOME } = require('./lib/calib-params');
+  const calib = {
+    minEp: { ml: 0.50, btts: 0.58, '1x2': 0.32 },
+    divergenceThresholds: { football: 0.07, hockey: 0.10 },
+    nhlOtHomeShare: { rate: 0.54 },
+  };
+  assert.strictEqual(getMinEp(calib, 'ml'), 0.50);
+  assert.strictEqual(getMinEp(calib, 'btts'), 0.58);
+  assert.strictEqual(getMinEp(calib, 'unknown'), DEFAULT_MIN_EP);
+  assert.strictEqual(getDivergenceThreshold(calib, 'football'), 0.07);
+  assert.strictEqual(getDivergenceThreshold(calib, 'hockey'), 0.10);
+  assert.strictEqual(getDivergenceThreshold(calib, 'tennis'), DEFAULT_DIVERGENCE);
+  assert.strictEqual(getNhlOtHomeShare(calib), 0.54);
+  assert.strictEqual(getNhlOtHomeShare({}), DEFAULT_NHL_OT_HOME);
+  // Sanity-bounded (out-of-range values fall back)
+  assert.strictEqual(getNhlOtHomeShare({ nhlOtHomeShare: { rate: 0.30 } }), DEFAULT_NHL_OT_HOME);
+  assert.strictEqual(getNhlOtHomeShare({ nhlOtHomeShare: { rate: 0.70 } }), DEFAULT_NHL_OT_HOME);
+});
+
+test('calcBTTSProb accepteert custom prior + priorK (v14.0 Phase C.1)', () => {
+  const { calcBTTSProb } = require('./lib/picks');
+  // Default prior 0.52, K=8. Met h2hN=0, h2hBTTS=0, GF avg → result domineert door form.
+  const defaultResult = calcBTTSProb({ h2hBTTS: 0, h2hN: 0, hmAvgGF: 1.5, awAvgGF: 1.5 });
+  // Custom prior 0.85 (basketball), zelfde input → hoger
+  const customResult = calcBTTSProb({ h2hBTTS: 0, h2hN: 0, hmAvgGF: 1.5, awAvgGF: 1.5, prior: 0.85, priorK: 8 });
+  assert.ok(customResult > defaultResult, `custom prior 0.85 (${customResult}) moet hoger zijn dan default 0.52 (${defaultResult})`);
 });
 
 test('bookie-audit findBetterQuote (v14.0 Phase A.1): detecteert beter rejected quote', () => {

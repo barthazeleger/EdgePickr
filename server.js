@@ -6788,7 +6788,13 @@ async function runPrematch(emit) {
               const hmGFAvg = hmSt?.goalsFor || 1.2;
               const awGFAvg = awSt?.goalsFor || 1.2;
 
-              let bttsYesP = calcBTTSProb({ h2hBTTS, h2hN, hmAvgGF: hmGFAvg, awAvgGF: awGFAvg }) / 100;
+              // v14.0 Phase C.1: BTTS-prior per sport via calib (data-tunable).
+              const _calibForBtts = loadCalib();
+              const _bttsP = require('./lib/calib-params').getBttsPrior(_calibForBtts, 'football');
+              let bttsYesP = calcBTTSProb({
+                h2hBTTS, h2hN, hmAvgGF: hmGFAvg, awAvgGF: awGFAvg,
+                prior: _bttsP.rate, priorK: _bttsP.k,
+              }) / 100;
 
               // Boost BTTS Yes if both teams score > 1.3 per game
               let bttsAdj = 0;
@@ -6857,8 +6863,17 @@ async function runPrematch(emit) {
               // v11.3.31: bttsDataOk vangt dunne H2H-samples (Sandefjord-case
               // h2hN=2 @ 74% model vs 42% market). Houden — addresseert input-
               // kwaliteit, niet output-divergentie.
-              const bttsDataOk = h2hN >= 5;
-              if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;  // v12.5.4 funnel
+              // v14.0 Phase C.3: binary `h2hN >= 5` cliff vervangen door
+              // Bayesian confidence-ramp. n=0 → block (geen data), n=10+ → full
+              // confidence, daartussen → smooth scaling. Het Bayesian smoothing
+              // in calcBTTSProb (prior×K shrinkage) handelt het variance-effect
+              // al af; de gate hier kan dus soepeler. Voor leagues waar TSDB
+              // h2h thin is (Saudi/Egyptisch/J1) komen nu ook BTTS-candidates
+              // door, met verlaagde dataConfidence ranking.
+              const { h2hConfidence } = require('./lib/calib-params');
+              const bttsConf = h2hConfidence(h2hN);
+              const bttsDataOk = bttsConf > 0;  // alleen blocken bij n=0
+              if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;  // v12.5.4 funnel (alleen n=0 nu)
 
               // v12.4.0: parity met O/U/DNB sanity-gate. Operator-rapport
               // 2026-04-26: BTTS domineerde top-5 omdat signaal-stack

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(git reset *)",
+      "Bash(sed \"s/',.*$//\")",
+      "WebFetch(domain:thedatadb.readme.io)",
+      "WebFetch(domain:the-odds-api.com)"
+    ]
+  }
+}

@@ -2,6 +2,41 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.1.0-pre2] - 2026-04-28
+
+**v14.0 Phase C · Hardcoded → data-tunable (BTTS-prior per sport + h2hN Bayesian ramp)**
+
+Aanleiding: per v14.0 doctrine "alleen door data continu beter" moet elke parameter die operator-impact heeft via calib.json tunable zijn, geen code-redeploy. Phase C migreert top-5 hardcoded params.
+
+### Added
+
+- **`lib/calib-params.js`** (NEW) — resolver-module met `getBttsPrior(calib, sport)`, `getMinEp(calib, market)`, `getDivergenceThreshold(calib, sport)`, `getNhlOtHomeShare(calib)`, `h2hConfidence(n)`. Defaults match pre-migratie waardes; fallback bij missing/invalid calib.
+- **`calibration-store.js DEFAULT_CALIB`** uitgebreid met:
+  - `bttsPriors` — per-sport rate + K (9 sporten incl. tennis/rugby/cricket)
+  - `minEp` — per-market threshold (ml/1x2/btts/ou/ah/dnb/dc)
+  - `divergenceThresholds` — per-sport (football 0.07, hockey 0.09, NFL 0.10)
+  - `nhlOtHomeShare` — auto-calib uit settled hockey AOT
+  - `bttsBuckets` — per-sport BTTS-bucket-tracker voor auto-tune
+- **`lib/picks.js calcBTTSProb`** uitgebreid met optional `prior` + `priorK` args. Defaults blijven 0.52 / 8.
+- **`server.js voetbal-loop`**: BTTS-prior nu per-sport via calib (regel 6791-6796); h2hN binary `>=5` → Bayesian confidence-ramp via `h2hConfidence(n)` (regel 6862-6873). `btts_thin_h2h` funnel-counter blijft maar telt alleen n=0 nu (was n<5).
+
+### Changed
+
+- **`server.js bttsDataOk`** — was `h2hN >= 5` binary, is nu `h2hConfidence(h2hN) > 0` (alleen n=0 → block). Effect: voetbal-leagues met thin h2h-data (Saudi/Egyptisch/J1/Hungary/Superettan, ~23/29 fixtures vandaag) krijgen alsnog BTTS-candidates met dataConfidence-gewogen ranking via bestaand `dataConfRank^1.5` mechanisme. Dunne samples blijven gedempt door Beta-binomial smoothing in calcBTTSProb (prior×K shrinkage).
+
+### Tests (871 → 875)
+
+- `calib-params getBttsPrior (v14.0 Phase C.1): per-sport priors uit calib`
+- `calib-params h2hConfidence (v14.0 Phase C.3): Bayesian ramp` — locks-in n=0→0, n=5→0.5, n=10→1
+- `calib-params getMinEp + getDivergenceThreshold + getNhlOtHomeShare`
+- `calcBTTSProb accepteert custom prior + priorK (v14.0 Phase C.1)`
+
+### Niet in pre2
+
+- C.2 MIN_EP per markt wiring (resolver klaar in calib-params, callers nog te updaten)
+- C.4 divergence-threshold per-sport wiring (resolver klaar, modelMarketSanityCheck callers te updaten)
+- C.5 NHL_OT_HOME_SHARE auto-calibrate uit settled-bets (resolver klaar, learning-loop write-pad te wiren)
+
 ## [13.1.0-pre1] - 2026-04-28
 
 **v14.0 Phase A · Bookie-anomaly logging gewired in 4 hot markets**
