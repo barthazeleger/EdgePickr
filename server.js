@@ -1133,6 +1133,27 @@ const H = {
 // ── API CONFIG ─────────────────────────────────────────────────────────────────
 const AF_KEY = process.env.API_FOOTBALL_KEY || '';
 
+// v12.6.0 · Per-sport api-sports.io key-splitsing. Voetbal Pro $20 + 5 andere
+// sporten free-tier (100/dag elk). Alle env-vars optioneel — fallback op AF_KEY
+// houdt All-Sports-bundle setups werkend zonder code-wijziging.
+const SPORT_API_KEYS = Object.freeze({
+  football:           process.env.API_KEY_FOOTBALL           || AF_KEY,
+  basketball:         process.env.API_KEY_BASKETBALL         || AF_KEY,
+  hockey:             process.env.API_KEY_HOCKEY             || AF_KEY,
+  baseball:           process.env.API_KEY_BASEBALL           || AF_KEY,
+  'american-football': process.env.API_KEY_AMERICAN_FOOTBALL || AF_KEY,
+  handball:           process.env.API_KEY_HANDBALL           || AF_KEY,
+});
+function resolveSportFromHost(host) {
+  if (typeof host !== 'string') return 'football';
+  if (host.includes('basketball'))        return 'basketball';
+  if (host.includes('hockey'))            return 'hockey';
+  if (host.includes('baseball'))          return 'baseball';
+  if (host.includes('american-football')) return 'american-football';
+  if (host.includes('handball'))          return 'handball';
+  return 'football';
+}
+
 // Seizoen berekening: Europese competities lopen aug–mei, dus in jan–jul = vorig jaar
 const CURRENT_SEASON = new Date().getMonth() < 7
   ? new Date().getFullYear() - 1   // april 2026 → season 2025
@@ -1607,19 +1628,70 @@ function _flushAfUsage() {
 }
 
 const AF_TIMEOUT_MS = 8000; // 8s hard timeout op api-sports calls; voorkomt scan-stalling
+// v12.6.0 · 429-retry: één retry met 30s backoff. Tweede 429 = silent skip
+// + inbox-warning (max 1x/6u per sport om spam te voorkomen).
+const AF_429_BACKOFF_MS = 30 * 1000;
+const AF_429_NOTIFY_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const _af429NotifyCache = new Map(); // sport → last-notify timestamp
 
-async function afGet(host, path, params = {}) {
-  if (!AF_KEY) return [];
+async function _logRateLimitOverflow(sport, host) {
+  const now = Date.now();
+  const last = _af429NotifyCache.get(sport) || 0;
+  if (now - last < AF_429_NOTIFY_THROTTLE_MS) return;
+  _af429NotifyCache.set(sport, now);
+  try {
+    await supabase.from('notifications').insert({
+      type: 'api_rate_limit',
+      level: 'warning',
+      title: `api-sports 429 voor ${sport}`,
+      message: `Rate-limit hit op ${host} (sport=${sport}). Bij free-tier (100/dag) waarschijnlijk dag-cap. Overweeg upgrade naar paid plan voor deze sport.`,
+      created_at: new Date().toISOString(),
+    });
+  } catch { /* noop — notificaties zijn best-effort */ }
+}
+
+function _bumpSportCounter(sport, todayStr) {
+  const srl = sportRateLimits[sport];
+  if (!srl) return;
+  if (srl.date !== todayStr) { srl.callsToday = 0; srl.date = todayStr; }
+  srl.callsToday++;
+}
+
+async function afGet(host, path, params = {}, _attempt = 0) {
+  // v12.6.0 · per-sport key-resolver. Sport bepaalt welke env-var (en dus
+  // welke api-sports-account/tier) gebruikt wordt. Backwards-compat: lege
+  // per-sport env-var → fallback op AF_KEY.
+  const sport = resolveSportFromHost(host);
+  const sportKey = SPORT_API_KEYS[sport] || AF_KEY;
+  if (!sportKey) return [];
+
   const qs = Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   const url = `https://${host}${path}${qs ? '?' + qs : ''}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AF_TIMEOUT_MS);
   try {
     const r = await fetch(url, {
-      headers: { 'x-apisports-key': AF_KEY, Accept: 'application/json' },
+      headers: { 'x-apisports-key': sportKey, Accept: 'application/json' },
       signal: controller.signal,
     });
     clearTimeout(timer);
+
+    // v12.6.0 · 429 rate-limit handling. Eerste 429 = retry-once na 30s.
+    // Tweede 429 = skip + inbox-notify zodat operator weet welke sport
+    // zijn dag-cap hit. Voorheen: silent fail naar [] = stille data-loss.
+    if (r.status === 429) {
+      const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+      _bumpSportCounter(sport, todayStr); // tel de hit voor zichtbaarheid
+      if (_attempt === 0) {
+        console.warn(`⚠️  api-sports 429 voor ${sport} (${host}) — retry over ${AF_429_BACKOFF_MS/1000}s`);
+        await sleep(AF_429_BACKOFF_MS);
+        return afGet(host, path, params, _attempt + 1);
+      }
+      console.warn(`⚠️  api-sports 429 voor ${sport} (${host}) — tweede 429, skip + notify`);
+      _logRateLimitOverflow(sport, host).catch(() => {});
+      return [];
+    }
+
     // Lees rate limit headers uit elke response
     const rem = r.headers.get('x-ratelimit-requests-remaining');
     const lim = r.headers.get('x-ratelimit-requests-limit');
@@ -1631,16 +1703,8 @@ async function afGet(host, path, params = {}) {
       afRateLimit.limit = parseInt(lim) || afRateLimit.limit;
     }
     afRateLimit.updatedAt = new Date().toISOString();
-    // Per-sport tracking
-    const sport = host.includes('basketball')        ? 'basketball'
-                : host.includes('hockey')            ? 'hockey'
-                : host.includes('baseball')          ? 'baseball'
-                : host.includes('american-football') ? 'american-football'
-                : host.includes('handball')          ? 'handball'
-                : 'football';
-    const srl = sportRateLimits[sport];
-    if (srl.date !== todayStr) { srl.callsToday = 0; srl.date = todayStr; }
-    srl.callsToday++;
+    // Per-sport tracking via shared helper.
+    _bumpSportCounter(sport, todayStr);
     saveAfUsage();
     const d = await r.json().catch(() => ({}));
     return d.response || [];

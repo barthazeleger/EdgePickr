@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.5.13');
+  assert.strictEqual(appMeta.APP_VERSION, '12.6.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6761,6 +6761,98 @@ test('fotmob: fetchTeamFormEvents skipt non-finished + malformed', async () => {
   });
 });
 
+// ── THESPORTSDB (v12.5.12 + v12.6.0 multi-sport) ─────────────────────────
+console.log('\n  Sources/TheSportsDB (v12.6.0 multi-sport):');
+
+const tsdb = require('./lib/integrations/sources/thesportsdb');
+
+test('thesportsdb: findTeamId filtert op strSport=Soccer voor football', async () => {
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    teams: [
+      { idTeam: '101', strTeam: 'Arsenal', strSport: 'Soccer' },
+      { idTeam: '102', strTeam: 'Arsenal', strSport: 'Basketball' },
+    ],
+  }), async () => {
+    const r = await tsdb.findTeamId('Arsenal', 'football');
+    assert.ok(r, 'verwacht non-null match');
+    assert.strictEqual(r.id, '101', 'football query moet Soccer-team kiezen, niet Basketball');
+  });
+});
+
+test('thesportsdb: findTeamId multi-sport — basketball pakt Basketball-team', async () => {
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    teams: [
+      { idTeam: '201', strTeam: 'Lakers', strSport: 'Soccer' },        // false-positive
+      { idTeam: '202', strTeam: 'Los Angeles Lakers', strSport: 'Basketball' },
+    ],
+  }), async () => {
+    const r = await tsdb.findTeamId('Lakers', 'basketball');
+    assert.ok(r);
+    assert.strictEqual(r.id, '202', 'basketball query moet Basketball-team kiezen');
+  });
+});
+
+test('thesportsdb: findTeamId multi-sport — hockey verwacht Ice Hockey strSport', async () => {
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    teams: [
+      { idTeam: '301', strTeam: 'Boston Bruins', strSport: 'Ice Hockey' },
+      { idTeam: '302', strTeam: 'Boston', strSport: 'Soccer' },
+    ],
+  }), async () => {
+    const r = await tsdb.findTeamId('Boston Bruins', 'hockey');
+    assert.ok(r);
+    assert.strictEqual(r.id, '301');
+  });
+});
+
+test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten', () => {
+  // Garandeert dat geen sport-key zonder TSDB-mapping naar een query gaat
+  // (anders default '_strSportFor → Soccer' filter blokkeert legitieme matches).
+  const required = ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'];
+  for (const sport of required) {
+    assert.ok(tsdb.SPORT_MAP[sport], `SPORT_MAP mist ${sport}`);
+  }
+  assert.strictEqual(tsdb.SPORT_MAP.football, 'Soccer');
+  assert.strictEqual(tsdb.SPORT_MAP.hockey, 'Ice Hockey');
+  assert.strictEqual(tsdb.SPORT_MAP['american-football'], 'American Football');
+});
+
+test('thesportsdb: fetchH2HEvents propageert sport in event-shape', async () => {
+  setSourceEnabled('thesportsdb', true);
+  let phase = 0;
+  await withMockFetch(async (url) => {
+    if (url.includes('searchteams.php')) {
+      phase++;
+      // Eerste search = Boston (home), tweede = Toronto (away)
+      return {
+        teams: [{
+          idTeam: phase === 1 ? '301' : '302',
+          strTeam: phase === 1 ? 'Boston Bruins' : 'Toronto Maple Leafs',
+          strSport: 'Ice Hockey',
+        }],
+      };
+    }
+    if (url.includes('lookuph2h.php')) {
+      return {
+        event: [{
+          strHomeTeam: 'Boston Bruins', strAwayTeam: 'Toronto Maple Leafs',
+          intHomeScore: '3', intAwayScore: '2', dateEvent: '2026-04-15',
+        }],
+      };
+    }
+    return {};
+  }, async () => {
+    const events = await tsdb.fetchH2HEvents('Boston Bruins', 'Toronto Maple Leafs', 'hockey');
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].sport, 'hockey', 'event.sport moet hockey zijn voor hockey-call');
+    assert.strictEqual(events[0].homeScore, 3);
+    assert.strictEqual(events[0].awayScore, 2);
+  });
+});
+
 // ── NBA-STATS ──────────────────────────────────────────────────────────
 console.log('\n  Sources/NBA-stats (v10.9.0):');
 
@@ -6995,6 +7087,59 @@ test('aggregator: healthCheckAll roept alle sources aan', async () => {
   const r = await agg.healthCheckAll();
   assert.strictEqual(r.length, 6);  // v12.5.12: thesportsdb toegevoegd
   assert.ok(r.every(x => x.healthy === null || x.disabled === true || x.healthy === false));
+});
+
+test('aggregator: SPORT_SOURCES bevat thesportsdb voor 5 sporten (v12.6.0 multi-sport)', () => {
+  // Garandeert dat de h2h-fallback via TSDB beschikbaar is voor alle non-volleyball
+  // sporten. Voorkomt regressie waarbij nieuwe sport wordt toegevoegd zonder
+  // TSDB als h2h-fallback (wat sofascore-down-scenario blootlegt).
+  const sportsWithTsdb = ['football', 'basketball', 'hockey', 'baseball', 'handball', 'american-football'];
+  for (const sport of sportsWithTsdb) {
+    const reg = agg.SPORT_SOURCES[sport];
+    assert.ok(reg, `SPORT_SOURCES mist sport=${sport}`);
+    const sourceNames = (reg.h2h || []).map(s => s.SOURCE_NAME);
+    assert.ok(sourceNames.includes('thesportsdb'), `sport=${sport} mist TSDB in h2h`);
+  }
+});
+
+// ── CONFIG (v12.6.0 per-sport API-key splitsing) ─────────────────────────
+console.log('\n  Config (v12.6.0 per-sport keys):');
+
+const config = require('./lib/config');
+
+test('config: resolveSportFromHost mapt alle 6 api-sports hosts correct', () => {
+  assert.strictEqual(config.resolveSportFromHost('v3.football.api-sports.io'),  'football');
+  assert.strictEqual(config.resolveSportFromHost('v1.basketball.api-sports.io'), 'basketball');
+  assert.strictEqual(config.resolveSportFromHost('v1.hockey.api-sports.io'),     'hockey');
+  assert.strictEqual(config.resolveSportFromHost('v1.baseball.api-sports.io'),   'baseball');
+  assert.strictEqual(config.resolveSportFromHost('v1.american-football.api-sports.io'), 'american-football');
+  assert.strictEqual(config.resolveSportFromHost('v1.handball.api-sports.io'),   'handball');
+});
+
+test('config: resolveSportFromHost defaultt naar football bij onbekende host', () => {
+  assert.strictEqual(config.resolveSportFromHost('unknown.example.com'), 'football');
+  assert.strictEqual(config.resolveSportFromHost(''), 'football');
+  assert.strictEqual(config.resolveSportFromHost(null), 'football');
+  assert.strictEqual(config.resolveSportFromHost(undefined), 'football');
+});
+
+test('config: SPORT_API_KEYS bevat alle 6 sporten + valt terug op AF_KEY', () => {
+  // Bij het laden van lib/config.js zonder per-sport env-vars vallen alle
+  // sporten terug op AF_KEY (= API_FOOTBALL_KEY of leeg in test-env).
+  const expectedSports = ['football', 'basketball', 'hockey', 'baseball', 'american-football', 'handball'];
+  for (const sport of expectedSports) {
+    assert.ok(sport in config.SPORT_API_KEYS, `SPORT_API_KEYS mist ${sport}`);
+  }
+  // In test-env zonder API_FOOTBALL_KEY: alle keys zijn ''. Bij gezette
+  // AF_KEY zouden ze allen die fallback hebben.
+  const allSame = Object.values(config.SPORT_API_KEYS).every(v => v === config.AF_KEY);
+  assert.ok(allSame, 'zonder per-sport env-vars moet elke sport AF_KEY-fallback krijgen');
+});
+
+test('config: SPORT_API_KEYS is frozen — voorkomt runtime-mutaties', () => {
+  // Object.freeze() garandeert dat een hot-reload of malicious-injection niet
+  // achteraf de keys kan vervangen. Strict-mode throw is verwacht.
+  assert.throws(() => { config.SPORT_API_KEYS.football = 'tampered'; }, TypeError);
 });
 
 test('daily-results: post-results model jobs draaien alleen bij nieuwe settlements', () => {

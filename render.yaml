@@ -14,7 +14,32 @@ services:
         sync: false          # service_role key — vul in via Render dashboard
       # v11.3.24 · ODDS_API_KEY verwijderd (was nergens in runtimecode actief).
       - key: API_FOOTBALL_KEY
-        sync: false          # api-sports.io key — vul in via Render dashboard
+        sync: false          # api-sports.io key — vul in via Render dashboard (legacy fallback)
+      # v12.6.0 · per-sport api-sports.io keys voor tier-flexibiliteit (operator
+      # gaat van All-Sports €85/mnd naar football Pro $20 + 5 free-tier).
+      # Alle keys zijn optioneel — als een sport-specifieke key niet gezet is,
+      # valt afGet terug op API_FOOTBALL_KEY (backwards-compat).
+      - key: API_KEY_FOOTBALL
+        sync: false          # voetbal Pro $20 — vul in vanuit api-sports.io football-account
+      - key: API_KEY_BASKETBALL
+        sync: false          # basketball free-tier (100/dag) — apart account
+      - key: API_KEY_HOCKEY
+        sync: false          # hockey free-tier (100/dag) — apart account
+      - key: API_KEY_BASEBALL
+        sync: false          # baseball free-tier (100/dag) — apart account
+      - key: API_KEY_AMERICAN_FOOTBALL
+        sync: false          # NFL free-tier (100/dag) — apart account
+      - key: API_KEY_HANDBALL
+        sync: false          # handball free-tier (100/dag) — apart account
+      # v12.5.12 + v12.6.0 · TheSportsDB Premium ($9/mnd site-direct).
+      # Free test-key '3' werkt als fallback maar heeft strikte rate-limits.
+      - key: TSDB_API_KEY
+        sync: false          # TheSportsDB premium API-key
+      # v12.6.0 · OddsPapi free tier (250 req/mnd) — Pinnacle/Bet365/Unibet NL
+      # CLV-anchor. Adapter zelf wordt in v12.6.x of v12.7.0 toegevoegd; key
+      # staat alvast klaar in env voor wanneer de adapter live gaat.
+      - key: ODDSPAPI_KEY
+        sync: false          # OddsPapi key voor selectieve sharp-anchor
       - key: JWT_SECRET
         sync: false          # willekeurige lange string, bijv. 64 hex tekens
       - key: ADMIN_EMAIL

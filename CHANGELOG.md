@@ -2,6 +2,69 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.6.0] - 2026-04-28
+
+**API-tier-splitsing voorbereid · per-sport api-sports keys + 429-retry + TheSportsDB premium multi-sport**
+
+Aanleiding: operator gaat per 13-05 over van api-sports.io All-Sports-bundle (€85/mnd) naar football Pro $20 + 5 andere sporten free-tier (100 calls/dag elk). Vereist: code moet per-sport een aparte API-key kunnen gebruiken zonder All-Sports-fallback te breken. Plus: TheSportsDB Premium ($9/mnd site-direct) is afgesloten — adapter moet die premium-features benutten (hogere rate-limit, multi-sport h2h, V2 API).
+
+Doctrine-context: dit is een infrastructuur-release. Geen pick-logic-wijzigingen, geen drempels aangepast. Pure code-flexibiliteit zodat operator kostenoptimalisatie kan doorvoeren zonder feature-verlies.
+
+### Added
+
+- **`lib/config.js` + `server.js`** — `SPORT_API_KEYS` object met 6 entries (`football`, `basketball`, `hockey`, `baseball`, `american-football`, `handball`). Elke entry leest `process.env.API_KEY_<SPORT>` met **fallback op `AF_KEY`** (= bestaande `API_FOOTBALL_KEY`). Backwards-compat: setups die alleen `API_FOOTBALL_KEY` zetten blijven onveranderd werken — alle sporten gebruiken die ene key, identiek aan v12.5.13-gedrag.
+- **`resolveSportFromHost(host)`** in zowel `lib/config.js` als `server.js` — host-string → sport-key mapping. Gebruikt om vóór de fetch in `afGet` de juiste API-key te kiezen op basis van de api-sports.io subdomain (`v3.football.api-sports.io`, `v1.basketball.api-sports.io`, etc.).
+- **429 retry-with-backoff in `afGet`** — eerste 429 = retry-once na 30s. Tweede 429 = silent skip + `notifications` insert (`type: 'api_rate_limit'`, throttled max 1x/6u per sport). Voorheen: silent fail naar `[]` = stille data-loss op piek-dagen (relevant voor basketball/hockey free-tier op NBA back-to-back / NHL playoffs).
+- **`lib/integrations/sources/thesportsdb.js IS_PREMIUM`** detectie — afgeleid van `TSDB_API_KEY !== '3'`. Premium-key triggert `RATE_LIMIT_MS = 600` (= 100 req/min per Premium-tier-spec) i.p.v. 1500ms voor de free '3'-key. V2 API endpoints (header-auth) worden alleen aangeroepen wanneer `IS_PREMIUM === true` — voorkomt 401-errors op free-tier.
+- **`SPORT_MAP`** in TSDB-adapter — EdgePickr-sport → TheSportsDB `strSport`-string mapping. `football → 'Soccer'`, `hockey → 'Ice Hockey'`, `american-football → 'American Football'`, etc. `findTeamId(name, sport)` filtert nu op exacte `strSport` zodat `'Lakers'` bij een football-call niet per ongeluk een Basketball-team matcht.
+
+### Changed
+
+- **`lib/integrations/sources/thesportsdb.js fetchH2HEvents(teamA, teamB, sport)`** — sport is nu derde arg (default `'football'` voor backwards-compat). Event-shape behoudt `sport`-veld zodat de aggregator-merge de oorsprong-sport kan tracken voor downstream logging.
+- **`lib/integrations/data-aggregator.js SPORT_SOURCES`** — TheSportsDB toegevoegd aan h2h-array voor 5 extra sporten naast football: basketball, hockey, baseball, handball, american-football. American-football was voorheen leeg (zowel sofascore als andere bronnen ontbraken); TSDB is nu de enige h2h-bron — beter dan niets.
+- **`lib/integrations/data-aggregator.js getMergedH2H`** — call-pattern uniform: `await src.fetchH2HEvents(team1Name, team2Name, sport)`. Voorheen branchde dit alleen op sofascore voor de 3e arg; nu krijgen alle adapters die sport-aware zijn 'm consistent. fotmob (football-only) negeert de extra arg via JS positionele args.
+
+### Tests (807 → 817)
+
+- **`thesportsdb: findTeamId filtert op strSport=Soccer voor football`** — verifieert dat een football-call met multipele matches alleen de Soccer-variant kiest.
+- **`thesportsdb: findTeamId multi-sport — basketball pakt Basketball-team`** — voorkomt cross-sport-name-collisions.
+- **`thesportsdb: findTeamId multi-sport — hockey verwacht Ice Hockey strSport`** — verifieert exact strSport-string voor TSDB-conventie.
+- **`thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten`** — structurele assertie tegen toekomstige sport-additions zonder TSDB-mapping.
+- **`thesportsdb: fetchH2HEvents propageert sport in event-shape`** — round-trip test met mocked V1 lookuph2h response.
+- **`aggregator: SPORT_SOURCES bevat thesportsdb voor 5 sporten`** — regressie-vangst voor TSDB-breedheid.
+- **`config: resolveSportFromHost mapt alle 6 api-sports hosts`** — exact host-string-mapping.
+- **`config: resolveSportFromHost defaultt naar football bij onbekende host`** — null/undefined/lege-string-defensie.
+- **`config: SPORT_API_KEYS bevat alle 6 sporten + valt terug op AF_KEY`** — backwards-compat check.
+- **`config: SPORT_API_KEYS is frozen`** — defense-in-depth tegen runtime-mutaties.
+
+### Verified
+
+- `npm test` 817/817 groen.
+- `node -e "require('./server.js')"` boot-smoke zonder TDZ.
+- Backwards-compat: bestaande setup met alleen `API_FOOTBALL_KEY` gezet → afGet gebruikt die key voor alle sporten, identiek aan v12.5.13.
+
+### Voor operator (deploy-checklist)
+
+**Voor 13-05 (api-sports.io tier-switch):**
+1. Maak api-sports football Pro account ($20/mnd) — krijg nieuwe API-key.
+2. Maak 5 free-tier accounts (één per sport, eigen email per account):
+   - basketball → key voor `API_KEY_BASKETBALL`
+   - hockey → key voor `API_KEY_HOCKEY`
+   - baseball → key voor `API_KEY_BASEBALL`
+   - american-football → key voor `API_KEY_AMERICAN_FOOTBALL`
+   - handball → key voor `API_KEY_HANDBALL`
+3. Render dashboard: voeg de 6 nieuwe env-vars toe (`API_KEY_FOOTBALL` + 5 sport-keys). Behoud `API_FOOTBALL_KEY` als fallback (ongebruikt zodra alle 6 keys gezet zijn, maar het defensieve net blijft staan).
+4. 13-05: zeg api-sports All-Sports-bundle op.
+
+**Nu al actief:**
+- `TSDB_API_KEY=823870` in Render — TheSportsDB Premium $9/mnd is afgesloten, key gebruikt verhoogde rate-limit (100/min) + V2 API + multi-sport h2h-fallback.
+
+### Niet in scope
+
+- **OddsPapi-anchor-integratie** — Pinnacle CLV-anchor via OddsPapi free 250/mnd komt in v12.6.x of v12.7.0 als aparte release. Reden: nieuwe data-flow (CLV-anchor-hook in pick-emit), aparte test-cycle, voorkomt vermenging met de api-sports tier-splitsing-release.
+- **Sportmonks-integratie** — operator skipt de free trial. Mogelijk later heroverwegen als €99 Growth + €29 Odds-add-on (€128/mnd) past binnen budget. Niet in roadmap.
+- **Pre-mkP funnel optimalisatie** (DNB/DC/handicap-coverage gaps) — markt-realiteit op kleine leagues, niet code-fixable zonder andere odds-bron. v12.5.13 fixte de DC-parser; DNB/handicap blijven thin.
+
 ## [12.5.13] - 2026-04-26
 
 **Double Chance parsing-fix · convertAfOdds produceert nu `double_chance` market-key**
