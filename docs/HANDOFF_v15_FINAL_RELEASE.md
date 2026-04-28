@@ -25,7 +25,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 | Source attribution | Done | Migration, candidate payloads, admin visibility, source toggles, football TSDB/Sharp source attribution, active-sport quota-aware sharp-anchor attribution, and scan-log visibility are in. |
 | Anomaly audit expansion | Done | Football 1X2/DC/OU/AH plus active sport ML/totals/spreads where paired quote arrays exist. |
 | Shadow sports | Done | Tennis/Rugby/Cricket run as quota-aware, paper-only shadow scanners through the orchestrator when scraping is enabled. |
-| Release cutover | Done | v15.0.0 pins, README, CHANGELOG, doctrine and info page refreshed; final checks passed. |
+| Release cutover | Done | v15.0.1 pins, README, CHANGELOG, doctrine and info page refreshed; final checks passed. |
 
 ## Risks
 
@@ -47,4 +47,4 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 
 ## Next Exact Step
 
-Commit and push v15.0.0 only in a safe Amsterdam scan window. After deploy: run `node scripts/migrate.js docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql`, then `POST /api/admin/v2/rebuild-calib`.
+Commit and push v15.0.1 only in a safe Amsterdam scan window. After deploy: run `node scripts/migrate.js docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql`, then `POST /api/admin/rebuild-calib`.

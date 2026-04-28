@@ -2,6 +2,16 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.1] - 2026-04-28
+
+**Hotfix · v15 source telemetry zichtbaar op 0-pick dagen**
+
+### Fixed
+
+- **Scan-log observability**: de voetbal-loop returnede bij `0 finalPicks` vóór de `📊 Signal coverage` / `🛰️ v15 sources` samenvatting. Daardoor draaiden TSDB/OddsPapi attribution-paden wel, maar zag de operator ze niet op no-pick dagen. De telemetry wordt nu vóór de no-picks early-return gelogd.
+- **Bookie-anomaly spam**: expanded v15 anomaly-audit vergeleek execution picks ook tegen sharp-reference quotes zoals Pinnacle. Dat leverde inbox-ruis op ("Unibet gekozen, Pinnacle hoger") terwijl Pinnacle sharp truth is, geen operator execution truth. Anomaly-audit kijkt nu alleen naar execution bookies uit de preferred set, met fallback op Bet365/Unibet/Toto/BetCity/888sport/BetMGM.
+- **Post-deploy documentatie-correctie**: rebuild-calib route in deze codebase is `POST /api/admin/rebuild-calib`, niet `/api/admin/v2/rebuild-calib`.
+
 ## [15.0.0] - 2026-04-28
 
 **Final self-improving release · Runtime-calib wiring · Source attribution · Shadow sports**
@@ -49,7 +59,7 @@ Aanleiding: v14.0.0 leverde de fundering, maar liet meerdere resolvers, data-bro
 ### Post-deploy actie
 
 - Draai migratie: `node scripts/migrate.js docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql`.
-- Draai daarna `POST /api/admin/v2/rebuild-calib` zodat v15 runtime-resolvers verse market/sport calibratie gebruiken.
+- Draai daarna `POST /api/admin/rebuild-calib` zodat v15 runtime-resolvers verse market/sport calibratie gebruiken.
 - Houd OddsPapi op free-tier als shadow/reference bron; paid quota is optioneel en nooit vereist voor safe operation.
 
 ## [14.0.0] - 2026-04-28
@@ -114,7 +124,7 @@ Deploy buiten scan-windows (07:30 / 14:00 / 21:00 Amsterdam). Render auto-deploy
 
 ### Post-deploy actie
 
-Eénmalige `POST /api/admin/v2/rebuild-calib` na deploy — populeert per-sport BTTS-priors uit historische settled-bets, NHL-OT-share uit hockey AOT-historie, en hercomputeert market-multipliers vanuit settled-bets-history (resync van mogelijk stale waardes na revert-bug pre-v13.0.3).
+Eénmalige `POST /api/admin/rebuild-calib` na deploy — populeert per-sport BTTS-priors uit historische settled-bets, NHL-OT-share uit hockey AOT-historie, en hercomputeert market-multipliers vanuit settled-bets-history (resync van mogelijk stale waardes na revert-bug pre-v13.0.3).
 
 ## [13.1.0-pre2] - 2026-04-28
 
@@ -210,7 +220,7 @@ Daarnaast: **UI subtitle + empty-state texts + learning-loop docstring** gebruik
 
 Stale multipliers die **vóór deze fix** in `_data/calib.json` zijn beland blijven daar staan totdat:
 1. Een nieuwe settled bet die markt-bucket raakt → `updateCalibration` recomputed de multiplier correct (zelf-helend)
-2. Of `/api/admin/v2/rebuild-calib` wordt aangeroepen (volledige herrekening uit settled-bets-history)
+2. Of `/api/admin/rebuild-calib` wordt aangeroepen (volledige herrekening uit settled-bets-history)
 
 Aanbeveling: één rebuild-calib na deploy om alle dashboard-waarden gelijk te trekken met code-werkelijkheid.
 

@@ -1526,11 +1526,43 @@ async function logCheckFailure(type, wedstrijd, reason) {
 // Operator-rapport (sessie 2026-04-28): hockey toonde Bet365 terwijl andere
 // preferred bookies (Unibet/Toto) betere prijzen hadden — dit dekt zowel
 // scope-filter blindspots als preferred-pool selection-gaps.
+const SHARP_REFERENCE_BOOKIES = new Set(['pinnacle', 'betfair', 'betfair exchange', 'circa', 'sbobet', 'polymarket', 'kalshi']);
+const DEFAULT_EXECUTION_ANOMALY_BOOKIES = ['bet365', 'unibet', 'toto', 'betcity', '888sport', 'betmgm'];
+
+function _bookieNameLc(name) {
+  return String(name || '').toLowerCase().trim();
+}
+
+function _isSharpReferenceBookie(name) {
+  const lc = _bookieNameLc(name);
+  if (!lc) return false;
+  return SHARP_REFERENCE_BOOKIES.has(lc)
+    || lc.includes('pinnacle')
+    || lc.includes('betfair')
+    || lc.includes('circa')
+    || lc.includes('sbobet');
+}
+
+function _executionAnomalyBookies() {
+  const prefs = typeof getPreferredBookies === 'function' ? getPreferredBookies() : null;
+  return (Array.isArray(prefs) && prefs.length ? prefs : DEFAULT_EXECUTION_ANOMALY_BOOKIES)
+    .map(_bookieNameLc)
+    .filter(Boolean);
+}
+
+function _isExecutionAnomalyBookie(name, executionBookies = _executionAnomalyBookies()) {
+  const lc = _bookieNameLc(name);
+  if (!lc || _isSharpReferenceBookie(lc)) return false;
+  return executionBookies.some(b => lc === b || lc.includes(b) || b.includes(lc));
+}
+
 function _auditChoiceVsAll(allQuotes, chosenBookie, chosenPrice, ctx, opts = {}) {
   if (!Array.isArray(allQuotes) || !chosenBookie || !Number.isFinite(chosenPrice) || chosenPrice <= 0) return;
   try {
     const { findBetterQuote } = require('./lib/bookie-audit');
-    const rej = findBetterQuote(allQuotes, chosenPrice, chosenBookie, opts);
+    const executionBookies = _executionAnomalyBookies();
+    const auditQuotes = allQuotes.filter(q => _isExecutionAnomalyBookie(q?.bookie, executionBookies));
+    const rej = findBetterQuote(auditQuotes, chosenPrice, chosenBookie, opts);
     if (!rej) return;
     logBookieAnomaly({
       ...ctx,
@@ -7590,6 +7622,20 @@ async function runPrematch(emit) {
   emit({ log: _footballMarketTel.formatLine() });
   _footballMarketTel.persist(supabase).catch(() => {});
 
+  // v15.0.1: emit source telemetry before the no-picks early return too.
+  // On 0-pick days this is the operator's only proof that TSDB/OddsPapi
+  // attribution paths actually ran.
+  const tel = scanTelemetry;
+  const telLines = [
+    `📊 Signal coverage:`,
+    `  🛌 rest-days: ${tel.restDaysLookups} API calls, ${tel.restDaysCacheHits} cache hits, ${tel.restDaysFails} fails · tired flags: thuis=${tel.restDaysTiredHome} uit=${tel.restDaysTiredAway}`,
+    `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
+    `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
+    `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
+  ];
+  emit({ log: telLines.join('\n') });
+
   const weakCount = allCandidates.length - finalPicks.length;
 
   if (finalPicks.length === 0) {
@@ -7603,18 +7649,6 @@ async function runPrematch(emit) {
 
   const weakNote = weakCount > 0 ? ` (${weakCount} zwakke kandidaat${weakCount>1?'en':''} weggelaten)` : '';
   emit({ log: `🎯 ${finalPicks.length} voetbal pick${finalPicks.length>1?'s':''}${weakNote}` });
-
-  // v10.7.25: signal coverage telemetrie (zichtbaar in scan log + observability)
-  const tel = scanTelemetry;
-  const telLines = [
-    `📊 Signal coverage:`,
-    `  🛌 rest-days: ${tel.restDaysLookups} API calls, ${tel.restDaysCacheHits} cache hits, ${tel.restDaysFails} fails · tired flags: thuis=${tel.restDaysTiredHome} uit=${tel.restDaysTiredAway}`,
-    `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
-    `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
-    `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
-  ];
-  emit({ log: telLines.join('\n') });
 
   _atomicSetPrematch(finalPicks);
   // Web-push wordt gestuurd NA multi-sport merge in POST /api/prematch
