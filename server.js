@@ -7990,6 +7990,9 @@ app.use('/api', createInfoRouter({
   afKey: AF_KEY,
   afRateLimit,
   sportRateLimits,
+  // v12.6.3: TSDB usage-counter doorzetten naar /api/status zodat de
+  // status-page TSDB calls-vandaag kan tonen naast api-sports.
+  tsdbAdapter: require('./lib/integrations/sources/thesportsdb'),
   getCurrentStakeRegime: () => _currentStakeRegime,
   leagues: {
     football:            AF_FOOTBALL_LEAGUES,

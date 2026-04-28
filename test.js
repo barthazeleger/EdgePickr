@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.6.2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.6.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6845,6 +6845,39 @@ test('thesportsdb: skip-results worden niet ge-cached (v12.6.1 negative-cache fi
     const r2 = await tsdb.findTeamId('Arsenal', 'football');
     assert.ok(r2, 'na re-enable moet findTeamId opnieuw API hitten');
     assert.strictEqual(r2.id, '999', 'verse API-respons moet gebruikt worden, geen stale null');
+  });
+});
+
+test('thesportsdb: getUsage() telt successful API-calls (v12.6.3)', async () => {
+  // v12.6.3: per-day call-counter voor /api/status zichtbaarheid.
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  tsdb._resetUsage();
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    teams: [{ idTeam: '777', strTeam: 'TestTeam', strSport: 'Soccer' }],
+  }), async () => {
+    const before = tsdb.getUsage();
+    assert.strictEqual(before.callsToday, 0, 'fresh state moet 0 zijn');
+    await tsdb.findTeamId('TestTeam', 'football');
+    const after = tsdb.getUsage();
+    assert.strictEqual(after.callsToday, 1, 'één API-call moet counter +1 doen');
+    assert.ok(after.date, 'date moet ingevuld zijn');
+    assert.strictEqual(typeof after.premium, 'boolean');
+    assert.ok(typeof after.rateLimitMs === 'number' && after.rateLimitMs > 0);
+  });
+});
+
+test('thesportsdb: getUsage() telt skip-cases NIET (v12.6.3)', async () => {
+  // Negatieve case: source disabled → geen API-call → counter niet bumpen.
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  tsdb._resetUsage();
+  setSourceEnabled('thesportsdb', false);
+  await withMockFetch(async () => ({ teams: [] }), async () => {
+    await tsdb.findTeamId('Skipped', 'football');
+    const u = tsdb.getUsage();
+    assert.strictEqual(u.callsToday, 0, 'skip-case mag counter niet bumpen');
   });
 });
 

@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.6.2</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">12.6.3</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -654,7 +654,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.6.2</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 12.6.3</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -796,7 +796,7 @@
           <span style="font-size:20px">🚀</span>
           <div>
             <div style="font-weight:600;text-decoration:line-through">Google Sheets · Sofascore · Fotmob</div>
-            <div style="color:var(--muted);font-size:12px">Sheets vervangen door Supabase · Sofascore (403 cloudflare-block) en Fotmob (404 endpoint-change) vanaf Render IP-segment dood, v12.6.2 uitgefaseerd</div>
+            <div style="color:var(--muted);font-size:12px">Sheets vervangen door Supabase · Sofascore (403 cloudflare-block) en Fotmob (404 endpoint-change) vanaf Render IP-segment dood, v12.6.3 uitgefaseerd</div>
           </div>
         </div>
       </div>
@@ -5469,14 +5469,16 @@ async function loadStatus() {
     // Services
     const svc = d.services || {};
     const serviceNames = {
-      apiFootball: { icon: '🌐', name: 'api-sports All Sports', desc: 'Odds, fixtures, stats, predictions' },
-      espn: { icon: '📺', name: 'ESPN', desc: 'Live scores' },
-      supabase: { icon: '🗄️', name: 'Supabase', desc: 'Database' },
-      webPush: { icon: '🔔', name: 'Web Push', desc: 'PWA notifications + inbox (VAPID)' },
-      render: { icon: '☁️', name: 'Render', desc: 'Hosting' },
-      mlbStats: { icon: '⚾', name: 'MLB StatsAPI', desc: 'Pitcher stats' },
-      nhlPublic: { icon: '🏒', name: 'NHL public API', desc: 'Shots-differential' },
-      openMeteo: { icon: '🌦️', name: 'open-meteo', desc: 'Weer outdoor wedstrijden' },
+      apiFootball: { icon: '🌐', name: 'api-sports', desc: 'Odds, fixtures, stats, predictions' },
+      tsdb:        { icon: '🏆', name: 'TheSportsDB Premium', desc: 'Multi-sport h2h, lineups, livescores, venues' },
+      oddsApi:     { icon: '📊', name: 'The Odds API', desc: 'Bet365/Pinnacle/Unibet odds (h2h, spreads, totals)' },
+      espn:        { icon: '📺', name: 'ESPN', desc: 'Live scores' },
+      supabase:    { icon: '🗄️', name: 'Supabase', desc: 'Database' },
+      webPush:     { icon: '🔔', name: 'Web Push', desc: 'PWA notifications + inbox (VAPID)' },
+      render:      { icon: '☁️', name: 'Render', desc: 'Hosting' },
+      mlbStats:    { icon: '⚾', name: 'MLB StatsAPI', desc: 'Pitcher stats' },
+      nhlPublic:   { icon: '🏒', name: 'NHL public API', desc: 'Shots-differential' },
+      openMeteo:   { icon: '🌦️', name: 'open-meteo', desc: 'Weer outdoor wedstrijden' },
     };
     document.getElementById('status-services').innerHTML = Object.entries(svc).map(([k, s]) => {
       const info = serviceNames[k] || { icon: '🔧', name: k, desc: '' };
@@ -5530,9 +5532,46 @@ async function loadStatus() {
       </div>`;
     }).join('');
 
+    // v12.6.3: tier-shift indicator (api-sports All Sports → Football Pro $19,99 + free vanaf 13-05)
+    const tierLabel = af.tier === 'football-pro+free'
+      ? `Football Pro + Free · sinds ${af.tierShiftDate || '13-05-2026'}`
+      : `All Sports · rolt af ${af.tierShiftDate || '13-05-2026'}`;
+
+    // v12.6.3: TSDB usage rendering (geen quota, alleen daily call-volume).
+    const tsdb = svc.tsdb || {};
+    const tsdbHtml = tsdb.callsToday !== undefined ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:13px;font-weight:600">🏆 TheSportsDB ${tsdb.premium ? 'Premium' : 'Free'}</span>
+          <span style="font-size:12px;color:var(--muted)">${tsdb.premium ? '100 req/min · €9/mnd' : 'test-key · beperkt'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-size:11px;font-weight:600;color:var(--muted)">Calls vandaag:</div>
+          <div style="font-size:13px;font-weight:700;font-variant-numeric:tabular-nums">${tsdb.callsToday.toLocaleString()}</div>
+          <div style="flex:1;background:var(--surface2);height:6px;border-radius:3px;overflow:hidden">
+            <div style="width:${Math.min(tsdb.callsToday / 1000 * 100, 100)}%;background:#34d39966;height:100%"></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">${tsdb.note || ''}</div>
+      </div>` : '';
+
+    // v12.6.3: OddsAPI rendering (status='planned' totdat Phase 2 v13.0).
+    const oa = svc.oddsApi || {};
+    const oaCol = oa.status === 'active' ? '#34d399' : '#fbbf24';
+    const oaHtml = `
+      <div style="margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:6px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:14px">📊</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600">The Odds API</div>
+          <div style="font-size:11px;color:var(--muted)">${oa.note || ''}</div>
+        </div>
+        <span style="font-size:11px;font-weight:700;color:${oaCol}">${oa.status || 'unknown'}</span>
+      </div>`;
+
     document.getElementById('status-api-budget').innerHTML = `
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;font-weight:600">api-sports · ${tierLabel}</div>
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px">
-        <span>api-football: ${calls} / ${lim.toLocaleString()} calls vandaag</span>
+        <span>${calls.toLocaleString()} / ${lim.toLocaleString()} calls vandaag</span>
         <span style="font-weight:700;color:${budgetCol}">${pct}% · ~${scansLeft} scans over</span>
       </div>
       <div style="background:var(--surface2);border-radius:8px;height:24px;position:relative;overflow:hidden;margin-bottom:14px">
@@ -5550,7 +5589,9 @@ async function loadStatus() {
           </div>
         </div>
       </div>
-      <div style="font-size:12px;color:var(--muted)">
+      ${tsdbHtml}
+      ${oaHtml}
+      <div style="font-size:12px;color:var(--muted);margin-top:12px">
         ${t('api_budget_reset')}
         ${pct > 80 ? '<br><strong style="color:#f87171">\u26a0\ufe0f ' + t('api_budget_high') + '</strong>' : ''}
       </div>
@@ -6039,8 +6080,16 @@ async function loadApiLimit() {
     if (!txt || !fill) return;
     const pctUsed = Math.round(calls / lim * 100);
     const pctRemain = 100 - pctUsed;
-    const scansLeft = Math.floor((lim - calls) / 400); // ~400 football calls per scan
-    txt.textContent = `⚽ ${calls} / ${lim.toLocaleString()} football-calls · ~${scansLeft} scans over`;
+    // v12.6.3: scans-rate hangt af van tier. Football Pro 75k = ~190 scans,
+    // All Sports 7.5k = ~19 scans. Per scan ≈ 400 football-calls (ongewijzigd).
+    const scansLeft = Math.floor((lim - calls) / 400);
+    // v12.6.3: secundaire bron-counter — TSDB vandaag totaal (multi-sport).
+    const tsdb = s.services?.tsdb || {};
+    const tsdbCalls = tsdb.callsToday || 0;
+    const tsdbBadge = tsdb.premium !== undefined
+      ? ` · 🏆 TSDB ${tsdbCalls.toLocaleString()}`
+      : '';
+    txt.textContent = `⚽ ${calls.toLocaleString()} / ${lim.toLocaleString()} football · ~${scansLeft} scans${tsdbBadge}`;
     fill.style.width = pctRemain + '%';
     fill.style.background = pctRemain > 50 ? '#34d399' : pctRemain > 20 ? '#fbbf24' : '#f87171';
     txt.style.color = pctRemain > 50 ? 'rgba(255,255,255,0.7)' : pctRemain > 20 ? '#fbbf24' : '#f87171';

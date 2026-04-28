@@ -2,6 +2,34 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.6.3] - 2026-04-28
+
+**API usage tracker · TSDB call-counter + tier-shift indicator + OddsAPI placeholder**
+
+Aanleiding: pre-pivot operator-vraag — "alle API's tracen en updaten" + tier-shift 13-05 zichtbaar maken in scan-window én status-page. Voor TSDB Premium bestond geen call-counter, alleen rate-limiter; voor OddsAPI is straks een free-tier quota-tracker nodig (Phase 2 v13.0). Daarnaast: api-sports tier wisselt 13-05 van All Sports €85 (7500/dag/sport) → Football Pro $19,99 (75000/dag football) + free-tier overige sporten (100/dag). Status-rendering moet beide tijdperken correct tonen.
+
+Doctrine-context: pure observability-uitbreiding. Geen quota-throttling actief — TSDB Premium heeft geen daily/monthly limit, OddsAPI is nog niet aangesloten. Counters dienen voor scan-budget-bewustzijn en post-pivot tuning.
+
+### Added
+
+- **`lib/integrations/sources/thesportsdb.js _bumpUsageCounter()` + `getUsage()`** — per-day TSDB call-counter (Amsterdam-tz), bumped na elke succesvolle `_get()`-call. `getUsage()` returns `{source, callsToday, date, rateLimitMs, premium}` voor /api/status. Skip/transient-fail-cases (source disabled / breaker open / V2-zonder-premium) bumpen counter NIET — counter telt alleen netwerk-calls die een respons opleverden. `_resetUsage()` test-hook toegevoegd.
+- **`lib/routes/info.js GET /api/status`** — nieuwe `services.tsdb` sectie: `{status, plan, note, callsToday, rateLimitMs, premium}`. Nieuwe `services.oddsApi` placeholder-sectie: `{status: 'planned'|'active', plan: 'Free 500/mo', note}`. `apiFootball` uitgebreid met `tier` ('all-sports' / 'football-pro+free') en `tierShiftDate` ('2026-05-13'). Per-sport limits respecteren tier: pre-shift 7500 alle sporten, post-shift 75000 football + 100 overige.
+- **`lib/routes/info.js`** — nieuwe optional dep `tsdbAdapter` voor `getUsage()`-aanroep. Bestaande `/api/status`-mount-conditie ongewijzigd (alle vier oude required deps blijven verplicht).
+- **`server.js` info-router mount** — `tsdbAdapter` doorgegeven via `require('./lib/integrations/sources/thesportsdb')`.
+- **`index.html` `loadApiLimit()` (scan-window bar)** — secondary badge `🏆 TSDB N` toegevoegd naast football-counter zodat operator multi-source usage in één blik ziet.
+- **`index.html` `loadStatus()` (info/status-page)** — tier-label boven api-budget bar ('All Sports · rolt af 13-05' / 'Football Pro + Free · sinds 13-05'). Nieuwe TSDB-card met progress-indicatie (1000-call benchmark) + premium-status badge. Nieuwe OddsAPI-stripe met `planned/active` status. `serviceNames` map uitgebreid met `tsdb` en `oddsApi` entries.
+
+### Tests (820 → 822)
+
+- **`thesportsdb: getUsage() telt successful API-calls (v12.6.3)`** — locks-in counter-bump bij echte API-call.
+- **`thesportsdb: getUsage() telt skip-cases NIET (v12.6.3)`** — locks-in dat skip-condities (source disabled etc.) counter ongemoeid laten. Sluit aan bij v12.6.1 negative-cache fix-doctrine.
+
+### Niet in deze release
+
+- Daily-cap throttling op TSDB / OddsAPI — TSDB heeft geen quota, OddsAPI komt in Phase 2 v13.0.
+- Persistente TSDB-counter (Supabase upsert) — in-memory volstaat, reset bij Render-restart is acceptabel voor observability.
+- Per-sport TSDB tracking (alleen totaal) — scope-discipline; uitbreidbaar bij behoefte.
+
 ## [12.6.2] - 2026-04-28
 
 **Doctrine-cleanup · sofascore + fotmob uitgefaseerd · info-page subscriptions/databronnen synced met v13.0 pivot**
