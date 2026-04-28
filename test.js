@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre2');
+  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7628,14 +7628,16 @@ test('aggregator: getMergedH2H gebruikt TSDB als enige h2h-bron (v12.6.2)', asyn
   });
 });
 
-test('aggregator: healthCheckAll roept alle 4 actieve sources aan (v12.6.2)', async () => {
-  // v12.6.2: sofascore + fotmob uit registry → 4 sources i.p.v. 6.
+test('aggregator: healthCheckAll roept alle 5 actieve sources aan (v12.7.0-pre3)', async () => {
+  // v12.6.2: sofascore + fotmob uit registry → 4 sources.
+  // v12.7.0-pre3: oddsapi toegevoegd → 5 sources.
   setSourceEnabled('thesportsdb', false);
+  setSourceEnabled('oddsapi', false);
   setSourceEnabled('nba-stats', false);
   setSourceEnabled('nhl-api', false);
   setSourceEnabled('mlb-stats-ext', false);
   const r = await agg.healthCheckAll();
-  assert.strictEqual(r.length, 4);
+  assert.strictEqual(r.length, 5);
   assert.ok(r.every(x => x.healthy === null || x.disabled === true || x.healthy === false));
 });
 
@@ -7662,6 +7664,91 @@ test('aggregator: SPORT_SOURCES bevat geen sofascore/fotmob meer (v12.6.2 cleanu
       }
     }
   }
+});
+
+// ── v12.7.0-pre3 AGGREGATOR PHASE 3 NIEUWE METHODS ──────────────────────────
+console.log('\n  Aggregator (v12.7.0-pre3 multi-source odds + livescore + lineups):');
+
+test('aggregator: SPORT_SOURCES bevat odds/lineups/livescore/schedule/venue/standings (Phase 3)', () => {
+  for (const sport of Object.keys(agg.SPORT_SOURCES)) {
+    const reg = agg.SPORT_SOURCES[sport];
+    for (const cat of ['h2h', 'form', 'odds', 'lineups', 'livescore', 'schedule', 'venue', 'standings', 'summary']) {
+      assert.ok(Array.isArray(reg[cat]), `sport=${sport} mist categorie ${cat}`);
+    }
+  }
+});
+
+test('aggregator: _dedupOdds met identieke quotes uit verschillende sources', () => {
+  const quotes = [
+    { source: 'oddsapi',     eventId: 'e1', bookie: 'Bet365',   market: '1X2', line: null, selection: 'Home', price: 2.10 },
+    { source: 'thesportsdb', eventId: 'e1', bookie: 'Bet365',   market: '1X2', line: null, selection: 'Home', price: 2.10 },
+    { source: 'oddsapi',     eventId: 'e1', bookie: 'Pinnacle', market: '1X2', line: null, selection: 'Home', price: 2.05 },
+  ];
+  const { quotes: deduped, anomalies } = agg._dedupOdds(quotes);
+  // 2 unieke combinaties (Bet365+Home en Pinnacle+Home), eerste duplicate skipped
+  assert.strictEqual(deduped.length, 2);
+  assert.strictEqual(anomalies.length, 0, 'identieke prijzen → geen anomaly');
+});
+
+test('aggregator: _dedupOdds detecteert source-disagreement >5% als anomaly', () => {
+  const quotes = [
+    { source: 'oddsapi',     eventId: 'e1', bookie: 'Bet365', market: 'OU', line: 2.5, selection: 'Over', price: 1.90 },
+    { source: 'thesportsdb', eventId: 'e1', bookie: 'Bet365', market: 'OU', line: 2.5, selection: 'Over', price: 2.10 }, // 10.5% delta
+  ];
+  const { anomalies } = agg._dedupOdds(quotes);
+  assert.strictEqual(anomalies.length, 1, 'delta 10.5% > threshold 5% → anomaly');
+  assert.strictEqual(anomalies[0].bookie, 'Bet365');
+  assert.ok(anomalies[0].deltaPct >= 10);
+});
+
+test('aggregator: getMergedOdds returnt null als sport geen odds-sources heeft', async () => {
+  // Handball heeft odds:[] in SPORT_SOURCES (geen OddsAPI sport-key)
+  const r = await agg.getMergedOdds('handball', { league: 'Bundesliga' });
+  assert.strictEqual(r, null);
+});
+
+test('aggregator: getMergedOdds returnt null als sport onbekend', async () => {
+  const r = await agg.getMergedOdds('chess');
+  assert.strictEqual(r, null);
+});
+
+test('aggregator: getLivescore valt fail-soft terug op [] bij geen sources', async () => {
+  // Forceer livescore=[] via mock waar source returnt []
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({ livescore: [] }), async () => {
+    const r = await agg.getLivescore('football');
+    assert.ok(Array.isArray(r), 'livescore moet altijd array returnen');
+  });
+});
+
+test('aggregator: getLineups returnt [] zonder eventId', async () => {
+  const r = await agg.getLineups('football', null);
+  assert.deepStrictEqual(r, []);
+});
+
+test('aggregator: getEventSchedule weigert zonder date', async () => {
+  const r = await agg.getEventSchedule('football', null);
+  assert.deepStrictEqual(r, []);
+});
+
+test('aggregator: getStandings returnt [] zonder leagueId', async () => {
+  const r = await agg.getStandings('football', null, '2025-2026');
+  assert.deepStrictEqual(r, []);
+});
+
+test('aggregator: getVenueDetails returnt null zonder venueId', async () => {
+  const r = await agg.getVenueDetails('football', null);
+  assert.strictEqual(r, null);
+});
+
+test('aggregator: healthCheckAll bevat nu ook oddsapi (5 sources)', async () => {
+  setSourceEnabled('thesportsdb', false);
+  setSourceEnabled('oddsapi', false);
+  setSourceEnabled('nba-stats', false);
+  setSourceEnabled('nhl-api', false);
+  setSourceEnabled('mlb-stats-ext', false);
+  const r = await agg.healthCheckAll();
+  assert.strictEqual(r.length, 5, 'health-batch = 5 (incl. oddsapi)');
 });
 
 // ── CONFIG (v12.6.0 per-sport API-key splitsing) ─────────────────────────

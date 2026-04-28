@@ -2,6 +2,51 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.7.0-pre3] - 2026-04-28
+
+**v13.0 multi-source pivot Phase 3 · Aggregator uitgebreid met odds/lineups/livescore/schedule/venue/standings**
+
+Aanleiding: Phase 1 (TSDB v1+v2 endpoints) en Phase 2 (OddsAPI source-skeleton) leveren brede data-coverage, maar de aggregator (`data-aggregator.js`) had alleen `getMergedH2H` / `getMergedForm` / `getTeamSummary`. Phase 3 wired alle nieuwe data-types via uniforme aggregator-methods met fail-soft cross-source dispatch.
+
+Doctrine-context: cross-source merge volgt v12.4.2 `bookie_anomaly` pattern — bij prijs-disagreement >5% tussen sources voor (eventId, bookie, market, line, selection) tuple wordt een anomaly gerapporteerd zodat caller (server.js) een inbox-warning kan sturen. Geen hard-block op disagreement; alleen detect + log.
+
+### Added
+
+- **`SPORT_SOURCES`** uitgebreid met 6 nieuwe categorieën per sport (`odds`, `lineups`, `livescore`, `schedule`, `venue`, `standings`) bovenop bestaande `h2h`/`form`/`summary`. Per-sport prio-volgorde:
+  - h2h → TSDB v1 lookuph2h
+  - odds → OddsAPI (bet365/pinnacle/unibet_eu/williamhill)
+  - lineups/livescore/venue/standings → TSDB
+  - schedule → TSDB primair, OddsAPI events fallback (no-quota)
+  - handball heeft `odds: []` (geen OddsAPI sport-key beschikbaar)
+- **`getMergedOdds(sport, options)`** — merged odds van alle sport's odds-sources. OddsAPI is huidige primaire bron. Returnt `{quotes, anomalies, sources}` met cross-source dedup + price-disagreement detection.
+- **`getLivescore(sport)`** — TSDB v2 livescore primair (premium-only). Free-key returnt graciously [] zodat caller kan terugvallen op ESPN.
+- **`getLineups(sport, eventId)`** — TSDB v1 lookuplineup. Eerste hit wint (geen merge — lineups zijn canoniek).
+- **`getEventSchedule(sport, date, options)`** — TSDB v1 eventsday primair, OddsAPI events fallback (geen quota-cost). Filtert op date.
+- **`getVenueDetails(sport, venueId)`** — TSDB v1 lookupvenue. Voor home-advantage signal-refinement.
+- **`getStandings(sport, leagueId, season)`** — TSDB v1 lookuptable. Vervangt api-sports `/standings` voor TSDB-coverage sporten.
+- **`_dedupOdds(quotes, threshold)`** — dedup op (eventId, bookie, market, line, selection) met cross-source disagreement detection. Default 5% delta-threshold; configureerbaar voor caller.
+- **`healthCheckAll`** uitgebreid met oddsapi (5 sources i.p.v. 4).
+
+### Changed
+
+- Module-comment uitgebreid met v12.7.0-pre3 prio-doctrine per data-type.
+
+### Tests (850 → 861)
+
+- `aggregator: SPORT_SOURCES bevat odds/lineups/livescore/schedule/venue/standings` — alle 9 categorieën geregistreerd
+- `aggregator: _dedupOdds met identieke quotes` — dedup-correctheid voor zelfde-prijs combos
+- `aggregator: _dedupOdds detecteert source-disagreement >5% als anomaly` — anomaly-detection lock-in
+- `aggregator: getMergedOdds returnt null als sport geen odds-sources` — handball-edge-case
+- `aggregator: getLivescore valt fail-soft terug op []` — graceful degradation
+- `aggregator: getLineups/getEventSchedule/getStandings/getVenueDetails return-shapes` — input-validation lock-ins
+- `aggregator: healthCheckAll bevat 5 sources` — count-update voor v12.7.0-pre3
+
+### Niet in deze release
+
+- Server.js scan-loop wiring naar nieuwe aggregator-methods → komt naar mate Phase 4 sport-uitbreiding voortschrijdt
+- Sport-uitbreiding tennis/rugby/cricket → Phase 4 (v12.7.0-pre4)
+- Coverage-audit Phase B sporten → Phase 5
+
 ## [12.7.0-pre2] - 2026-04-28
 
 **v13.0 multi-source pivot Phase 2 · OddsAPI source skeleton (free-tier 500 req/maand)**
