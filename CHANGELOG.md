@@ -2,6 +2,38 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.0.3] - 2026-04-28
+
+**Hotfix · Stale market-multiplier na revert + UI/docstring doctrine-drift "8+ bets" → "20+ bets"**
+
+Aanleiding: operator-rapport van markt-multiplier dashboard toonde **BTTS Nee n=18 profit=-€21.99 met multiplier 1.20x** (en Over n=13 met 1.18x). Per `computeMultiplierFromStats` zou `n<20 → 1.0` hard moeten gelden — dus deze waarden waren stale van een eerder moment toen n≥20.
+
+Root cause: `revertCalibration` in `lib/learning-loop.js` decremented `mk.n`, `mk.w`, `mk.profit` correct, maar **riep `computeMultiplierFromStats` niet aan** om de multiplier te recomputen. Resultaat: na een settled-bet revert (W↔L flip of bet-deletion) bleef de multiplier frozen op de waarde van vóór de revert. Concreet: bucket bereikt n=20+, multiplier wordt 1.20x → 1 bet wordt gerevert → n daalt naar 19 → multiplier blijft stale 1.20x. Dashboard toont sindsdien een geboost multiplier bij sample-size onder threshold, in tegenspraak met de doctrine.
+
+Daarnaast: **UI subtitle + empty-state texts + learning-loop docstring** gebruikten nog "8+ bets" als drempel, terwijl v12.0.0 die had verhoogd naar 20+ (commit P1.2: "n>=20 sample-threshold i.p.v. 8 — bij n=8 en 1.90 odds is 95% CI van winrate ±18pp, multiplier-beweging op die schaal is noise"). Doctrine-drift in operator-zichtbare UI verzwaart het probleem.
+
+### Fixed
+
+- **`lib/integrations/.../learning-loop.js revertCalibration`** — `mk.multiplier = computeMultiplierFromStats(mk)` toegevoegd na n/w/profit-decrement zodat revert-pad symmetrisch is met update-pad. Eén regel, dezelfde shared helper als `updateCalibration` (single source of truth, v12.5.5 doctrine).
+- **`index.html` markt-multipliers card** — subtitle aangepast van `"Calibratie per markttype na 8+ bets"` → `"Calibratie per markttype na 20+ bets (confidence-ramp tot n=100)"`. Empty-state idem.
+- **`learning-loop.js` module docstring** — principle-bullet `"Multiplier-herberekening na ≥8 bets"` aangepast naar `"n>=20 sample-threshold (v12.0.0 P1), confidence-ramp 0× tot 1× tussen n=20 en n=100 (v12.5.4), result clamp [0.70, 1.30]"`.
+
+### Tests (866 → 867)
+
+- **`learning-loop revertCalibration recomputed multiplier (v13.0.3 fix)`** — regressie-guard met:
+  - Formule-floor lock-in: `computeMultiplierFromStats({n: 18, profit: -22}) === 1.0`
+  - Boost-pad bij n≥20 + positieve profit
+  - Damping-pad bij n≥20 + negatieve profit
+  - Integration: `revertCalibration` van bucket met n=21 + multiplier=1.20 → na revert n=20 + multiplier=1.0 (recomputed correct)
+
+### Bekende historische data-pollutie
+
+Stale multipliers die **vóór deze fix** in `_data/calib.json` zijn beland blijven daar staan totdat:
+1. Een nieuwe settled bet die markt-bucket raakt → `updateCalibration` recomputed de multiplier correct (zelf-helend)
+2. Of `/api/admin/v2/rebuild-calib` wordt aangeroepen (volledige herrekening uit settled-bets-history)
+
+Aanbeveling: één rebuild-calib na deploy om alle dashboard-waarden gelijk te trekken met code-werkelijkheid.
+
 ## [13.0.2] - 2026-04-28
 
 **Adapter-rename oddsapi → oddspapi · refactor tegen oddspapi.io API (correcte service)**

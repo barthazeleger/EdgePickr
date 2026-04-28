@@ -2850,6 +2850,48 @@ test('learning-loop confidence-ramp (G11): n=20 → 0× delta, n=100 → 1× del
   assert.ok(Math.abs(effective - 0.01875) < 0.001, `n=30 effective delta=${effective.toFixed(4)} (verwachtte ~0.019)`);
 });
 
+test('learning-loop revertCalibration recomputed multiplier (v13.0.3 fix)', async () => {
+  // Regressie-guard: v13.0.3 fixt frozen-multiplier-after-revert bug.
+  // Pre-fix scenario: market-bucket bereikt n=20+, multiplier wordt naar
+  // 1.20x getild door confidence-ramp. Daarna wordt 1 bet gerevert (W→L flip
+  // of bet-deletion) → n daalt naar 19, maar multiplier bleef stale 1.20x
+  // staan want revertCalibration herberekende 'm niet. Bug-symptoom: dashboard
+  // toont multiplier-boost bij sample-size onder threshold (zoals user-report
+  // 28-04-2026: BTTS Nee n=18 profit=-€21.99 toonde 1.20x).
+  const { computeMultiplierFromStats } = require('./lib/learning-loop');
+  // Bewijs van formule-floor: n<20 moet 1.0 returnen
+  assert.strictEqual(computeMultiplierFromStats({ n: 18, profit: -22 }), 1.0);
+  assert.strictEqual(computeMultiplierFromStats({ n: 13, profit: 60 }), 1.0);
+  assert.strictEqual(computeMultiplierFromStats({ n: 19, profit: 100 }), 1.0);
+  // Boven threshold met positieve profit krijgt boost
+  const m1 = computeMultiplierFromStats({ n: 50, profit: 60 });
+  assert.ok(m1 > 1.0 && m1 < 1.30, `n=50 +profit moet boost geven: ${m1}`);
+  // Boven threshold met negative profit krijgt damping
+  const m2 = computeMultiplierFromStats({ n: 50, profit: -60 });
+  assert.ok(m2 < 1.0 && m2 > 0.70, `n=50 -profit moet dampen: ${m2}`);
+
+  // Integration check: createLearningLoop revertCalibration moet de helper
+  // aanroepen om multiplier te recomputen na n decrement.
+  const fakeCalib = {
+    totalSettled: 21, totalWins: 11, totalProfit: 50,
+    markets: { football_btts_no: { n: 21, w: 11, profit: 50, multiplier: 1.20 } },
+  };
+  let savedCalib = null;
+  const ll = require('./lib/learning-loop')({
+    loadCalib: () => fakeCalib,
+    saveCalib: async (c) => { savedCalib = c; },
+    getUsersCache: () => [],
+    notify: async () => {},
+    getUserMoneySettings: async () => ({ unitEur: 10, startBankroll: 1000 }),
+  });
+  await ll.revertCalibration({
+    sport: 'voetbal', markt: 'BTTS Nee', uitkomst: 'L', wl: -10, league: 'EPL',
+  });
+  assert.strictEqual(savedCalib.markets.football_btts_no.n, 20, 'n moet 20 zijn na revert van 21');
+  assert.strictEqual(savedCalib.markets.football_btts_no.multiplier, 1.0,
+    'multiplier moet recompute naar 1.0 na revert (n=20 ramp-start, geen confidence)');
+});
+
 test('v12.5.6 (G13): _atomicSetPrematch dedup-fingerprint is sport-aware', () => {
   // v12.5.6 audit-finding: pre-fix fingerprint was `${fixtureId}|${selectionKey}`,
   // wat collisions kon geven tussen sporten met overlappende fixtureId-namespaces
@@ -3347,7 +3389,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '13.0.2');
+  assert.strictEqual(appMeta.APP_VERSION, '13.0.3');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
