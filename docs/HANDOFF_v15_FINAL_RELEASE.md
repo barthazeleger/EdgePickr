@@ -13,6 +13,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 - Local `master` was already equal to `origin/master` at v14.0.0 before implementation.
 - Existing untracked `AGENTS.md` belongs to the workspace and must remain untouched.
 - Baseline test result before v15 changes: `npm test` passed with 875 tests.
+- Current pushed head after this handoff update context: `a96234a` (`[Codex] v15.0.1 show source telemetry on no-pick days`).
 
 ## Phase Status
 
@@ -26,13 +27,17 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 | Anomaly audit expansion | Done | Football 1X2/DC/OU/AH plus active sport ML/totals/spreads where paired quote arrays exist. |
 | Shadow sports | Done | Tennis/Rugby/Cricket run as quota-aware, paper-only shadow scanners through the orchestrator when scraping is enabled. |
 | Release cutover | Done | v15.0.1 pins, README, CHANGELOG, doctrine and info page refreshed; final checks passed. |
+| Post-deploy migration | Done | v15 pick-candidate attribution columns/indexes applied directly against Supabase. |
+| Post-deploy calibration | Done | Calibration rebuilt from 65 admin settled bets and v15 default sections backfilled into existing calibration JSON. |
+| v15.0.1 hotfix | Done | Source telemetry now logs on 0-pick football days; bookie-anomaly no longer alerts on sharp-reference books. |
 
 ## Risks
 
 - `server.js` is monolithic and scan-loop changes can be easy to under-test if only pure helpers are covered.
 - OddsPapi quota is small on the free tier, so sharp-anchor calls must stay quota-aware and fail-soft.
 - Tennis/Rugby/Cricket activation must remain shadow/paper until settlement coverage is proven.
-- Migration is committed but not run automatically; deploy needs the documented migration command before v15 admin attribution readouts become fully populated.
+- Pick-volume concern is real: multiple scans can still produce 0 picks because value gates remain strict. Do not blindly lower thresholds, but research whether the new endpoint data can create more valid candidates without degrading CLV/ROI.
+- `bookie_anomaly` must remain execution-actionable. Sharp books (Pinnacle/Betfair/Circa/SBOBet/etc.) are useful background/reference data, not inbox alerts for the operator.
 
 ## Verification Log
 
@@ -44,7 +49,63 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 - 2026-04-28: `npm test` final release run passed with `880 passed / 0 failed`.
 - 2026-04-28: `npm run test:coverage` passed with `880 passed / 0 failed` under c8; overall coverage `43.99%` because the monolithic `server.js` is not loaded by the unit harness.
 - 2026-04-28: `npm run audit:high` passed with `0 vulnerabilities`.
+- 2026-04-28: v15 migration applied: `source_attribution`, `sharp_anchor`, `playability` JSONB columns plus GIN indexes on `pick_candidates`.
+- 2026-04-28: calibration rebuilt and verified: `65` settled admin bets, `34` wins, profit `13.82`, `9` market keys, v15 defaults present.
+- 2026-04-28: v15.0.1 hotfix pushed after `npm test` passed with `880 passed / 0 failed`, `npm run audit:high` passed, and `node --check server.js` passed.
+- 2026-04-28: cleaned existing sharp-reference spam from inbox: scanned `76` recent `bookie_anomaly` rows, deleted `57` rows mentioning Pinnacle/Betfair/Circa/SBOBet/Polymarket/Kalshi, left other anomaly rows untouched.
 
-## Next Exact Step
+## Post-Deploy State
 
-Commit and push v15.0.1 only in a safe Amsterdam scan window. After deploy: run `node scripts/migrate.js docs/migrations-archive/v15.0.0_pick_candidate_attribution.sql`, then `POST /api/admin/rebuild-calib`.
+No manual migration/rebuild action remains for v15. The database and calibration work have already been done from this workspace.
+
+The latest observed scan proves v15 code is active:
+
+- `TSDB livescore pre-filter` was visible.
+- `oddspapi=ok(...)` appeared in scraper health.
+- Tennis/rugby/cricket shadow scanners emitted rows/logs.
+- 0 picks were produced because gates rejected candidates, not because scan execution failed.
+
+## Request For Next Colleague
+
+Please do a fresh research/read-through pass before implementing more code. The operator explicitly asks whether all functions are still logical now that TheSportsDB Premium v1/v2 and OddsPapi v4 endpoints exist, whether those endpoints are being used in the right places, and whether there are profitable implementation ideas we should add for the core goal: maximize long-term net profit.
+
+Treat this as a P&L/product review, not a feature wishlist. The most important tension to evaluate:
+
+- Strict gates protect CLV/ROI, but days of 0 picks may mean we are under-utilizing data or over-blocking playable value.
+- More picks only helps if incremental bets have positive EV after execution friction, limits, account-health and variance.
+- New APIs should increase true candidate quality and confidence, not just candidate volume.
+
+Concrete questions to answer with file/line evidence:
+
+1. Are v15 source paths actually consumed end-to-end?
+   - Football: TSDB livescore, form fallback, standings fallback, OddsPapi sharp-anchor attribution.
+   - Active sports: quota-aware OddsPapi sharp-anchor shadow logging.
+   - Shadow sports: tennis/rugby/cricket schedule/odds paper scanner.
+   - Candidate storage: `source_attribution`, `sharp_anchor`, `playability`.
+
+2. Are any new API endpoints still dead or underused?
+   - TSDB event stats, timeline, lineups, TV, venue, roster.
+   - OddsPapi scores/events/odds for non-football sports.
+   - Existing ESPN/MLB/NHL/Open-Meteo data.
+   - Decide per endpoint: use as active signal, shadow signal, source attribution only, or leave unused.
+
+3. Are market gates too strict or just correctly selective?
+   - Review recurring scan counters: `btts_thin_h2h`, `dnb_no_market`, `handicap_no_devig`, `ep_below_min`, `extreme_divergence`, `ep_too_close_to_market`.
+   - For each, determine whether the gate blocks bad bets or blocks recoverable positive-EV candidates because we are missing data/odds fallback.
+   - Specifically inspect why football with 15 fixtures generated only 3 candidates and 0 final picks.
+
+4. Can we increase good pick volume without breaking doctrine?
+   - Better executable-market coverage from preferred/OddsPapi where legally actionable.
+   - More markets with robust devig: totals, team totals, spreads/AH, DNB/DC where executable quotes exist.
+   - Better priors for low-data leagues/sports through Bayesian shrinkage and source trust, not fake confidence.
+   - Paper-to-active promotion rules for tennis/rugby/cricket based on settlement coverage + paper CLV.
+
+5. Should sharp-reference data become background analytics only?
+   - v15.0.1 stopped Pinnacle/Betfair bookie-anomaly inbox spam.
+   - Keep sharp data for CLV, calibration, source-trust and model sanity.
+   - Do not alert the operator unless the better quote is actually executable on preferred/operator bookies.
+
+6. What is the best next implementation slice?
+   - Prefer one or two high-ROI, low-risk changes.
+   - Include expected impact on pick volume, CLV, failure modes, tests needed, and deploy risk.
+   - Do not propose loosening all thresholds globally unless backed by settled/paper evidence.
