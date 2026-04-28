@@ -2,6 +2,34 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [12.6.1] - 2026-04-28
+
+**Hotfix · TheSportsDB negative-cache poisoning · v13.0 multi-source pivot Phase 0**
+
+Aanleiding: bij scan met `btts_thin_h2h=25/29` bleek dat TSDB ondanks werkende `searchteams` health-ping geen h2h-data leverde. Root cause: `findTeamId` cachte 24u null wanneer `_get()` returnde wegens skip-condities (`isSourceEnabled === false`, breaker open, V2-zonder-premium) — niet omdat TheSportsDB daadwerkelijk niets vond. Wanneer source achteraf weer enabled werd, returnde `findTeamId` nog steeds stale null tot cache-TTL verstreek. Effect: voor team-namen die ooit tijdens disabled-window opgevraagd werden, bleef TSDB 24u "thin" lijken.
+
+Doctrine-context: Phase 0 van de v13.0 multi-source pivot (TSDB Premium V2 + OddsAPI free + api-sports per-sport-keys). Voordat nieuwe sources erbij komen moet de bestaande TSDB-laag niet zelf datavernietiging veroorzaken.
+
+### Fixed
+
+- **`lib/integrations/sources/thesportsdb.js _get(url, useV2)`** — return-shape gewijzigd van kale data naar `{data, called}`. `called === false` voor skip-condities (source disabled / breaker open / V2-zonder-premium / network-fail) en `called === true` alleen wanneer de API daadwerkelijk een respons gaf. Callers (`findTeamId`, `fetchH2HEvents`) cachen nu alleen negatieve resultaten wanneer `called === true && data` legitiem geen match bevat — niet bij transient skip-condities.
+- **Cache-poisoning concreet geblokkeerd:** wanneer TSDB later weer enabled wordt of breaker resetset, retryt de eerstvolgende `findTeamId`-call de API i.p.v. stale null te returnen. Geen wijziging aan TTL (24u blijft) of aan échte negatieve responses (team bestaat niet → wel ge-cached, voorkomt repeating queries voor bekend-onbekende teams).
+
+### Added
+
+- **`_clearCache()` + `_breaker` exports** in TSDB-adapter — consistent met sofascore/fotmob/nba-stats-pattern. Test-only hooks zodat unit-tests cache-state kunnen resetten tussen scenarios.
+
+### Tests (817 → 819)
+
+- **`thesportsdb: skip-results worden niet ge-cached (v12.6.1 negative-cache fix)`** — regressie-guard. Stap 1 disabled source → null returnen zonder fetch te triggeren. Stap 2 source weer enabled → API wordt opnieuw bevraagd, geen stale null uit cache.
+- **`thesportsdb: legitieme empty-response wordt wél ge-cached`** — counterpart. Garandeert dat échte "geen match"-responses 24u ge-cached blijven (efficiency-eis), alleen skip/transient niet.
+
+### Niet in deze release
+
+- V2 endpoint-uitbreiding (livescore, lookupevent, lineups, schedule, venues, etc.) — komt in `v12.7.0-pre1` als Phase 1 van de v13.0 pivot.
+- OddsAPI source-skeleton — komt in `v12.7.0-pre2` als Phase 2.
+- Sport-uitbreiding Tennis/Rugby/Cricket — Phase 4 van v13.0.
+
 ## [12.6.0] - 2026-04-28
 
 **API-tier-splitsing voorbereid · per-sport api-sports keys + 429-retry + TheSportsDB premium multi-sport**

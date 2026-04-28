@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.6.0');
+  assert.strictEqual(appMeta.APP_VERSION, '12.6.1');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -6818,6 +6818,51 @@ test('thesportsdb: SPORT_MAP dekt alle EdgePickr-sporten', () => {
   assert.strictEqual(tsdb.SPORT_MAP.football, 'Soccer');
   assert.strictEqual(tsdb.SPORT_MAP.hockey, 'Ice Hockey');
   assert.strictEqual(tsdb.SPORT_MAP['american-football'], 'American Football');
+});
+
+test('thesportsdb: skip-results worden niet ge-cached (v12.6.1 negative-cache fix)', async () => {
+  // Regressie-guard: voorheen cachte findTeamId 24u null wanneer de source
+  // disabled was, omdat _get() null returnde en findTeamId niet kon
+  // onderscheiden tussen "skip" en "API antwoordde niets". Resultaat: nadat
+  // source weer enabled werd, returnde findTeamId nog steeds stale null tot
+  // cache-TTL verstreek.
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  // Stap 1: source disabled → findTeamId returnt null.
+  setSourceEnabled('thesportsdb', false);
+  let mockHits = 0;
+  await withMockFetch(async () => { mockHits++; return { teams: [] }; }, async () => {
+    const r1 = await tsdb.findTeamId('Arsenal', 'football');
+    assert.strictEqual(r1, null, 'disabled source moet null returnen');
+    assert.strictEqual(mockHits, 0, 'fetch mag niet aangeroepen zijn (source disabled)');
+  });
+  // Stap 2: source weer enabled → cache mag GEEN stale null bevatten,
+  // findTeamId moet de API opnieuw bevragen.
+  setSourceEnabled('thesportsdb', true);
+  await withMockFetch(async () => ({
+    teams: [{ idTeam: '999', strTeam: 'Arsenal', strSport: 'Soccer' }],
+  }), async () => {
+    const r2 = await tsdb.findTeamId('Arsenal', 'football');
+    assert.ok(r2, 'na re-enable moet findTeamId opnieuw API hitten');
+    assert.strictEqual(r2.id, '999', 'verse API-respons moet gebruikt worden, geen stale null');
+  });
+});
+
+test('thesportsdb: legitieme empty-response wordt wél ge-cached', async () => {
+  // Counterpart: als de API daadwerkelijk antwoordt met "geen match",
+  // dan IS dat een legitiem cacheable resultaat (24h) — niet elke scan
+  // opnieuw bevragen voor een team dat TSDB toch niet kent.
+  tsdb._clearCache();
+  tsdb._breaker.reset();
+  setSourceEnabled('thesportsdb', true);
+  let fetchCount = 0;
+  await withMockFetch(async () => { fetchCount++; return { teams: null }; }, async () => {
+    const r1 = await tsdb.findTeamId('NonExistentTeamXYZ', 'football');
+    assert.strictEqual(r1, null);
+    const r2 = await tsdb.findTeamId('NonExistentTeamXYZ', 'football');
+    assert.strictEqual(r2, null);
+    assert.strictEqual(fetchCount, 1, 'tweede call moet uit cache komen, niet opnieuw fetchen');
+  });
 });
 
 test('thesportsdb: fetchH2HEvents propageert sport in event-shape', async () => {
