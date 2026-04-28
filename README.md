@@ -1,9 +1,12 @@
-# EdgePickr v12.7.0-pre4
+# EdgePickr v13.0.0
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual
 overlay. De scanner is het product; de rest bestaat alleen om betere picks,
 strakkere discipline en betrouwbaardere learning te ondersteunen.
+
+**v13.0 multi-source pivot** (28-04-2026): drie data-lagen per sport, sport-
+uitbreiding van 6 → 9, en API-tier-shift voorbereid voor 13-05-2026.
 
 Geen multi-user SaaS-first denkwijze: EdgePickr optimaliseert voor een private
 operator die zo weinig mogelijk handwerk wil, point-in-time correct wil blijven
@@ -15,46 +18,55 @@ Kernprincipes:
 - Automation boven cockpit-werk
 - Auditability boven black-box "slimme" output
 - Liever 0 picks dan 1 valse edge
+- **"Dubbele data is altijd goed"** — cross-source validatie boven single-bron-vertrouwen
+
+## v13.0 Multi-Source Architectuur
+
+Per sport drie data-lagen, met fail-soft fallback en cross-source dedup:
+
+| Laag | Bron | Rol | Kosten |
+|---|---|---|---|
+| 1 | **TheSportsDB Premium V1+V2** | Primair · h2h · standings · lineups · livescores · venues | €9/mnd |
+| 2 | **The Odds API V4** (free) | Odds-feed · Bet365/Pinnacle/Unibet/WilliamHill · h2h+totals+spreads | Gratis (500/mnd) |
+| 3 | **api-sports** | Voetbal Pro vanaf 13-05 ($19,99) · andere sporten free-tier (100/dag) | $19,99 + $0 |
+
+Cross-source disagreement >5% triggert `bookie_anomaly` inbox-warning (v12.4.2 doctrine).
 
 ## Features
 
 | Feature | Beschrijving |
 |---|---|
-| **6 sporten** | Voetbal, basketball (NBA), honkbal (MLB), ijshockey (NHL), American football (NFL), handbal |
-| **100+ competities** | Alle top-tier leagues per sport, dynamische seizoenen (nooit meer stuk) |
+| **9 sporten** | Voetbal · basketball (NBA) · honkbal (MLB) · ijshockey (NHL) · American football (NFL) · handbal · **Tennis · Rugby · Cricket** (v13.0 data-laag) |
+| **100+ competities** | Alle top-tier leagues per sport, dynamische seizoenen |
 | **14 signalen** | Thuisvoordeel, vorm, H2H, blessures, standings, team stats, home/away splits, lineup, referee, API predictions, O/U adjustments, weer, Poisson, fixture congestion |
+| **TheSportsDB v13.0** | 13 nieuwe methods: lookuptable (standings), lookuplineup, lookuptimeline, lookupeventstats, lookuptv (TV broadcasts), eventsday/eventslast, lookupvenue, lookup_all_players (roster) + V2 livescore/schedule/full-team |
+| **OddsAPI v13.0** | Bet365/Pinnacle/Unibet/WilliamHill quotes via v4 API · h2h/spreads/totals · auto-degrade bij 90% quota |
+| **API usage tracker** | Per-source dashboard op /api/status: api-sports tier-shift indicator (13-05), TSDB call-counter (€9 premium), OddsAPI quota-progress (500/mnd) |
 | **Poisson model** | Per sport afzonderlijk geijkt — markt-multipliers, EP-buckets en signal-gewichten tunen zich automatisch |
 | **Model-vs-market sanity check** | Elke pick wordt gecheckt tegen devigged market consensus; picks waar model > 4% divergeert worden geskipt |
-| **3-way ML voor hockey/handbal** | Aparte 60-min regulation markt via bivariate Poisson, naast inc-OT 2-way ML. Voorkomt ambigue bookie-product settlements |
-| **Preferred bookies** | Edges worden berekend met odds van jouw bookies (Bet365 + Unibet default); consensus blijft market-truth |
-| **Kelly sizing** | Half-Kelly · 6 tiers (0.3U/0.5U/0.75U/1.0U/1.5U/2.0U). Auto-stepup van 0.50 → 0.75 cap bij bewezen CLV > 2% + ROI > 5% over 200 bets |
-| **CLV tracking** | Closing line odds 2 min voor aftrap, strict bookie match, fuzzy fixture match, backfill endpoint + UI-knop |
-| **Pre-kickoff check** | Drift-alert 30 min voor aftrap (±8% = markt-alarm) |
-| **Wedstrijd analyser** | Typ `Ajax vs PSV` of `NHL Rangers Bruins` → model-analyse on-the-fly (multi-sport, fuzzy) |
-| **Tracker** | Bets per dag/week/maand, W/L, CLV%, score, NET Units, variance tracker, chronologische sort (nachtwedstrijden) |
-| **Data tab** | Bankroll-grafiek, hit rate per score/markt, signal attribution, timing-analyse, per-sport winrate |
+| **3-way ML voor hockey/handbal** | Aparte 60-min regulation markt via bivariate Poisson, naast inc-OT 2-way ML |
+| **Preferred bookies** | Edges worden berekend met odds van jouw bookies; consensus blijft market-truth |
+| **Kelly sizing** | Half-Kelly · 6 tiers · auto-stepup tot 0.75 bij CLV > 2% + ROI > 5% over 200 bets |
+| **CLV tracking** | Closing line odds 2 min voor aftrap, strict bookie match, fuzzy fixture match |
 | **PWA** | iOS/Android installatie, offline-cache, Web Push notificaties |
 | **Admin panel** | Operator controls, scan history, bankroll settings, debug endpoints, source toggles |
-| **v2 Snapshot layer** | fixtures, odds_snapshots, feature_snapshots, market_consensus tabellen + 90-min polling |
-| **v2 Pick pipeline** | model_versions + model_runs + pick_candidates met rejected_reason logging |
-| **Kill-switch** | Auto-disable markt bij avg CLV < -5% over ≥30 settled bets, admin override |
+| **Kill-switch** | Auto-disable markt bij avg CLV < -5% over ≥30 settled bets |
 | **Walk-forward backtest** | Brier + log loss + calibration buckets per sport/window |
 | **Hierarchical calibration** | Bayesian smoothing global → sport → market → league |
-| **Residual model framework** | Skeleton activeert bij ≥500 picks/markt voor logistic regression delta |
-
-Calibration-monitor v1 schrijft bewust `probability_source='ep_proxy'` in
-`signal_calibration`. De canonical model probability (`pick.ep` /
-`pick_candidates.fair_prob`) volgt pas zodra de bet↔pick join-layer is geland.
 
 ## Stack
 
 ```
-Node.js 20 + Express          Backend
-Supabase (PostgreSQL)          Bets, users, scan history, notifications, calibratie
-api-sports.io All Sports       6 sporten · 7500 calls/dag/sport
-ESPN Scoreboard API            Live scores (gratis, onbeperkt)
-Web Push (VAPID)               Operator alerts · picks · CLV · milestones (PWA + inbox)
-Render.com                     Hosting + keep-alive (14 min)
+Node.js 20 + Express             Backend
+Supabase (PostgreSQL)            Bets, users, scan history, notifications, calibratie
+api-sports.io Football Pro       Voetbal · 75.000 calls/dag (vanaf 13-05-2026, $19,99)
+api-sports.io free tier          5 sporten · 100 calls/dag elk (vanaf 13-05-2026)
+TheSportsDB Premium              9 sporten · 100 req/min · v1+v2 (€9/mnd, sinds 28-04)
+The Odds API v4                  Bet365/Pinnacle/Unibet/WH · 500 req/maand (free)
+ESPN Scoreboard API              Live scores (gratis, onbeperkt)
+MLB StatsAPI / NHL public        Sport-specifieke summary-bronnen (gratis)
+Web Push (VAPID)                 Operator alerts · picks · CLV · milestones
+Render.com                       Hosting + keep-alive
 ```
 
 ## Quickstart

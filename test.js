@@ -3347,7 +3347,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '12.7.0-pre4');
+  assert.strictEqual(appMeta.APP_VERSION, '13.0.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7726,11 +7726,23 @@ test('aggregator: _dedupOdds skipt NaN-prijzen (v12.7.0-pre3 audit P1#1 fix)', (
 test('aggregator: _dedupOdds composite key cross-source (v12.7.0-pre3 audit P1#2 fix)', () => {
   // Zelfde wedstrijd, andere source-eventIds → moet dedupen via teams+commenceTime
   const quotes = [
-    { source: 'oddsapi',     eventId: '3924959', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 2.10 },
-    { source: 'thesportsdb', eventId: '12345',   homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Home', price: 2.10 },
+    { source: 'oddsapi',     eventId: '3924959', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
+    { source: 'thesportsdb', eventId: '12345',   homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
   ];
   const { quotes: deduped } = agg._dedupOdds(quotes);
   assert.strictEqual(deduped.length, 1, 'cross-source dedup moet 1 entry leveren ondanks verschillende eventIds');
+});
+
+test('aggregator: _dedupOdds home/away swap dedupliceert (v12.7.0-pre4 audit P1-1 fix)', () => {
+  // OddsAPI en TSDB kunnen home/away in andere volgorde leveren voor zelfde
+  // wedstrijd. Sort op teams in matchKey moet dat onschadelijk maken.
+  // Selection is team-naam (canonical OddsAPI shape), niet 'Home'/'Away'.
+  const quotes = [
+    { source: 'oddsapi',     eventId: 'a', homeTeam: 'Arsenal', awayTeam: 'Chelsea', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
+    { source: 'thesportsdb', eventId: 'b', homeTeam: 'Chelsea', awayTeam: 'Arsenal', commenceTime: '2026-04-30T15:00:00Z', bookie: 'Bet365', market: '1X2', selection: 'Arsenal', price: 2.10 },
+  ];
+  const { quotes: deduped } = agg._dedupOdds(quotes);
+  assert.strictEqual(deduped.length, 1, 'home/away swap mag dedup niet breken');
 });
 
 test('aggregator: _dedupOdds met identieke quotes uit verschillende sources', () => {

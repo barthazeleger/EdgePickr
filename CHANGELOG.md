@@ -2,6 +2,63 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [13.0.0] - 2026-04-28
+
+**Major version bump · Multi-Source Pivot Cutover · Sport-uitbreiding 6 → 9**
+
+Aanleiding: cumulatieve cutover na 6 incrementele pre-releases (v12.6.1 → v12.7.0-pre4) die elk een eigen audit-pass kregen door een fresh-eyes code-reviewer agent. Deze v13.0.0-tag markeert het punt waarop EdgePickr's data-architectuur fundamenteel verschoven is van single-source api-sports All Sports naar drie-laagse multi-source met cross-source dedup, anomaly-detection, en API-tier-shift voorbereid voor 13-05-2026 abonnementsovergang.
+
+Doctrine-shift: "Markt = baseline truth, model = residual overlay" blijft hoofd-doctrine. Daaraan toegevoegd: **"Dubbele data is altijd goed"** — per data-type 3 lagen primair/fallback/3rd-fallback met fail-soft dispatch én cross-source disagreement-detection (bookie_anomaly inbox-warning bij delta >5%).
+
+### Nieuwe data-architectuur
+
+| Laag | Bron | Rol | Sporten | Kosten |
+|------|------|-----|---------|--------|
+| 1 | TheSportsDB Premium V1+V2 | Primair · h2h · standings · lineups · livescores · venues · TV-broadcasts | Alle 9 | €9/mnd (sinds 28-04) |
+| 2 | The Odds API V4 (free) | Odds-feed · Bet365/Pinnacle/Unibet/WilliamHill · h2h+totals+spreads | 8 (geen handball) | Gratis (500/maand) |
+| 3 | api-sports Football Pro | Voetbal-only · 75.000/dag · v3 endpoints | Voetbal | $19,99/mnd (vanaf 13-05) |
+| 3 | api-sports free tier | 5 sporten · 100/dag elk · v1 endpoints | Basketball/Hockey/Baseball/NFL/Handball | Gratis (vanaf 13-05) |
+
+### Sport-uitbreiding 6 → 9
+
+Toegevoegd op data-bron-laag (TSDB SPORT_MAP + OddsAPI sport-keys + aggregator SPORT_SOURCES):
+- **Tennis** — TSDB strSport='Tennis', OddsAPI tennis_atp/wta/wimbledon/us_open/aus_open
+- **Rugby** — TSDB strSport='Rugby', OddsAPI rugbyleague_nrl (default), six_nations, premiership, top14, super_rugby
+- **Cricket** — TSDB strSport='Cricket', OddsAPI cricket_test (default), ipl, big_bash, odi, t20, psl
+
+Server.js scan-loop wiring + index.html UI sport-filter komen incrementeel post-cutover (per "uitgebreid testen, geen ruimte voor fouten" doctrine). Phase 5 audit-script (`scripts/audit-tsdb-coverage.js`) levert data-driven beslissing voor MMA/F1/Golf/Darts/Snooker uitbreiding in v13.x.
+
+### Phase-overzicht (alle commits in deze release-line)
+
+| Phase | Versie | Commit | Highlights |
+|-------|--------|--------|-----------|
+| 0 | v12.6.1 | f5d0ef3 | TSDB negative-cache poisoning fix |
+| Cleanup | v12.6.2 | 81c5b14 | Sofascore/fotmob uitgefaseerd · info-page subscriptions/databronnen synced |
+| Tracker | v12.6.3 | 7b76fc2 | API usage tracker · TSDB counter · tier-shift indicator |
+| 1 | v12.7.0-pre1 | 60ddf2d | TSDB 13 nieuwe methods (v1+v2) · per-TTL cache-buckets |
+| 1 audit | — | a1695c1 | Input-validatie + limit-bounds + alias-comment (3× P2) |
+| 2 | v12.7.0-pre2 | ca633dc | OddsAPI source skeleton · quota-tracking · tier-aware status |
+| 2 audit | — | a672718 | Quota-race + missing-headers fallback (2× P1) + sport-warn (P2) |
+| 3 | v12.7.0-pre3 | f2eab59 | Aggregator getMergedOdds/getLivescore/getLineups/getEventSchedule/getVenueDetails/getStandings + cross-source dedup |
+| 4 + audits | v12.7.0-pre4 | e115a2f | Tennis/Rugby/Cricket data-laag · Phase 3 P1 fixes (NaN-skip · cross-source key · timezone-fix) |
+| 6 cutover | **v13.0.0** | (this) | Phase 4 audit P1-1 (home/away swap dedup) + version bump + README rewrite + Phase 5 coverage-audit-script |
+
+### Tests (817 → 866)
+
+Total +49 nieuwe regressie-guards en feature-tests over alle 6 phases, telkens groen voor commit. Test-suite groeit organisch met scope; geen regressies in bestaande 817 tests.
+
+### Phase 5 audit-script
+
+Nieuw bestand `scripts/audit-tsdb-coverage.js` voor data-driven beslissing of Phase B sporten (MMA/F1/Golf/Darts/Snooker) een v13.x-uitbreiding rechtvaardigen. Drempels: ≥50 events/maand, ≥80% complete records, OddsAPI active sport-key. Output: tabel of JSON via `--json` flag. Niet-blockerend; rapport is adviserend.
+
+### Niet in v13.0 (komt incrementeel)
+
+- Server.js scan-loop wiring naar nieuwe aggregator-methods (getMergedOdds als markt-implied prior voor btts_thin_h2h compensatie)
+- index.html UI sport-filter checkboxes voor Tennis/Rugby/Cricket
+- Sport-aware signal-doctrine audit per nieuwe sport (welke signals applicable, conform shadow-mode promotion)
+- MMA/F1/Golf/Darts/Snooker uitbreiding (Phase B) — afhankelijk van audit-script-resultaat
+- OddsAPI paid-tier upgrade ($20/bookie/mnd) bij quota-druk
+
 ## [12.7.0-pre4] - 2026-04-28
 
 **v13.0 multi-source pivot Phase 4 · Sport-uitbreiding Tennis/Rugby/Cricket (data-laag) + Phase 3 audit fixes**
