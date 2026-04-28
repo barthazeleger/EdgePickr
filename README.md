@@ -1,4 +1,4 @@
-# EdgePickr v13.1.0-pre2
+# EdgePickr v14.0.0
 
 **Private operator betting terminal** voor een single bankroll, een canonieke
 scan-state en een CLV-first workflow. Markt = baseline truth, model = residual

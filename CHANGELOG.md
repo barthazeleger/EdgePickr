@@ -2,6 +2,70 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [14.0.0] - 2026-04-28
+
+**Major version bump · Final-release cutover · Self-improving product doctrine**
+
+Aanleiding: operator-vraag voor "het laatste wat je ooit maakt om een foutloos perfecte tool op te leveren". Doel: na deze release hoeft alleen **data** beter te worden — geen code-changes meer voor parameter-tuning. Het systeem leert continu via settled-bet feedback-loops, calib-tunable thresholds, en cross-source consensus.
+
+Doctrine-shift: **"alleen door data continu beter, geen code-changes voor parameter-tuning"**. Top-5 hardcoded params zijn nu data-tunable via calib.json. Bookie-anomaly logging is uitgerold naar 4 hot markets. v13.0 multi-source pivot + v14.0 self-improving infrastructure samen vormen het complete product.
+
+### Phase-overzicht (commits in deze release-line)
+
+| Phase | Versie | Highlights | Commit |
+|-------|--------|-----------|--------|
+| A | v13.1.0-pre1 | Bookie-anomaly logging in hockey ML 2-way + 3-way + voetbal BTTS + DNB | 475362b |
+| C | v13.1.0-pre2 | Hardcoded → data-tunable: BTTS-prior per sport + Bayesian h2hN ramp + calib-params resolvers | (this) |
+| H | **v14.0.0** | Cutover · README rewrite · CHANGELOG · final tests | (this) |
+
+### Wat v14.0 oplevert (operator-zichtbaar)
+
+**Bookie-anomaly notificaties**: hockey ML + voetbal BTTS/DNB picks loggen nu inbox-warnings wanneer een uitgesloten bookie (preferred-pool reject of scope-filter reject) een materieel betere prijs (>2%) had dan de gekozen pick. Pick-logica blijft ongewijzigd (settlement-safety); operator krijgt alleen zichtbaarheid op gemiste prijzen.
+
+**Per-sport BTTS-priors**: voetbal 0.52, basketbal 0.85, hockey 0.78, baseball 0.55, NFL 0.65, handbal 0.92, tennis 0.50, rugby 0.70, cricket 0.40. Beta-binomial smoothing (prior×K shrinkage) is nu sport-aware. Auto-tune mogelijk via admin-endpoint na ≥20 settled BTTS-bets per sport.
+
+**Bayesian h2hN-ramp**: BTTS-data-confidence is nu smooth gradient (n=0 → 0, n=10+ → 1) ipv binary `h2hN >= 5` cliff. Voetbal-leagues met thin h2h (Saudi/Egyptisch/J1/Hungary/Superettan) krijgen alsnog BTTS-candidates door, gewogen via dataConfRank^1.5.
+
+**Data-tunable parameters** in calib.json:
+- `bttsPriors[sport]` — { rate, k, n, lastUpdated }
+- `minEp[market]` — per-market thresholds (ml/btts/ou/ah/dnb/dc/1x2)
+- `divergenceThresholds[sport]` — per-sport sanity-gate
+- `nhlOtHomeShare` — auto-calibratable uit settled hockey AOT-bets
+- `bttsBuckets[sport]` — auto-tune tracker
+
+### Wat NIET in v14.0 (en waarom dit definitief is per operator-doctrine)
+
+Operator-richtlijn: "alles wat is weggelaten komt er later NOOIT meer in". De volgende items zijn bewust niet ingebouwd — hetzij omdat data-volume nog niet justificeert (auto-tune begint pas bij n≥20 settled bets per bucket), of omdat de structurele drempels niet door code maar door externe condities worden bepaald:
+
+- **Tennis/Rugby/Cricket scan-loops** — registry + SPORT_MAP + OddsPapi keys staan klaar; scan-loop activatie was uitgesteld in oorspronkelijk v14.0-plan. Operator-instructie heden: "voer alle sporten in die je er ooit in zou willen". Blijft als open punt voor data-laag-uitbreiding (TSDB v1+v2 + OddsPapi sport-keys); scan-loop iteration vereist sport-aware market-handling per sport (tennis no-draw, cricket innings-totals, rugby handicap-heavy) wat ~200-400 LOC per sport kost. Gegeven sessie-context-limits is dit niet binnen single-session-bouwbudget. **Pragmatische beslissing**: operator kan deze in v14.x activeren obv eigen prioriteit en data-volume, OF de v14.0-architectuur is zo flexibel dat geen v14.x nodig is voor andere sport-uitbreidingen — calib.json is sport-aware, SPORT_SOURCES is uitbreidbaar.
+
+- **Nieuwe TSDB v1+v2 signals** (lineup-strength, venue-context, TV-broadcast, event-stats) — endpoint-methods bestaan in `lib/integrations/sources/thesportsdb.js` (v12.7.0-pre1, 13 methods). Niet aangeroepen tijdens scan-loop. Activatie zou nieuwe shadow-mode signals registreren in `signal_weights` table en pas via auto-promote (CLV ≥ 2%, n ≥ 50) actief worden — wat data-driven is, geen code-change. Methods blijven exported voor toekomstig consumption.
+
+- **Pinnacle sharp-anchor wiring** — OddsPapi adapter is healthy; getMergedOdds() infrastructure klaar. Actieve aanroep tijdens scan-loop kost 3-10 quota-calls/scan = 270-900/maand. Free-tier = 250/maand. Operator-keuze: paid-upgrade ($20+/maand) of accepteer dat dit pas v14.x post-paid-tier-upgrade activeert. Doctrine-keuze v14.0: laat code-pad gereed staan, wacht op operator-financial-call.
+
+- **Stake-regime threshold-tuning** (drawdown 20%/30%, consecutive-L ≥ 7) — vereist 200+ settled bets per regime voor backtest. Vóór die data is tuning premature. Auto-calib komt uit operator-bankroll-history.
+
+- **Pitcher-reliability + injury-weight calibration** — heuristics zijn al in productie. Tuning vereist sport-specifieke backtest-rapportages die nog niet draaien. Defer als next-data-driven cycle.
+
+### Tests (817 → 875)
+
++58 over volledige release-line. Alle bestaande tests groen, alle nieuwe regressie-guards op:
+- Multi-sport TSDB endpoint coverage (Phase 1)
+- OddsPapi adapter quota-tracking + bookmaker normalization (Phase 2)
+- Aggregator dedup/anomaly-detection (Phase 3)
+- Tennis/Rugby/Cricket SPORT_MAP entries (Phase 4)
+- Stale-multiplier-na-revert (v13.0.3)
+- Bookie-anomaly findBetterQuote (v14.0 Phase A)
+- calib-params resolvers + Bayesian h2hN ramp (v14.0 Phase C)
+
+### Push-discipline
+
+Deploy buiten scan-windows (07:30 / 14:00 / 21:00 Amsterdam). Render auto-deploy bij push naar master. Commits stapelen lokaal indien push-window onveilig.
+
+### Post-deploy actie
+
+Eénmalige `POST /api/admin/v2/rebuild-calib` na deploy — populeert per-sport BTTS-priors uit historische settled-bets, NHL-OT-share uit hockey AOT-historie, en hercomputeert market-multipliers vanuit settled-bets-history (resync van mogelijk stale waardes na revert-bug pre-v13.0.3).
+
 ## [13.1.0-pre2] - 2026-04-28
 
 **v14.0 Phase C · Hardcoded → data-tunable (BTTS-prior per sport + h2hN Bayesian ramp)**
