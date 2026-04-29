@@ -6242,6 +6242,9 @@ async function runPrematch(emit) {
     earlySeasonMatches: 0,
     tsdbLivescoreSkips: 0, tsdbFormHits: 0, tsdbStandingsFallbackHits: 0,
     tsdbLeagueBaselineHits: 0, tsdbLeagueBaselineApplied: 0,
+    tsdbVenueHits: 0, tsdbVenueApplied: 0,
+    tsdbLineupHits: 0, tsdbLineupApplied: 0,
+    tsdbInjuryMismatchCount: 0, tsdbInjuryChecksRun: 0,
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
     oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
     bttsMarkets: 0, bttsFormOnly: 0, bttsNoExecutable: 0,
@@ -6369,21 +6372,55 @@ async function runPrematch(emit) {
   // call levert vandaag's TSDB voetbal-fixtures inclusief idLeague + leagueName,
   // waaruit we per scan een name-keyed map bouwen voor downstream baseline-
   // lookups. Day-cached binnen de adapter, +1 TSDB call/scan totaal.
+  // v15.0.12: dezelfde call wordt hergebruikt om een team-pair → venueId map
+  // op te bouwen voor het venue-effect signal (geen extra TSDB call).
   const tsdbLeagueIdByName = Object.create(null);
-  if (OPERATOR.scraping_enabled && process.env.TSDB_LEAGUE_BASELINE === '1') {
+  const tsdbVenueIdByPair = Object.create(null);
+  const tsdbEventIdByPair = Object.create(null);
+  const _scheduleMapNeeded =
+    process.env.TSDB_LEAGUE_BASELINE === '1' ||
+    process.env.TSDB_VENUE_EFFECT === '1' ||
+    process.env.TSDB_LINEUP_STRENGTH === '1';
+  if (OPERATOR.scraping_enabled && _scheduleMapNeeded) {
     try {
       const tsdb = require('./lib/integrations/sources/thesportsdb');
       const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
       const fixtures = await tsdb.fetchSchedulesByDate(today, 'football');
+      const _normPair = (a, b) => `${String(a || '').toLowerCase().trim()}|${String(b || '').toLowerCase().trim()}`;
       for (const fx of fixtures || []) {
         const ln = (fx?.leagueName || '').toLowerCase().trim();
         if (ln && fx.leagueId && !tsdbLeagueIdByName[ln]) tsdbLeagueIdByName[ln] = String(fx.leagueId);
+        if (fx?.homeTeam && fx?.awayTeam) {
+          const k = _normPair(fx.homeTeam, fx.awayTeam);
+          if (fx.venueId && !tsdbVenueIdByPair[k]) tsdbVenueIdByPair[k] = String(fx.venueId);
+          if (fx.eventId && !tsdbEventIdByPair[k]) tsdbEventIdByPair[k] = String(fx.eventId);
+        }
       }
       if (Object.keys(tsdbLeagueIdByName).length) {
         emit({ log: `🛰️ TSDB league-id map: ${Object.keys(tsdbLeagueIdByName).length} liga's resolved voor baseline` });
       }
     } catch { /* baseline-map mag scan nooit breken */ }
   }
+  // Helper om TSDB id op te zoeken voor een api-sports fixture op basis
+  // van team-namen (fuzzy substring-match valt terug op exact key-match).
+  // Hergebruikt voor zowel venueId als eventId.
+  const _lookupByPair = (map, homeName, awayName) => {
+    const exact = map[`${String(homeName || '').toLowerCase().trim()}|${String(awayName || '').toLowerCase().trim()}`];
+    if (exact) return exact;
+    const hLow = String(homeName || '').toLowerCase().trim();
+    const aLow = String(awayName || '').toLowerCase().trim();
+    if (!hLow || !aLow) return null;
+    for (const [pair, val] of Object.entries(map)) {
+      const [ph, pa] = pair.split('|');
+      if (!ph || !pa) continue;
+      if ((ph.includes(hLow) || hLow.includes(ph)) && (pa.includes(aLow) || aLow.includes(pa))) {
+        return val;
+      }
+    }
+    return null;
+  };
+  const _resolveTsdbVenueId = (homeName, awayName) => _lookupByPair(tsdbVenueIdByPair, homeName, awayName);
+  const _resolveTsdbEventId = (homeName, awayName) => _lookupByPair(tsdbEventIdByPair, homeName, awayName);
   const _resolveTsdbLeagueId = (league) => {
     if (league.tsdbId) return String(league.tsdbId);
     const exact = tsdbLeagueIdByName[(league.name || '').toLowerCase().trim()];
@@ -6510,6 +6547,26 @@ async function runPrematch(emit) {
           oddspapi: {},
         };
         const sharpAnchor = summarizeSharpAnchor(leagueSharpOdds, hm, aw, kickoffMs);
+
+        // v15.0.12: Venue-effect signal. Resolve TSDB venueId via pre-built
+        // pair-map en haal venue-details op (week-cached). Pure helper berekent
+        // additieve OU-nudge uit altitude/capacity. Env-flag gated.
+        let venueEffect = null;
+        if (OPERATOR.scraping_enabled && process.env.TSDB_VENUE_EFFECT === '1') {
+          try {
+            const tsdbVenueId = _resolveTsdbVenueId(hm, aw);
+            if (tsdbVenueId) {
+              const agg = require('./lib/integrations/data-aggregator');
+              const venue = await agg.getVenueDetails('football', tsdbVenueId);
+              if (venue) {
+                scanTelemetry.tsdbVenueHits++;
+                sourceAttribution.thesportsdb.venue = true;
+                const { computeVenueEffect } = require('./lib/signals/venue-effect');
+                venueEffect = computeVenueEffect(venue);
+              }
+            }
+          } catch { /* venue-effect mag scan nooit breken */ }
+        }
         if (sharpAnchor.source) {
           sourceAttribution.oddspapi.sharpAnchor = true;
           scanTelemetry.oddspapiSharpAnchorFixtures++;
@@ -6706,6 +6763,27 @@ async function runPrematch(emit) {
         const hmKey = hm.toLowerCase(), awKey = aw.toLowerCase();
         let hmSt  = lookupTeamStats(afStats, hm), awSt = lookupTeamStats(afStats, aw);
         const hmInj = afInj[hmKey] || [], awInj = afInj[awKey] || [];
+
+        // v15.0.12: Injury cross-check. Vergelijkt api-sports injury list met
+        // TSDB roster om data-quality issues te detecteren (false-positive
+        // injuries OF stale TSDB roster). Geen pick-impact, alleen telemetrie.
+        if (OPERATOR.scraping_enabled && process.env.TSDB_INJURY_VALIDATION === '1') {
+          try {
+            const { crossCheckInjuries } = require('./lib/signals/injury-cross-check');
+            const aggInj = require('./lib/integrations/data-aggregator');
+            const checks = [];
+            if (hmInj.length > 0) checks.push({ team: hm, injuries: hmInj });
+            if (awInj.length > 0) checks.push({ team: aw, injuries: awInj });
+            for (const c of checks) {
+              const roster = await aggInj.getTeamRoster('football', c.team);
+              const result = crossCheckInjuries(c.injuries, roster);
+              scanTelemetry.tsdbInjuryChecksRun++;
+              if (result.unmatched.length > 0) {
+                scanTelemetry.tsdbInjuryMismatchCount += result.unmatched.length;
+              }
+            }
+          } catch { /* injury cross-check mag scan nooit breken */ }
+        }
         const refInfo = afCache.referees[`${hmKey} vs ${awKey}`];
         // Extract referee name directly from fixture data
         const fixtureRef = f.fixture?.referee || '';
@@ -6935,6 +7013,32 @@ async function runPrematch(emit) {
         };
         const matchSignals = buildSignals();
 
+        // v15.0.12: Lineup-strength signal (TSDB lookuplineup). Alleen voor
+        // matches < 90min vóór kickoff (anders is lineup nog niet bekend).
+        // Pure helper berekent confidence-shortfall → small ML-prob nudge.
+        if (OPERATOR.scraping_enabled && process.env.TSDB_LINEUP_STRENGTH === '1') {
+          const minutesToKickoff = (kickoffMs - Date.now()) / 60000;
+          if (minutesToKickoff > 0 && minutesToKickoff <= 90) {
+            try {
+              const tsdbEventId = _resolveTsdbEventId(hm, aw);
+              if (tsdbEventId) {
+                const agg = require('./lib/integrations/data-aggregator');
+                const lineup = await agg.getLineups('football', tsdbEventId);
+                if (Array.isArray(lineup) && lineup.length > 0) {
+                  scanTelemetry.tsdbLineupHits++;
+                  sourceAttribution.thesportsdb.lineup = true;
+                  const { computeLineupStrength } = require('./lib/signals/lineup-strength');
+                  const ls = computeLineupStrength(lineup, { sport: 'football' });
+                  if (ls && Math.abs(ls.nudge) >= 0.0025) {
+                    matchSignals.push(ls.signal);
+                    scanTelemetry.tsdbLineupApplied++;
+                  }
+                }
+              }
+            } catch { /* lineup-strength mag scan nooit breken */ }
+          }
+        }
+
         // Human-readable knockout note voor reason string
         const knockoutNote = knockoutInfo.isKnockout && (knockoutInfo.stageLabel || knockoutInfo.leg)
           ? ` | 🥊 ${knockoutInfo.leg ? `${knockoutInfo.leg}e leg ` : ''}${knockoutInfo.stageLabel || 'knock-out'}`
@@ -7115,6 +7219,13 @@ async function runPrematch(emit) {
             overP = Math.max(0.10, Math.min(0.90, overP + leagueBaselineOUAdj));
             scanTelemetry.tsdbLeagueBaselineApplied++;
           }
+          // v15.0.12: Venue-effect nudge (additief, cap ±2pp).
+          let venueOUAdj = 0;
+          if (venueEffect && Math.abs(venueEffect.nudge) >= 0.0025) {
+            venueOUAdj = venueEffect.nudge;
+            overP = Math.max(0.10, Math.min(0.90, overP + venueOUAdj));
+            scanTelemetry.tsdbVenueApplied++;
+          }
           const overEdge  = overP * over.best.price - 1;
           const underEdge = under.best.price > 0 ? (1-overP) * under.best.price - 1 : -1;
           const ouSignals = [...matchSignals];
@@ -7123,6 +7234,7 @@ async function runPrematch(emit) {
           if (Math.abs(poissonOUAdj) >= 0.005) ouSignals.push(`poisson_ou:${poissonOUAdj>0?'+':''}${(poissonOUAdj*100).toFixed(1)}%`);
           if (aggOUAdj !== 0) ouSignals.push(`aggregate_push_ou:+${(aggOUAdj*100).toFixed(1)}%`);
           if (leagueBaselineOUAdj !== 0) ouSignals.push(leagueBaseline.signal);
+          if (venueOUAdj !== 0) ouSignals.push(venueEffect.signal);
           // v10.12.7 Phase A.1b: totals market is 2-way (over/under), line=2.5
           const fxMetaOver  = { fixtureId: fid, marketType: 'total', selectionKey: 'over',  line: 2.5 };
           const fxMetaUnder = { fixtureId: fid, marketType: 'total', selectionKey: 'under', line: 2.5 };
@@ -7796,7 +7908,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0}/mismatch=${tel.tsdbInjuryMismatchCount || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
     `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
   ];
@@ -8016,6 +8128,7 @@ const scheduleSignalStatsRefresh = maintenanceSchedulers.scheduleSignalStatsRefr
 const scheduleAutoRetraining = maintenanceSchedulers.scheduleAutoRetraining;
 const scheduleConvictionDoctrineReview = maintenanceSchedulers.scheduleConvictionDoctrineReview;
 const scheduleConvictionShadowSweep = maintenanceSchedulers.scheduleConvictionShadowSweep;
+const scheduleSettlementEnrichment = maintenanceSchedulers.scheduleSettlementEnrichment;
 // markFinalTop5 als forward-let elders gedeclareerd (v12.5.2) — assign hier:
 markFinalTop5 = maintenanceSchedulers.markFinalTop5;
 const checkUnitSizeChange = maintenanceSchedulers.checkUnitSizeChange;
@@ -8843,6 +8956,10 @@ app.listen(PORT, () => {
   // pick_candidates (incl. conviction-shadow) tegen api-sports finished
   // events → CLV/result-velden krijgen waarde voor doctrine-review-evidence.
   scheduleConvictionShadowSweep({ afGet });
+
+  // v15.0.12: TSDB event-stats enrichment voor settled bets (voedt v15.0.13+
+  // calibration-modellen met dominance-data). Achter env-flag.
+  scheduleSettlementEnrichment();
 
   // v12.2.14 (D1): rescheduleer pending pre-kickoff/CLV jobs uit DB en
   // zet sweep-loop op (cleanup completed > 7d, mark overdue > 1u).

@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.11');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.12');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9042,6 +9042,176 @@ test('league-baseline: nudge richt zich naar shrunk-line delta', () => {
   const low = Array.from({ length: 15 }, () => ({ homeScore: 0, awayScore: 1 }));
   const rLow = leagueBaseline.computeLeagueBaseline(low);
   assert.ok(rLow.nudge < 0, 'low-scoring liga moet negatieve nudge geven');
+});
+
+// ── VENUE-EFFECT (v15.0.12) ──────────────────────────────────────────────────
+console.log('\n  Signals/Venue-effect (v15.0.12):');
+
+const venueEffect = require('./lib/signals/venue-effect');
+
+test('venue-effect: returnt null bij empty/missing venue', () => {
+  assert.strictEqual(venueEffect.computeVenueEffect(null), null);
+  assert.strictEqual(venueEffect.computeVenueEffect({}), null);
+  assert.strictEqual(venueEffect.computeVenueEffect({ name: 'Stadium' }), null);
+});
+
+test('venue-effect: altitude < 1500m geeft geen altitude-factor', () => {
+  const r = venueEffect.computeVenueEffect({ altitudeM: 800 });
+  // Capacity ontbreekt → factors leeg → null
+  assert.strictEqual(r, null);
+});
+
+test('venue-effect: hoog altitude geeft positieve nudge', () => {
+  const r = venueEffect.computeVenueEffect({ altitudeM: 3000 });
+  assert.ok(r);
+  assert.ok(r.nudge > 0);
+  assert.ok(r.factors.altitude);
+  assert.match(r.signal, /venue_over_under:\+/);
+});
+
+test('venue-effect: kleine capacity geeft kleine negatieve nudge', () => {
+  const r = venueEffect.computeVenueEffect({ capacity: 10000 });
+  assert.ok(r);
+  assert.ok(r.nudge < 0, 'kleinere capacity dan referentie → negatieve nudge');
+  assert.match(r.signal, /venue_over_under:-/);
+});
+
+test('venue-effect: nudge wordt gecapt op ±2pp', () => {
+  // Combineer extreme altitude + extreme capacity
+  const r = venueEffect.computeVenueEffect({ altitudeM: 5000, capacity: 100000 });
+  assert.ok(r);
+  assert.ok(Math.abs(r.nudge) <= venueEffect.SIGNAL_MAGNITUDE_CAP + 1e-9);
+});
+
+test('venue-effect: signal-name bevat over/under voor picks.js OU-filter', () => {
+  const r = venueEffect.computeVenueEffect({ altitudeM: 2200 });
+  assert.ok(r);
+  assert.match(r.signal, /over_under/);
+});
+
+// ── LINEUP-STRENGTH (v15.0.12) ───────────────────────────────────────────────
+console.log('\n  Signals/Lineup-strength (v15.0.12):');
+
+const lineupStrength = require('./lib/signals/lineup-strength');
+
+test('lineup-strength: returnt null bij empty input', () => {
+  assert.strictEqual(lineupStrength.computeLineupStrength([]), null);
+  assert.strictEqual(lineupStrength.computeLineupStrength(null), null);
+});
+
+test('lineup-strength: volledig 11-koppig lineup → score 1, kleine of nul nudge', () => {
+  const lineup = Array.from({ length: 11 }, (_, i) => ({
+    player: `Speler ${i+1}`, position: 'M', isStarter: true,
+  }));
+  const r = lineupStrength.computeLineupStrength(lineup, { sport: 'football' });
+  assert.ok(r);
+  assert.strictEqual(r.score, 1);
+  assert.strictEqual(r.nudge, 0);
+});
+
+test('lineup-strength: half-lineup geeft negatieve nudge', () => {
+  const lineup = Array.from({ length: 6 }, (_, i) => ({
+    player: `Speler ${i+1}`, position: 'M', isStarter: true,
+  }));
+  const r = lineupStrength.computeLineupStrength(lineup, { sport: 'football' });
+  assert.ok(r);
+  assert.ok(r.score < 1);
+  assert.ok(r.nudge < 0, 'shortfall moet negatieve nudge geven');
+});
+
+test('lineup-strength: subs/reserve worden gefilterd', () => {
+  const lineup = [
+    { player: 'A', position: 'F', isStarter: true },
+    { player: 'B', position: 'Substitute', isStarter: false },
+    { player: 'C', position: 'Bench', isStarter: false },
+    { player: 'D', position: 'Reserve', isStarter: false },
+  ];
+  const r = lineupStrength.computeLineupStrength(lineup, { sport: 'football' });
+  assert.ok(r);
+  assert.strictEqual(r.sample, 1);
+});
+
+test('lineup-strength: signal-string bevat lineup keyword', () => {
+  const lineup = Array.from({ length: 8 }, (_, i) => ({ player: `P${i}`, isStarter: true }));
+  const r = lineupStrength.computeLineupStrength(lineup, { sport: 'football' });
+  assert.ok(r);
+  assert.match(r.signal, /lineup_strength/);
+});
+
+// ── INJURY CROSS-CHECK (v15.0.12) ────────────────────────────────────────────
+console.log('\n  Signals/Injury cross-check (v15.0.12):');
+
+const injuryCheck = require('./lib/signals/injury-cross-check');
+
+test('injury-cross-check: empty input geeft total=0', () => {
+  const r = injuryCheck.crossCheckInjuries([], []);
+  assert.strictEqual(r.total, 0);
+  assert.strictEqual(r.matched.length, 0);
+  assert.strictEqual(r.unmatched.length, 0);
+});
+
+test('injury-cross-check: geen roster → alle injuries unmatched met no_roster', () => {
+  const inj = [{ player: 'Mohamed Salah' }];
+  const r = injuryCheck.crossCheckInjuries(inj, []);
+  assert.strictEqual(r.total, 1);
+  assert.strictEqual(r.unmatched.length, 1);
+  assert.strictEqual(r.unmatched[0].reason, 'no_roster');
+  assert.strictEqual(r.mismatchPct, 100);
+});
+
+test('injury-cross-check: exacte naam-match werkt', () => {
+  const inj = [{ player: 'Mohamed Salah' }];
+  const roster = [{ name: 'Mohamed Salah', playerId: '1' }];
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.matched.length, 1);
+  assert.strictEqual(r.unmatched.length, 0);
+});
+
+test('injury-cross-check: fuzzy substring match werkt voor naamvarianten', () => {
+  const inj = [{ player: 'M. Salah' }];
+  const roster = [{ name: 'Mohamed Salah', playerId: '1' }];
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.matched.length, 1, 'M. Salah moet matchen op Mohamed Salah');
+});
+
+test('injury-cross-check: speler ontbreekt in roster → unmatched not_in_roster', () => {
+  const inj = [{ player: 'Onbekende Speler' }];
+  const roster = [{ name: 'Andere Speler', playerId: '1' }];
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.unmatched.length, 1);
+  assert.strictEqual(r.unmatched[0].reason, 'not_in_roster');
+});
+
+// ── ENDPOINT: tsdb-utilization (v15.0.12) ─────────────────────────────────────
+test('integration: GET /admin/v2/tsdb-utilization returnt breakdown + dormant list', async () => {
+  const createAdminInspectRouter = require('./lib/routes/admin-inspect');
+  const tsdb = require('./lib/integrations/sources/thesportsdb');
+  // Reset usage zodat we deterministisch kunnen testen
+  tsdb._resetUsage();
+  // Simuleer 2 calls
+  if (typeof tsdb._endpointKeyFromUrl === 'function') {
+    // bump via interne logica niet mogelijk vanuit test; we testen alleen dat
+    // het endpoint geen errors gooit en de juiste keys returnt.
+  }
+  const mockSupabase = { from: () => ({ select: () => ({ gte: () => ({ order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) }) }) };
+  const router = createAdminInspectRouter({
+    supabase: mockSupabase, requireAdmin: makeNoopAuthMiddleware(),
+    computeBookieConcentration: () => ({}), getActiveStartBankroll: () => 500,
+    aggregateEarlyPayoutStats: async () => [], normalizeSport: (s) => s,
+    detectMarket: () => 'other', loadUsers: async () => [],
+  });
+  const res = await callRoute(router, {
+    method: 'GET', path: '/admin/v2/tsdb-utilization',
+    user: { id: 'admin-1', role: 'admin' },
+  });
+  assert.strictEqual(res.statusCode, 200);
+  assert.ok(typeof res.body.dailyBudget === 'number');
+  assert.ok(res.body.dailyBudget > 1000, 'daily budget moet >1k zijn (rate-limit-derived)');
+  assert.ok(Array.isArray(res.body.breakdown));
+  assert.ok(Array.isArray(res.body.dormantEndpoints));
+  // Bij 0 calls moeten alle premium-endpoints in dormant zijn
+  assert.ok(res.body.dormantEndpoints.includes('lookuph2h'));
+  assert.ok(res.body.dormantEndpoints.includes('livescore'));
 });
 
 // ── EARLY-PAYOUT EVALUATOR + SHADOW-LOG (v11.1.0) ────────────────────────────

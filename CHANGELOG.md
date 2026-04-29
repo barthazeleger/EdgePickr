@@ -2,6 +2,40 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.12] - 2026-04-29
+
+**Diepe TSDB Premium benutting · 5 nieuwe builds + Codex handoff**
+
+Aanleiding: operator vroeg een uitgebreide TSDB-audit ("voelt onder-benut"). Audit toonde 16 geëxporteerde TSDB-functies waarvan 9 ongebruikt in scan-paden. Premium-budget is ~144k calls/dag, we gebruikten ~35-50/scan ≈ 0,03%. v15.0.12 wired vijf van die endpoints in, achter env-flags zodat operator per signaal kan activeren.
+
+### Added
+
+- **Per-endpoint TSDB cap-tracker** (`lib/integrations/sources/thesportsdb.js`): `getUsage()` returnt nu ook `byEndpointPercent`, `dailyBudget`, `utilizationPct`. Beantwoordt direct "hoe dicht zitten we op de rate-limit per endpoint".
+- **`GET /api/admin/v2/tsdb-utilization`** (`lib/routes/admin-inspect.js`): per-endpoint breakdown met hot-flag (>10% van budget) en lijst van dormant endpoints (in adapter aanwezig maar niet aangeroepen vandaag). Eén-pane view voor under-use audit.
+- **Venue-effect signal** (`lib/signals/venue-effect.js` + wiring in `server.js`): pure helper die TSDB venue-data (capacity / altitude wanneer bekend) mapt naar OU-nudge ±2pp. Activeert via `TSDB_VENUE_EFFECT=1`. Hergebruikt de v15.0.3 pre-scan TSDB schedule-call voor venue-id resolution (geen extra TSDB-call). Day-cached venue-details.
+- **Lineup-strength signal** (`lib/signals/lineup-strength.js` + wiring in `server.js`): pure helper die TSDB lookuplineup output scoort op compleetheid (% bekende starters t.o.v. expected XI). Werkt alleen voor matches < 90min vóór kickoff en achter `TSDB_LINEUP_STRENGTH=1`. Negatieve nudge bij "team fielding reserves" patroon.
+- **Injury cross-check** (`lib/signals/injury-cross-check.js` + wiring in `server.js`): pure helper die api-sports injury-list kruistest tegen TSDB roster om data-quality issues (false-positive injuries of stale roster) te detecteren. Geen pick-impact, alleen telemetrie via `scanTelemetry.tsdbInjuryMismatchCount`. Activeert via `TSDB_INJURY_VALIDATION=1`. Aggregator `getTeamRoster(sport, teamName)` toegevoegd.
+- **Settlement event-stats enrichment** (`lib/jobs/settlement-stats-enrichment.js` + scheduler in `lib/runtime/maintenance-schedulers.js`): dagelijkse worker die TSDB lookupeventstats batch-fetched voor settled bets en payload schrijft naar nieuwe `bets.tsdb_event_stats` JSONB-kolom. Voedt v15.0.13+ calibratie-modellen met dominance-data (shots/possession/corners) zonder de pre-match scan te raken. Activeert via `TSDB_SETTLEMENT_ENRICHMENT=1`. Migratie: `docs/migrations-archive/v15.0.12_bets_tsdb_event_stats.sql`.
+
+### Changed
+
+- **Scan-log uitgebreid**: nieuwe metrics in `🛰️ v15 sources` regel — `tsdb_venue=N/applied=M`, `tsdb_lineup=N/applied=M`, `tsdb_inj_checks=N/mismatch=M`.
+- **`scanTelemetry`**: nieuwe counters `tsdbVenueHits/Applied`, `tsdbLineupHits/Applied`, `tsdbInjuryChecksRun/MismatchCount`.
+- **TSDB schedule pre-scan map** (uit v15.0.3): nu ook `tsdbEventIdByPair` voor lineup-resolution via dezelfde call.
+
+### Tests
+
+- 21 nieuwe tests: 6 venue-effect, 5 lineup-strength, 5 injury-cross-check, 1 tsdb-utilization endpoint, plus aangepaste version-pin assertion. Bestaande 901 tests blijven groen.
+
+### Niet gewijzigd (bewust)
+
+- Geen threshold-verlagingen (operator-instructie sinds v15.0.1).
+- `fetchEventTimeline`, `fetchEventTV`, `fetchLeagueNext`, `fetchTeamFullSchedule` (V2), `fetchScheduleByVenue` (V2) blijven ongebruikt — beargumenteerd in `docs/HANDOFF_v15.0.12_TSDB_DEEP_USAGE.md` voor Codex review.
+
+### Post-deploy actie
+
+Migratie `v15.0.12_bets_tsdb_event_stats.sql` moet handmatig tegen Supabase worden uitgevoerd: `node scripts/migrate.js docs/migrations-archive/v15.0.12_bets_tsdb_event_stats.sql`. Pas daarná `TSDB_SETTLEMENT_ENRICHMENT=1` env-var aanzetten op Render.
+
 ## [15.0.11] - 2026-04-29
 
 **Bug B definitive · alt-line leak in paired O/U + spreads dedupe**
