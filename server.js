@@ -6227,6 +6227,8 @@ async function runPrematch(emit) {
     tsdbLeagueBaselineHits: 0, tsdbLeagueBaselineApplied: 0,
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
     oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
+    bttsMarkets: 0, bttsFormOnly: 0, bttsNoExecutable: 0,
+    bttsDataBlocked: 0, bttsGateBlocked: 0, bttsEdgeBelow: 0,
   };
 
   // ── Calibratie ───────────────────────────────────────────────────────────
@@ -7149,6 +7151,7 @@ async function runPrematch(emit) {
 
           if (bttsBk.length === 0) _premkpFunnel.btts_no_market++;
           if (bttsBk.length > 0) {
+            scanTelemetry.bttsMarkets++;
             // v10.12.20 fix: pick-odds MUST come uit operator's preferred bookies
             // (execution truth). filteredBks bevat ook sharp-refs (Pinnacle,
             // William Hill) voor consensus-berekening; die mogen niet naar de
@@ -7306,7 +7309,11 @@ async function runPrematch(emit) {
                 && (sourceAttribution.thesportsdb.form || sourceAttribution.thesportsdb.leagueBaseline || sourceAttribution.apiSports.standings);
               const bttsDataOk = bttsConf > 0 || bttsFormOnlyOk;
               if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;
-              if (bttsFormOnlyOk) bttsSignals.push('btts_form_only_no_h2h:0%');
+              if (!bttsDataOk) scanTelemetry.bttsDataBlocked++;
+              if (bttsFormOnlyOk) {
+                scanTelemetry.bttsFormOnly++;
+                bttsSignals.push('btts_form_only_no_h2h:0%');
+              }
               const bttsDataWeight = bttsConf > 0 ? Math.max(0.35, bttsConf) : bttsFormOnlyOk ? 0.30 : 0;
 
               // v12.4.0: parity met O/U/DNB sanity-gate. Operator-rapport
@@ -7322,12 +7329,26 @@ async function runPrematch(emit) {
               // learning-loop al naar football_btts_yes/no schreef → cross-market
               // contamination. Nu end-to-end consistent: schrijven en lezen beide
               // via btts_yes / btts_no keys.
-              if (bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60 && bttsDataOk && bttsGate.passA)
+              const bttsYesActionable = bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60 && bttsDataOk && bttsGate.passA;
+              const bttsNoActionable = bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60 && bttsDataOk && bttsGate.passB;
+              if (!bttsYesActionable && !bttsNoActionable) {
+                if (!bttsDataOk) {
+                  // already counted above
+                } else if ((bestYes.price < 1.60 || !bestYes.bookie) && (bestNo.price < 1.60 || !bestNo.bookie)) {
+                  scanTelemetry.bttsNoExecutable++;
+                } else if (!bttsGate.passA && !bttsGate.passB) {
+                  scanTelemetry.bttsGateBlocked++;
+                } else if (bttsYesEdge < MIN_EDGE && bttsNoEdge < MIN_EDGE) {
+                  scanTelemetry.bttsEdgeBelow++;
+                }
+              }
+
+              if (bttsYesActionable)
                 mkP(`${hm} vs ${aw}`, league.name, `🔥 BTTS Ja`, bestYes.price,
                   `BTTS: ${(bttsYesP*100).toFixed(1)}% | ${bestYes.bookie}: ${bestYes.price} | GF: ${hmGFAvg}/${awGFAvg}${h2hStr} | ${ko}`,
                   Math.round(bttsYesP*100), bttsYesEdge * 0.22 * bttsDataWeight * (cm.btts_yes?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
 
-              if (bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60 && bttsDataOk && bttsGate.passB)
+              if (bttsNoActionable)
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | GF: ${hmGFAvg}/${awGFAvg} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}${h2hStr} | ${ko}`,
                   Math.round(bttsNoP*100), bttsNoEdge * 0.20 * bttsDataWeight * (cm.btts_no?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
@@ -7343,6 +7364,8 @@ async function runPrematch(emit) {
                   debug: { sport: 'football', h2hN, sourceAttribution, sharpAnchor, playability: { marketType: 'btts', executable: true } },
                 }).catch(() => {});
               }
+            } else {
+              scanTelemetry.bttsNoExecutable++;
             }
           }
         }
@@ -7738,6 +7761,7 @@ async function runPrematch(emit) {
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
     `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
+    `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
   ];
   emit({ log: telLines.join('\n') });
 

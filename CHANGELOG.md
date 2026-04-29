@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.6] - 2026-04-29
+
+**Observability · BTTS silent-gate telemetry**
+
+Aanleiding: de eerste scan na v15.0.5 bewees dat `btts_thin_h2h` daalde van 18 naar 3, maar `Markt-mix football` liet nog steeds geen BTTS-candidates zien. De scanner wist intern of BTTS stopte op ontbrekende uitvoerbare prijs, data-block, divergence-gate of edge-below-min, maar toonde dat niet aan de operator.
+
+### Changed
+
+- **BTTS scanlog-funnel toegevoegd** aan de bestaande `Signal coverage` block:
+  `markets`, `form_only`, `no_exec`, `data_block`, `gate_block`, `edge_low`.
+- Geen threshold- of pickgedrag-wijziging: dit is alleen observability zodat de volgende scan exact laat zien waarom BTTS niet in de markt-mix komt.
+
 ## [15.0.5] - 2026-04-29
 
 **Coverage slice · sharp-anchor matching + no-pick diagnostics**

@@ -32,6 +32,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 | v15.0.1 hotfix | Done | Source telemetry now logs on 0-pick football days; bookie-anomaly no longer alerts on sharp-reference books. |
 | v15.0.2 observability + API utilization | Done | Per-endpoint TSDB telemetry, `pick-funnel` + `settlement-coverage` admin-inspect endpoints, league scoring baseline signal (env-gated), CHANGELOG/README/version pins refreshed. |
 | v15.0.5 coverage slice | Done | OddsPapi camelCase event parsing, sharp-anchor unmatched telemetry, MLB full-game diagnostics, and conservative BTTS form-only fallback for n=0 H2H fixtures. |
+| v15.0.6 BTTS telemetry | Done | Adds scanlog counters for BTTS markets/form-only/no-exec/data/gate/edge stops without changing pick thresholds. |
 
 ## Risks
 
@@ -57,6 +58,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 - 2026-04-28: cleaned existing sharp-reference spam from inbox: scanned `76` recent `bookie_anomaly` rows, deleted `57` rows mentioning Pinnacle/Betfair/Circa/SBOBet/Polymarket/Kalshi, left other anomaly rows untouched.
 - 2026-04-28 (v15.0.2): Build B/A/C/D shipped — `npm test` results pending agent run (verwacht 880 → ~894). `node --check` op alle aangeraakte files moet groen blijven; `npm run audit:high` ongewijzigd 0 vulnerabilities. Pre-deploy verificatie staat in CHANGELOG entry.
 - 2026-04-29 (v15.0.5): `node --check server.js lib/integrations/sources/oddspapi.js lib/v15-runtime.js test.js` passed; `npm test` passed with `898 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
+- 2026-04-29 (v15.0.6): `node --check server.js test.js` passed; `git diff --check` passed; `npm test` passed with `898 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
 
 ## Post-Deploy State
 
