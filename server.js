@@ -6229,6 +6229,8 @@ async function runPrematch(emit) {
     oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
     bttsMarkets: 0, bttsFormOnly: 0, bttsNoExecutable: 0,
     bttsDataBlocked: 0, bttsGateBlocked: 0, bttsEdgeBelow: 0,
+    dnbMarkets: 0, dnbNoExecutable: 0, dnbOddsRange: 0,
+    dnbGateBlocked: 0, dnbEdgeBelow: 0,
   };
 
   // ── Calibratie ───────────────────────────────────────────────────────────
@@ -7382,6 +7384,7 @@ async function runPrematch(emit) {
 
           if (dnbBk.length === 0) _premkpFunnel.dnb_no_market++;
           if (dnbBk.length > 0) {
+            scanTelemetry.dnbMarkets++;
             // v10.12.22 fix: DNB pick-odds moeten uit operator's preferred
             // bookies komen, niet uit de wider consensus-pool (Pinnacle etc).
             // Zelfde fix als BTTS in v10.12.20.
@@ -7439,12 +7442,28 @@ async function runPrematch(emit) {
 
             // v12.0.0 (Claude P1): DNB krijgt eigen calibratie-bucket. Voorheen
             // stake zonder multiplier → systematisch onder-gestaked in ranking.
-            if (dnbHomeEdge >= MIN_EDGE && bestDnbH.price >= 1.30 && bestDnbH.price <= 2.50 && dnbGate.passA)
+            const dnbHomeOddsOk = bestDnbH.price >= 1.30 && bestDnbH.price <= 2.50;
+            const dnbAwayOddsOk = bestDnbA.price >= 1.30 && bestDnbA.price <= 2.50;
+            const dnbHomeActionable = dnbHomeEdge >= MIN_EDGE && dnbHomeOddsOk && dnbGate.passA;
+            const dnbAwayActionable = dnbAwayEdge >= MIN_EDGE && dnbAwayOddsOk && dnbGate.passB;
+            if (!dnbHomeActionable && !dnbAwayActionable) {
+              if (!bestDnbH.bookie && !bestDnbA.bookie) {
+                scanTelemetry.dnbNoExecutable++;
+              } else if (!dnbHomeOddsOk && !dnbAwayOddsOk) {
+                scanTelemetry.dnbOddsRange++;
+              } else if (!dnbGate.passA && !dnbGate.passB) {
+                scanTelemetry.dnbGateBlocked++;
+              } else if (dnbHomeEdge < MIN_EDGE && dnbAwayEdge < MIN_EDGE) {
+                scanTelemetry.dnbEdgeBelow++;
+              }
+            }
+
+            if (dnbHomeActionable)
               mkP(`${hm} vs ${aw}`, league.name, `🏠 DNB ${hm}`, bestDnbH.price,
                 `Draw No Bet: ${(dnbHomeP*100).toFixed(1)}% | ${bestDnbH.bookie}: ${bestDnbH.price} | Gelijk=terugbetaling | ${ko}`,
                 Math.round(dnbHomeP*100), dnbHomeEdge * 0.24 * (cm.dnb_home?.multiplier ?? 1), kickoffTime, bestDnbH.bookie, matchSignals, refereeName, fxMetaDnbH);
 
-            if (dnbAwayEdge >= MIN_EDGE && bestDnbA.price >= 1.30 && bestDnbA.price <= 2.50 && dnbGate.passB)
+            if (dnbAwayActionable)
               mkP(`${hm} vs ${aw}`, league.name, `✈️ DNB ${aw}`, bestDnbA.price,
                 `Draw No Bet: ${(dnbAwayP*100).toFixed(1)}% | ${bestDnbA.bookie}: ${bestDnbA.price} | Gelijk=terugbetaling | ${ko}`,
                 Math.round(dnbAwayP*100), dnbAwayEdge * 0.24 * (cm.dnb_away?.multiplier ?? 1), kickoffTime, bestDnbA.bookie, matchSignals, refereeName, fxMetaDnbA);
@@ -7762,6 +7781,7 @@ async function runPrematch(emit) {
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
     `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
+    `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
   ];
   emit({ log: telLines.join('\n') });
 

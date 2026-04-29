@@ -34,6 +34,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 | v15.0.5 coverage slice | Done | OddsPapi camelCase event parsing, sharp-anchor unmatched telemetry, MLB full-game diagnostics, and conservative BTTS form-only fallback for n=0 H2H fixtures. |
 | v15.0.6 BTTS telemetry | Done | Adds scanlog counters for BTTS markets/form-only/no-exec/data/gate/edge stops without changing pick thresholds. |
 | v15.0.7 parser coverage | Done | Widens executable full-game totals/spreads/DNB recognition by market name while preserving derivative-market guards. |
+| v15.0.8 DNB telemetry | Done | Adds scanlog counters for DNB markets/no-exec/odds-range/gate/edge stops without changing pick thresholds. |
 
 ## Risks
 
@@ -61,6 +62,7 @@ Deliver the v15 final self-improving release: fix the known NFL scan blocker, wi
 - 2026-04-29 (v15.0.5): `node --check server.js lib/integrations/sources/oddspapi.js lib/v15-runtime.js test.js` passed; `npm test` passed with `898 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
 - 2026-04-29 (v15.0.6): `node --check server.js test.js` passed; `git diff --check` passed; `npm test` passed with `898 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
 - 2026-04-29 (v15.0.7): `node --check lib/odds-parser.js server.js test.js` passed; `git diff --check` passed; `npm test` passed with `901 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
+- 2026-04-29 (v15.0.8): `node --check server.js test.js` passed; `git diff --check` passed; `npm test` passed with `901 passed / 0 failed`; `npm run audit:high` passed with `0 vulnerabilities`.
 
 ## Post-Deploy State
 

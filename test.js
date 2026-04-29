@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.7');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.8');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4829,7 +4829,7 @@ test('odds-parser: parseGameOdds dedupet alle markten op hoogste prijs per booki
   assert.strictEqual(bet365Spread.price, 2.55);
 });
 
-test('odds-parser: parseGameOdds herkent full-game total op naam ook bij niet-2/3 bet-id (v15.0.7)', () => {
+test('odds-parser: parseGameOdds herkent full-game total op naam ook bij niet-2/3 bet-id (v15.0.8)', () => {
   const parsed = parseGameOdds([{ bookmakers: [{
     name: 'Bet365',
     bets: [
@@ -4844,7 +4844,7 @@ test('odds-parser: parseGameOdds herkent full-game total op naam ook bij niet-2/
   assert.ok(parsed.totals.find(o => o.side === 'under' && o.point === 8.5));
 });
 
-test('odds-parser: parseGameOdds laat derivative totals niet naar full-game lekken (v15.0.7)', () => {
+test('odds-parser: parseGameOdds laat derivative totals niet naar full-game lekken (v15.0.8)', () => {
   const parsed = parseGameOdds([{ bookmakers: [{
     name: 'Bet365',
     bets: [
@@ -6252,7 +6252,7 @@ test('odds-parser: convertAfOdds zet api-football payload om naar interne markte
   assert.ok(bk.markets.find(m => m.key === 'spreads'));
 });
 
-test('odds-parser: convertAfOdds herkent totals en spreads naam-gebaseerd (v15.0.7)', () => {
+test('odds-parser: convertAfOdds herkent totals en spreads naam-gebaseerd (v15.0.8)', () => {
   const rows = convertAfOdds([{
     name: 'Bet365',
     bets: [

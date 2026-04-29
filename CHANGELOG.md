@@ -2,6 +2,18 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.8] - 2026-04-29
+
+**Observability · DNB silent-gate telemetry**
+
+Aanleiding: de eerste scan na v15.0.7 liet zien dat `dnb_no_market` daalde van 19 naar 4. De parser unlockte dus echte DNB-markten, maar DNB verscheen nog steeds niet in de markt-mix. Net als bij BTTS had de scanner de stopreden intern, maar niet in de scanlog.
+
+### Changed
+
+- **DNB scanlog-funnel toegevoegd** aan het bestaande `Signal coverage` block:
+  `markets`, `no_exec`, `odds_range`, `gate_block`, `edge_low`.
+- Geen pickgedrag- of threshold-wijziging: dit is alleen diagnose voor de volgende scan.
+
 ## [15.0.7] - 2026-04-29
 
 **Coverage · executable totals/spreads parser widening**
