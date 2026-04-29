@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.10');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.11');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4821,12 +4821,14 @@ test('odds-parser: parseGameOdds dedupet alle markten op hoogste prijs per booki
   const bet365Ml = parsed.moneyline.find(o => o.bookie === 'Bet365' && o.side === 'home');
   const bet365Spread = parsed.spreads.find(o => o.bookie === 'Bet365' && o.side === 'home');
   assert.strictEqual(bet365Ml.price, 1.90);
-  // v12.0.0 (Codex P1): dedupe bewaart nu BESTE (hoogste) prijs, niet meer de laagste.
-  // Oud gedrag (dedupeMainLine behield slechtste prijs) was bedoeld als risico-demping
-  // bij parser-lekken, maar hield juist verkeerde varianten vast. Met scope-isolatie
-  // (betId 2/3 niet meer naar full-game bij half/F5) zijn duplicates legitiem en
-  // wil operator de hoogste prijs.
-  assert.strictEqual(bet365Spread.price, 2.55);
+  // v15.0.11 Bug B definitive: voor PAIRED markets (totals, spreads) is
+  // dedupe gewijzigd naar dedupeMainLine (laagste prijs per bookie+point+side).
+  // Reden: bookies bieden alt-lines onder zelfde betId, en alt-line is altijd
+  // higher-priced dan main. Bij paired O/U gate corrupteert alt-line de
+  // overround-sum (Bug B uit scan v15.0.8: Athletics-Royals over+under @ 9.5
+  // beide 3.30, tot=0.61). Voor ml/btts/3way blijft best-price-dedupe.
+  // Dus voor Bet365 Spread Home -1.5 (2.55 + 2.10): nu is 2.10 main-line gepicked.
+  assert.strictEqual(bet365Spread.price, 2.10);
 });
 
 test('odds-parser: parseGameOdds herkent full-game total op naam ook bij niet-2/3 bet-id (v15.0.8)', () => {

@@ -1,6 +1,6 @@
 # EdgePickr Private Operating Model
 
-Laatste update: 2026-04-29 (v15.0.10)
+Laatste update: 2026-04-29 (v15.0.11)
 
 Dit document is de actieve productdoctrine voor EdgePickr. Niet het oude
 SaaS-plan, maar de private operator-workflow is leidend.

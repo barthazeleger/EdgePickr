@@ -2,6 +2,38 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.11] - 2026-04-29
+
+**Bug B definitive · alt-line leak in paired O/U + spreads dedupe**
+
+Aanleiding: scan v15.0.10 toonde via nieuwe diagnose:
+```
+MLB Athletics vs Kansas City Royals · total 9.5 OU debug:
+bestOv=Bet365@3.30 bestUn=Bet365@3.30 ovN=8 unN=8
+(gate-block: overround_out_of_range (tot=0.606))
+```
+Bet365 zou nooit zowel Over als Under @ 9.5 op 3.30 quoten. Root cause:
+**alt-line totals leaken in main-line pool**. API-Sports payload bevat per bookie zowel main-line "Over 9.5 @ 1.85" als alt-line "Over 9.5 (Alternative) @ 3.30" onder dezelfde betId/betName. `dedupeBestPrice` (v12.0.0 Codex P1) bewaarde de hoogste prijs per (bookie, side, point) → alt-line wint over main-line. Bij paired O/U met main 1.85 + alt 3.30 voor beide kanten → bestOv = bestUn = 3.30 → tot = 2/3.30 = 0.61 → divergence-gate blokkeert.
+
+### Fixed
+
+- **`lib/odds-parser.js`** — nieuwe `dedupeMainLine()` helper: laagste-prijs-per-key dedupe. Voor paired markets (totals, spreads, halfTotals, halfSpreads, teamTotals) keert dit terug naar v12.0.0-pre gedrag waarbij main-line per definitie wint over alt-line. Voor non-paired (ml, btts, 3way, dnb, dc, nrfi, oddEven) blijft `dedupeBestPrice` (highest wins) — operator wil daar wél de beste prijs.
+- **Doctrine clarification**: best-price-dedupe is correct voor mutually-exclusive single-outcome markets (ML, BTTS); main-line-dedupe is correct voor paired-totals/spreads waar alt-lines structureel hogere prijs hebben dan main bij zelfde point.
+
+### Changed
+
+- Bestaande test `parseGameOdds dedupet alle markten op hoogste prijs per bookie (v12.0.0)` aangepast: spread-assertie van 2.55 → 2.10 (de main-line keeper). Test-comment verwijst naar v15.0.11 doctrine-shift met scan-bewijs.
+
+### Tests (901)
+
+Geen nieuwe tests; bestaande dedupe-test heralineert naar nieuwe doctrine. Sport-specifieke totals tests dekken `dedupeMainLine` pad indirect.
+
+### Verwacht effect
+
+- MLB totals: bestOv en bestUn worden main-line quotes (~1.85/1.91 typisch), tot=1.04+ valt binnen overround-range, divergence-gate evalueert correct
+- Football OU: zelfde fix; voorheen was `dedupeBestPrice` op tots ook risico voor alt-line leak
+- Spreads (AH): zelfde fix; main-line handicap quote wordt geprefereerd boven alt-handicap
+
 ## [15.0.10] - 2026-04-29
 
 **Bug-fix C · OddsPapi 0-quotes diagnose + Pattern C parser-uitbreiding**
