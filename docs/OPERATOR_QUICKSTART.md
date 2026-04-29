@@ -2,7 +2,7 @@
 
 > **Doel van dit document:** alles wat jij (Bart) zelf moet doen om de tool optimaal te benutten. Korte versie, één scrollje. Wordt elke release vervangen.
 
-Versie: **v15.3.0** · Laatste update: 2026-04-30
+Versie: **v15.3.1** · Laatste update: 2026-04-30
 
 ---
 
@@ -34,7 +34,7 @@ Stand: 30 april 2026.
 | `TSDB_LINEUP_STRENGTH` | `1` | ✅ | Pre-kickoff lineup-strength nudge |
 | `TSDB_INJURY_VALIDATION` | `1` | ✅ | Cross-check api-sports vs TSDB roster |
 | `TSDB_DISCOVERY_EXPANSION` | `1` | ✅ | Wereldwijde fixture-telemetry |
-| `TSDB_EXPANSION_SHADOW` | `1` ⚠️ ZET DEZE AAN | nog uit | Schrijft shadow pick_candidates voor 50 expansion-fixtures/scan |
+| `TSDB_EXPANSION_SHADOW` | `1` | ✅ aan sinds v15.3.0 | Schrijft shadow pick_candidates voor 50 expansion-fixtures/scan (vereist OddsPapi sharp match) |
 | `TSDB_SETTLEMENT_ENRICHMENT` | `1` | ✅ | Settled bets verrijken met TSDB event-stats |
 | `OPERATOR_PUSH_VAPID_*` | secret | ✅ | Web-push notificaties |
 
@@ -122,6 +122,6 @@ Codex' veto-bevoegdheid is in `CLAUDE.md` vastgelegd. Open ontwerp-vragen per re
 | `0/59 leagues actief` | Tijdvenster + speel-kalender. Niet automatisch een bug — TSDB-livescore + expansion-discovery laten zien of er wereldwijd wel fixtures zijn |
 | `oddspapi=off` | Admin source-toggles. v15.0.4 fixt default-on bij eerste boot |
 | Geen `🔭 Expansion-discovery` regel | `TSDB_DISCOVERY_EXPANSION=1` op Render staan? |
-| `expansion=N/M` maar `shadow_written=0` | `TSDB_EXPANSION_SHADOW=1` aanzetten |
+| `expansion=N/M` maar `shadow_written=0` | Check de `OddsPapi keys: ...` regel: `none-matched` = OddsPapi heeft geen coverage voor die specifieke expansion-leagues. Operator-actie: leagues met sample handmatig toevoegen aan SPORT_KEY_MAP in `lib/integrations/sources/oddspapi.js`, of paid-tier overwegen voor brede coverage |
 | Geen graduation-notification ondanks veel shadow rows | Check `/api/admin/v2/expansion-graduation-candidates` → zie welke gates falen |
 | Tests rood lokaal | `npm test` na `npm install`. CI is groen op master |

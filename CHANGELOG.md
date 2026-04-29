@@ -2,6 +2,22 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.3.1] - 2026-04-30
+
+**Hotfix · OddsPapi sport-key resolution voor expansion-shadow**
+
+Aanleiding: eerste live scan na v15.0.13 met `TSDB_EXPANSION_SHADOW=1` toonde `🔭 Expansion-shadow: 0 written · 50 skip(no sharp)`. Root cause: shadow-write block riep OddsPapi aan met `league: 'soccer'`, wat door `resolveOddsApiKey('football','soccer')` als unknown wordt gezien en terugvalt op `default = 'soccer_epl'`. Resultaat: alleen EPL-quotes opgehaald, expansion-leagues (Zambia/Georgia/Finse Cup) staan daar nooit in → 0 sharp matches.
+
+### Fixed
+
+- **OddsPapi sport-key discovery** (`server.js:7900+`): nieuwe flow gebruikt `oddspapi.fetchSports()` (gratis quota, day-cached) om alle `soccer_*` keys op te halen. Match top-3 expansion-league names op `sport.title` met substring + token-matching. Voor élke gematchte key één targeted `/odds` call (max 3 calls/scan). Cap = 3 × 3 scans/dag × 30 = 270/maand, blijft binnen free-tier wanneer `usage.remaining > 30`.
+- **Telemetry uitgebreid**: nieuwe `expansionOddsKeysTried` counter + scan-log toont `OddsPapi keys: <key1>, <key2>` of `none-matched`.
+
+### Verificatie
+
+- Bij volgende scan moet `🔭 Expansion-shadow` regel óf `N written` tonen óf `OddsPapi keys: none-matched` (als geen tracked TSDB-leagueName matcht een OddsPapi-key — dan weten we dat OddsPapi simpelweg geen coverage heeft voor die specifieke leagues, niet dat onze code stuk is).
+- Tests 933/933 groen.
+
 ## [15.3.0] - 2026-04-30
 
 **Build E v2 · Expansion shadow-write + TSDB-backed settlement + 6-dim graduation evaluator**

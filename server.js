@@ -6264,6 +6264,8 @@ async function runPrematch(emit) {
     expansionShadowSkipNoSharp: 0,
     expansionShadowSkipNoOdds: 0,
     expansionShadowSkipParse: 0,
+    // v15.3.1: welke OddsPapi sport-keys werden bevraagd voor expansion-shadow.
+    expansionOddsKeysTried: [],
     // v15.2.0 Build A: per-bookie quote count voor OddsPapi cross-source.
     // Operator wil weten of Bet365/Unibet/Toto/BetCity daadwerkelijk in de
     // free-tier respons zitten — als niet, kunnen we beslissen over upgrade
@@ -7897,30 +7899,70 @@ async function runPrematch(emit) {
         let shadowSkipNoOdds = 0;
         let shadowSkipParse = 0;
 
-        // Eén OddsPapi-call per scan voor expansion-shadow (bovenop bestaande
-        // sharp-cap voor tracked leagues). Vereist healthy quota.
-        let expansionSharpQuotes = null;
+        // v15.3.1 fix: vorige versie deed één call met `league:'soccer'` →
+        // resolveOddsApiKey('football','soccer') → fallback naar 'soccer_epl'
+        // (default), wat dus alleen EPL-quotes leverde en NIET de expansion-
+        // leagues (Zambia/Georgia/Finse Cup etc). Resultaat: 0 sharp matches.
+        //
+        // Nieuwe aanpak (quota-zuinig):
+        //   1. Eénmaal per dag: /sports (gratis quota) → discover alle
+        //      soccer_* keys die OddsPapi aanbiedt.
+        //   2. Match top-3 expansion-leagues op key.title (case-insensitive
+        //      substring) → bouw lijst met te bevragen sport-keys.
+        //   3. Voor elk gematchte key: één /odds call (kost 1 quota).
+        //   4. Cap op 3 calls/scan zodat 3×3=9 calls/dag → ~270/maand,
+        //      ruim binnen free-tier 250 + reactief blokkeren bij <50 remaining.
+        let expansionSharpQuotes = { quotes: [], sources: [] };
+        let oddspapiKeysTried = [];
         try {
           const oddspapi = require('./lib/integrations/sources/oddspapi');
           const usage = oddspapi.getUsage();
-          if (usage.hasKey && !usage.degraded && usage.remaining > 50) {
-            const aggOp = require('./lib/integrations/data-aggregator');
-            // Generic football scan — geen specifieke league filter, geeft
-            // OddsPapi alle voetbal-events terug (cap door OddsPapi zelf).
-            const merged = await aggOp.getMergedOdds('football', {
-              league: 'soccer',
-              bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk,bet365,unibet',
-              markets: 'h2h',
-            });
-            expansionSharpQuotes = merged;
-            scanTelemetry.oddspapiSharpAnchorCalls++;
-            scanTelemetry.oddspapiSharpAnchorQuotes += Array.isArray(merged?.quotes) ? merged.quotes.length : 0;
-            if (Array.isArray(merged?.quotes)) {
-              for (const q of merged.quotes) {
-                const b = String(q?.bookie || '').toLowerCase().trim();
-                if (b) scanTelemetry.oddspapiBookieCounts[b] = (scanTelemetry.oddspapiBookieCounts[b] || 0) + 1;
+          if (usage.hasKey && !usage.degraded && usage.remaining > 30) {
+            const sports = await oddspapi.fetchSports();
+            const soccerKeys = (sports || []).filter(s =>
+              /soccer/i.test(s.key) || /soccer/i.test(s.group || '')).slice(0, 200);
+
+            // Match top-3 expansion-league names tegen sports.title.
+            const topLeagues = Object.entries(expansionByLeague)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 6)
+              .map(([name]) => name);
+
+            const matchedKeys = new Set();
+            for (const ln of topLeagues) {
+              for (const sk of soccerKeys) {
+                const title = String(sk.title || '').toLowerCase();
+                // Substring match in beide richtingen (TSDB "japanese j2 league" ↔ OddsPapi "Japan J2 League")
+                if (title.includes(ln) || ln.split(' ').filter(t => t.length >= 4).every(t => title.includes(t))) {
+                  matchedKeys.add(sk.key);
+                  break;
+                }
               }
+              if (matchedKeys.size >= 3) break; // quota-cap 3 calls/scan
             }
+            oddspapiKeysTried = Array.from(matchedKeys);
+
+            const oddspapiAdapter = oddspapi;
+            const allQuotes = [];
+            for (const sportKey of oddspapiKeysTried) {
+              try {
+                const quotes = await oddspapiAdapter.fetchOdds(sportKey, {
+                  sport: 'football',
+                  bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk,bet365,unibet',
+                  markets: 'h2h',
+                });
+                if (Array.isArray(quotes) && quotes.length) allQuotes.push(...quotes);
+                scanTelemetry.oddspapiSharpAnchorCalls++;
+                if (Array.isArray(quotes)) {
+                  scanTelemetry.oddspapiSharpAnchorQuotes += quotes.length;
+                  for (const q of quotes) {
+                    const b = String(q?.bookie || '').toLowerCase().trim();
+                    if (b) scanTelemetry.oddspapiBookieCounts[b] = (scanTelemetry.oddspapiBookieCounts[b] || 0) + 1;
+                  }
+                }
+              } catch { /* per-key fail-soft */ }
+            }
+            expansionSharpQuotes = { quotes: allQuotes, sources: ['oddspapi'] };
           }
         } catch { /* fail-soft */ }
 
@@ -8016,7 +8058,11 @@ async function runPrematch(emit) {
         scanTelemetry.expansionShadowSkipNoSharp = shadowSkipNoSharp;
         scanTelemetry.expansionShadowSkipNoOdds = shadowSkipNoOdds;
         scanTelemetry.expansionShadowSkipParse = shadowSkipParse;
-        emit({ log: `🔭 Expansion-shadow: ${shadowWritten} written · ${shadowSkipNoSharp} skip(no sharp) · ${shadowSkipNoOdds} skip(no odds) · ${shadowSkipParse} skip(parse)` });
+        scanTelemetry.expansionOddsKeysTried = oddspapiKeysTried;
+        const keysLine = oddspapiKeysTried.length
+          ? ` · OddsPapi keys: ${oddspapiKeysTried.join(', ')}`
+          : ` · OddsPapi keys: none-matched`;
+        emit({ log: `🔭 Expansion-shadow: ${shadowWritten} written · ${shadowSkipNoSharp} skip(no sharp) · ${shadowSkipNoOdds} skip(no odds) · ${shadowSkipParse} skip(parse)${keysLine}` });
       }
     } catch (e) {
       emit({ log: `⚠️ Expansion-discovery failed: ${e?.message || 'onbekend'}` });
