@@ -4720,6 +4720,7 @@ async function runBaseball(emit) {
         const formNote = hmSt?.form || awSt?.form ? ` | Vorm: ${hmSt?.form?.slice(-10)||'?'} vs ${awSt?.form?.slice(-10)||'?'}` : '';
         const pitcherNote = pitcherSig.valid ? ` | ${pitcherSig.note} · ${starterReliability.note}` : '';
         const sharedNotes = `${posStr}${formNote}${runDiffNote}${homeAwayNote}${streakNote}${pitcherNote}${mlbWeatherNote}${restInfo.note}`;
+        const mlbGameDiag = [];
 
         // v2: feature_snapshot + pick_candidates voor MLB ML
         snap.writeFeatureSnapshot(supabase, gameId, {
@@ -4748,6 +4749,13 @@ async function runBaseball(emit) {
         const fxMetaMlbA = { fixtureId: gameId, marketType: 'moneyline', selectionKey: 'away', line: null };
         // v11.1.2: sanity-gate tegen pitcher/form-signal-pushed adjHome/adjAway.
         const mlbMlGate = divergence2WayForSport('baseball', adjHome, adjAway, bH.price, bA.price);
+        const mlbHomeDiag = diagBestPrice('ML home', bH, adjHome, MIN_EDGE);
+        const mlbAwayDiag = diagBestPrice('ML away', bA, adjAway, MIN_EDGE);
+        if (mlbHomeDiag) mlbGameDiag.push(mlbHomeDiag);
+        if (mlbAwayDiag) mlbGameDiag.push(mlbAwayDiag);
+        if (!mlbMlGate.passA || !mlbMlGate.passB) {
+          mlbGameDiag.push(`ML divergence gate: home=${mlbMlGate.passA ? 'pass' : 'block'} away=${mlbMlGate.passB ? 'pass' : 'block'}${mlbMlGate.reason ? ` (${mlbMlGate.reason})` : ''}`);
+        }
         if (homeEdge >= MIN_EDGE && bH.price >= 1.60 && bH.price <= MAX_WINNER_ODDS && mlbMlGate.passA)
           mkP(`${hm} vs ${aw}`, league.name, `🏠 ${hm} wint`, bH.price,
             `Consensus: ${(fpHome*100).toFixed(1)}%→${(adjHome*100).toFixed(1)}% | ${bH.bookie}: ${bH.price}${sharedNotes} | ${ko}`,
@@ -4811,8 +4819,17 @@ async function runBaseball(emit) {
                   debug: { sport: 'baseball', weatherAdj: mlbWeatherAdj, sourceAttribution, sharpAnchor },
                 }).catch(() => {});
               }
+              const mlbOverDiag = diagBestPrice(`total over ${line}`, bestOv, overP, MIN_EDGE);
+              const mlbUnderDiag = diagBestPrice(`total under ${line}`, bestUn, 1 - overP, MIN_EDGE);
+              if (mlbOverDiag) mlbGameDiag.push(mlbOverDiag);
+              if (mlbUnderDiag) mlbGameDiag.push(mlbUnderDiag);
+              if (!mlbOuGate.passA || !mlbOuGate.passB) {
+                mlbGameDiag.push(`total ${line} divergence gate: over=${mlbOuGate.passA ? 'pass' : 'block'} under=${mlbOuGate.passB ? 'pass' : 'block'}${mlbOuGate.reason ? ` (${mlbOuGate.reason})` : ''}`);
+              }
             }
           }
+        } else {
+          mlbGameDiag.push('total skip: geen full-game O/U odds-pair in payload');
         }
 
         // Run Line (spread) — MLB standard is ±1.5. v11.1.2: vereisen nu ≥3
@@ -5025,6 +5042,7 @@ async function runBaseball(emit) {
         // Voorheen stond dit BUITEN de game-loop → f5Diag out-of-scope →
         // runtime `ReferenceError: f5Diag is not defined` die MLB + KBO
         // scans afbrak. Nu correct binnen de game-loop body.
+        if (mlbGameDiag.length) emit({ log: `  └─ MLB ${hm} vs ${aw}: ${mlbGameDiag.slice(0, 4).join(' · ')}` });
         if (f5Diag.length) emit({ log: `  └─ F5 ${hm} vs ${aw}: ${f5Diag.slice(0, 3).join(' · ')}` });
       }
       await sleep(200);
@@ -6208,6 +6226,7 @@ async function runPrematch(emit) {
     tsdbLivescoreSkips: 0, tsdbFormHits: 0, tsdbStandingsFallbackHits: 0,
     tsdbLeagueBaselineHits: 0, tsdbLeagueBaselineApplied: 0,
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
+    oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
   };
 
   // ── Calibratie ───────────────────────────────────────────────────────────
@@ -6387,6 +6406,7 @@ async function runPrematch(emit) {
       });
       oddspapiSharpCallsThisScan++;
       scanTelemetry.oddspapiSharpAnchorCalls++;
+      scanTelemetry.oddspapiSharpAnchorQuotes += Array.isArray(merged?.quotes) ? merged.quotes.length : 0;
       return merged;
     } catch {
       return null;
@@ -6472,6 +6492,8 @@ async function runPrematch(emit) {
         if (sharpAnchor.source) {
           sourceAttribution.oddspapi.sharpAnchor = true;
           scanTelemetry.oddspapiSharpAnchorFixtures++;
+        } else if (sharpAnchor.unmatchedQuoteCount > 0) {
+          scanTelemetry.oddspapiSharpAnchorUnmatched++;
         }
 
         // v10.7.24: rest-days signaal (phase 1: logging, weight=0 default)
@@ -7278,8 +7300,14 @@ async function runPrematch(emit) {
               // door, met verlaagde dataConfidence ranking.
               const { h2hConfidence } = require('./lib/calib-params');
               const bttsConf = h2hConfidence(h2hN);
-              const bttsDataOk = bttsConf > 0;  // alleen blocken bij n=0
-              if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;  // v12.5.4 funnel (alleen n=0 nu)
+              const bttsFormOnlyOk = h2hN === 0
+                && hmSt && awSt
+                && Number.isFinite(hmGFAvg) && Number.isFinite(awGFAvg)
+                && (sourceAttribution.thesportsdb.form || sourceAttribution.thesportsdb.leagueBaseline || sourceAttribution.apiSports.standings);
+              const bttsDataOk = bttsConf > 0 || bttsFormOnlyOk;
+              if (!bttsDataOk) _premkpFunnel.btts_thin_h2h++;
+              if (bttsFormOnlyOk) bttsSignals.push('btts_form_only_no_h2h:0%');
+              const bttsDataWeight = bttsConf > 0 ? Math.max(0.35, bttsConf) : bttsFormOnlyOk ? 0.30 : 0;
 
               // v12.4.0: parity met O/U/DNB sanity-gate. Operator-rapport
               // 2026-04-26: BTTS domineerde top-5 omdat signaal-stack
@@ -7297,12 +7325,12 @@ async function runPrematch(emit) {
               if (bttsYesEdge >= MIN_EDGE && bestYes.price >= 1.60 && bttsDataOk && bttsGate.passA)
                 mkP(`${hm} vs ${aw}`, league.name, `🔥 BTTS Ja`, bestYes.price,
                   `BTTS: ${(bttsYesP*100).toFixed(1)}% | ${bestYes.bookie}: ${bestYes.price} | GF: ${hmGFAvg}/${awGFAvg}${h2hStr} | ${ko}`,
-                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * (cm.btts_yes?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
+                  Math.round(bttsYesP*100), bttsYesEdge * 0.22 * bttsDataWeight * (cm.btts_yes?.multiplier ?? 1), kickoffTime, bestYes.bookie, bttsSignals, refereeName, fxMetaBttsY);
 
               if (bttsNoEdge >= MIN_EDGE && bestNo.price >= 1.60 && bttsDataOk && bttsGate.passB)
                 mkP(`${hm} vs ${aw}`, league.name, `🛡️ BTTS Nee`, bestNo.price,
                   `BTTS Nee: ${(bttsNoP*100).toFixed(1)}% | ${bestNo.bookie}: ${bestNo.price} | GF: ${hmGFAvg}/${awGFAvg} | CS: ${hmTS2?.cleanSheetPct ? (hmTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}/${awTS2?.cleanSheetPct ? (awTS2.cleanSheetPct*100).toFixed(0)+'%' : '?'}${h2hStr} | ${ko}`,
-                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * (cm.btts_no?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
+                  Math.round(bttsNoP*100), bttsNoEdge * 0.20 * bttsDataWeight * (cm.btts_no?.multiplier ?? 1), kickoffTime, bestNo.bookie, bttsSignals, refereeName, fxMetaBttsN);
               // v12.2.38: BTTS → v2 pick_candidates.
               if (_currentModelVersionId) {
                 snap.recordBttsEvaluation({
@@ -7709,7 +7737,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
   ];
   emit({ log: telLines.join('\n') });
 

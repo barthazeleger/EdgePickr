@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.4');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.5');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -7011,6 +7011,19 @@ test('v15-runtime: sharp-anchor matcht fixture op teams+tijd en vat OddsPapi quo
   assert.ok(anchor.bookies.includes('Pinnacle'));
 });
 
+test('v15-runtime: sharp-anchor geeft unmatched diagnostics wanneer odds niet matchen (v15.0.5)', () => {
+  const anchor = v15Runtime.summarizeSharpAnchor({
+    sources: ['oddspapi'],
+    quotes: [
+      { homeTeam: 'Arsenal', awayTeam: 'Liverpool', commenceTime: '2026-04-29T18:05:00Z', bookie: 'Pinnacle', market: '1X2', selection: 'Arsenal', price: 2.4 },
+    ],
+  }, 'Arsenal', 'Liverpool', Date.parse('2026-04-28T18:00:00Z'));
+  assert.strictEqual(anchor.source, undefined);
+  assert.strictEqual(anchor.unmatchedQuoteCount, 1);
+  assert.ok(anchor.bestUnmatched);
+  assert.strictEqual(anchor.bestUnmatched.homeTeam, 'Arsenal');
+});
+
 test('calcBTTSProb accepteert custom prior + priorK (v14.0 Phase C.1)', () => {
   const { calcBTTSProb } = require('./lib/picks');
   // Default prior 0.52, K=8. Met h2hN=0, h2hBTTS=0, GF avg → result domineert door form.
@@ -7604,6 +7617,25 @@ test('oddsapi: fetchOdds parseert nested bookmakers→markets→outcomes', async
     assert.ok(pinnacleH2h, 'Pinnacle quote normalized naar canonical name');
     const overQuote = quotes.find(q => q.market === 'OU' && q.selection === 'Over');
     assert.strictEqual(overQuote.line, 2.5);
+  });
+});
+
+test('oddsapi: fetchOdds bewaart camelCase eventvelden voor sharp-anchor matching (v15.0.5)', async () => {
+  oddsapi._clearCache(); oddsapi._breaker.reset(); oddsapi._resetUsage();
+  setSourceEnabled('oddspapi', true);
+  await withMockFetch(async () => ([
+    { id: 'evt-camel', commenceTime: '2026-04-30T19:00:00Z', homeTeam: 'Ajax', awayTeam: 'PSV',
+      bookmakers: [
+        { key: 'pinnacle', markets: [
+          { key: 'h2h', outcomes: [{ name: 'Ajax', price: 2.05 }, { name: 'Draw', price: 3.4 }, { name: 'PSV', price: 3.1 }] },
+        ]},
+      ],
+    },
+  ]), async () => {
+    const quotes = await oddsapi.fetchOdds('soccer_netherlands_eredivisie', { sport: 'football' });
+    assert.ok(quotes.length >= 3, `verwacht ≥3 quotes, kreeg ${quotes.length}`);
+    assert.ok(quotes.every(q => q.homeTeam === 'Ajax' && q.awayTeam === 'PSV'), 'camelCase homeTeam/awayTeam moeten bewaard blijven');
+    assert.ok(quotes.every(q => q.commenceTime === '2026-04-30T19:00:00Z'), 'camelCase commenceTime moet bewaard blijven');
   });
 });
 

@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.5] - 2026-04-29
+
+**Coverage slice · sharp-anchor matching + no-pick diagnostics**
+
+Aanleiding: live scan na v15.0.4 liet 22 voetbalfixtures en 8 MLB-games zien, maar 0 picks. De scan bewees dat v15-bronnen actief waren (`tsdb_form_hits`, `tsdb_league_baseline`, `oddspapi_calls`), maar ook dat `sharp_anchor_fixtures=0`, `btts_thin_h2h=18` en MLB vooral F5-skipregels liet zien. Deze slice verlaagt geen globale thresholds, maar maakt marktdekking en bronmatching concreter.
+
+### Changed
+
+- **OddsPapi camelCase parsing**: `fetchOdds()` bewaart nu ook `homeTeam`, `awayTeam` en `commenceTime` wanneer OddsPapi camelCase eventvelden teruggeeft. Zonder deze velden konden opgehaalde sharp quotes niet aan EdgePickr-fixtures matchen.
+- **Sharp-anchor telemetry**: de voetbal scan-log toont nu naast `oddspapi_calls` ook `oddspapi_quotes` en `sharp_anchor_unmatched`, zodat duidelijk is of OddsPapi niets teruggeeft of wel quotes teruggeeft die niet matchen op teams/tijd.
+- **MLB full-game diagnostics**: baseball logt nu per game ook full-game ML/O/U redenen (`edge te laag`, `geen preferred prijs`, divergence gate, ontbrekende O/U-pair) vóór de bestaande F5-diagnose. Dit maakt zichtbaar of MLB echt geen value heeft of dat de scan alleen door F5-market coverage geblokkeerd wordt.
+- **BTTS form-only fallback**: voetbal-BTTS wordt bij `h2hN=0` niet langer automatisch geblokkeerd als beide teams bruikbare team/form/league-baseline data hebben. Deze candidates krijgen `btts_form_only_no_h2h:0%` en slechts 30% data-weight op de boost, zodat alleen sterke executable edges door de normale gates komen.
+
+### Tests
+
+- Nieuwe regressietests voor OddsPapi camelCase eventvelden en sharp-anchor unmatched diagnostics.
+
 ## [15.0.4] - 2026-04-29
 
 **Hotfix · scrape-source default-on werkte alleen bij volledig lege calib**
