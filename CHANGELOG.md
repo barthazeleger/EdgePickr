@@ -2,6 +2,27 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.10] - 2026-04-29
+
+**Bug-fix C · OddsPapi 0-quotes diagnose + Pattern C parser-uitbreiding**
+
+Aanleiding: scan v15.0.8 toonde `oddspapi_calls=2 · oddspapi_quotes=0 · sharp_anchor_fixtures=0`. Adapter healthy (218ms response), 2 calls geslaagd, maar parser haalde 0 quotes uit de respons. Sharp-anchor doet hierdoor niets ondanks beschikbare API-laag. Root cause onbekend zonder runtime data — defensive fix + diagnose.
+
+### Added
+
+- **`oddspapi.js fetchOdds Pattern C parser**: events met `markets`/`prices`/`odds` array direct (zonder bookmaker-laag). Mogelijke OddsPapi shapes als `{markets: [{bookie, market, side, price}]}` of `{prices: [{book, market, line, decimal}]}`. Parser probeert nu A (nested bookmakers), B (flat row), C (markets/prices/odds direct). Alle drie patronen extracten zelfde shape.
+- **One-shot diagnostic warn** als response items bevat maar parser 0 quotes extract: `console.warn` met sample-keys en eerste 800 chars van item. Helpt operator (en mij) bij volgende scan exact zien welke shape OddsPapi gebruikt zonder permanent log-spam (één keer per process via `_warnedShapeMismatch` flag).
+
+### Tests (901)
+
+Geen nieuwe tests — diagnose-pad is best-effort, geen contract-change. Bestaande oddspapi mock-tests dekken parser-pad.
+
+### Verwacht effect
+
+- Indien OddsPapi Pattern C gebruikt → quotes worden nu geëxtract, sharp-anchor activeert
+- Indien Pattern D (onbekend) → diagnostic warn toont sample, volg-fix in v15.0.x
+- Indien sport-key mismatch (calls returnen `[]`) → niet opgelost door deze fix; vereist sport-key research
+
 ## [15.0.9] - 2026-04-29
 
 **Bug-fix · Totals maxPrice cap + MLB overround diagnostiek**
