@@ -8767,6 +8767,12 @@ app.listen(PORT, () => {
   // chainen — pre-v12.5.10 stond deze sync-block vóór de async OPERATOR
   // load → masterOn was altijd default-false → master-default fallback fired
   // niet in production. Helder bug.
+  // v15.0.4 fix: vorige master-default check (`noPersistedTrue`) firede alleen
+  // als HELEMAAL géén bron persisted-true was. Zodra thesportsdb expliciet aan
+  // stond, bleef oddspapi (later toegevoegd in v13) eeuwig off — operator
+  // moest zelf nog togglen. Nu per-source: als de bron NIET in persisted
+  // voorkomt en master aan staat → default-on. Expliciete operator-keuzes
+  // (true/false) blijven gerespecteerd.
   function restoreScraperSourcesFromCalib() {
     try {
       const scraperBase = require('./lib/integrations/scraper-base');
@@ -8777,13 +8783,16 @@ app.listen(PORT, () => {
       // Quota-tracking (250/maand free-tier) gebeurt in adapter zelf.
       const known = ['thesportsdb', 'oddspapi', 'nba-stats', 'nhl-api', 'mlb-stats-ext'];
       const masterOn = !!OPERATOR.scraping_enabled;
-      const noPersistedTrue = !Object.values(persisted).some(v => v === true);
       let applied = 0;
       for (const name of known) {
-        if (persisted[name] === true) { scraperBase.setSourceEnabled(name, true); applied++; }
-        else if (masterOn && noPersistedTrue) { scraperBase.setSourceEnabled(name, true); applied++; }
+        const hasExplicit = Object.prototype.hasOwnProperty.call(persisted, name);
+        if (hasExplicit) {
+          if (persisted[name] === true) { scraperBase.setSourceEnabled(name, true); applied++; }
+        } else if (masterOn) {
+          scraperBase.setSourceEnabled(name, true); applied++;
+        }
       }
-      if (applied) console.log(`🔌 Scrape-sources hersteld: ${applied} source(s) enabled (${masterOn && noPersistedTrue ? 'master-default' : 'calib'})`);
+      if (applied) console.log(`🔌 Scrape-sources hersteld: ${applied} source(s) enabled (calib + master-default per-source)`);
     } catch (e) { console.warn('scrape-sources restore failed:', e.message); }
   }
 

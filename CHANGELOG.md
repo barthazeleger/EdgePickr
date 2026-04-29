@@ -2,6 +2,20 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.4] - 2026-04-29
+
+**Hotfix · scrape-source default-on werkte alleen bij volledig lege calib**
+
+Aanleiding: operator zag `oddspapi=off` in scan-log ondanks `OPERATOR.scraping_enabled = true` en geen UI-toggle ooit aangeraakt. Root cause: `restoreScraperSourcesFromCalib` checkte `noPersistedTrue` (niemand persisted-true) als gate voor de master-default fallback. Zodra `thesportsdb` ooit persisted-true was, werd `oddspapi` (later toegevoegd in v13.0.0) nooit meer default-on gezet, ook niet bij master-aan.
+
+### Fixed
+
+- **Per-source default-on bij missing-from-persisted**: nieuwe logic respecteert expliciete operator-keuzes (true én false) en defaultt alleen sources die helemaal NIET in `calib.scraper_sources` staan naar enabled wanneer master scraping aan is. Effect: oddspapi (en toekomstige nieuwe sources) wordt automatisch enabled bij eerste boot na deploy zonder dat operator door de prompt-UI hoeft.
+
+### Tests
+
+- 896/896 groen, 0 vulnerabilities. Geen schema-changes.
+
 ## [15.0.3] - 2026-04-29
 
 **Hotfix · league baseline TSDB-id mismatch**
