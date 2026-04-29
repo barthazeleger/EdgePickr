@@ -16,3 +16,6 @@ coverage/
 
 # OS
 .DS_Store
+
+# Agent-specific workspace instruction files (Codex, etc.)
+AGENTS.md
