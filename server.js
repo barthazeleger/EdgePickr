@@ -6323,6 +6323,49 @@ async function runPrematch(emit) {
     } catch { footballLiveEvents = []; }
   }
 
+  // v15.0.2 fix: dynamische TSDB-leagueId-map. AF_FOOTBALL_LEAGUES gebruikt
+  // api-sports league-ids (88, 94, …) terwijl TSDB endpoints TSDB's eigen
+  // idLeague (4-cijferig, 4337/4344/…) verwachten. Eén `fetchSchedulesByDate`
+  // call levert vandaag's TSDB voetbal-fixtures inclusief idLeague + leagueName,
+  // waaruit we per scan een name-keyed map bouwen voor downstream baseline-
+  // lookups. Day-cached binnen de adapter, +1 TSDB call/scan totaal.
+  const tsdbLeagueIdByName = Object.create(null);
+  if (OPERATOR.scraping_enabled && process.env.TSDB_LEAGUE_BASELINE === '1') {
+    try {
+      const tsdb = require('./lib/integrations/sources/thesportsdb');
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+      const fixtures = await tsdb.fetchSchedulesByDate(today, 'football');
+      for (const fx of fixtures || []) {
+        const ln = (fx?.leagueName || '').toLowerCase().trim();
+        if (ln && fx.leagueId && !tsdbLeagueIdByName[ln]) tsdbLeagueIdByName[ln] = String(fx.leagueId);
+      }
+      if (Object.keys(tsdbLeagueIdByName).length) {
+        emit({ log: `🛰️ TSDB league-id map: ${Object.keys(tsdbLeagueIdByName).length} liga's resolved voor baseline` });
+      }
+    } catch { /* baseline-map mag scan nooit breken */ }
+  }
+  const _resolveTsdbLeagueId = (league) => {
+    if (league.tsdbId) return String(league.tsdbId);
+    const exact = tsdbLeagueIdByName[(league.name || '').toLowerCase().trim()];
+    if (exact) return exact;
+    // Fuzzy: een paar bekende naam-mismatches tussen api-sports & TSDB.
+    const aliases = {
+      'eredivisie': ['eredivisie', 'dutch eredivisie'],
+      'primeira liga': ['primeira liga', 'portuguese primeira liga'],
+      'champions league': ['champions league', 'uefa champions league'],
+      'eliteserien': ['eliteserien', 'norwegian eliteserien'],
+      'saudi pro league': ['saudi pro league', 'saudi professional league'],
+      'j1 league': ['j1 league', 'japanese j1 league', 'j-league'],
+      'egyptian premier': ['egyptian premier', 'egyptian premier league'],
+      'nb i hungary': ['nb i hungary', 'hungarian nb i', 'hungary nb i'],
+    };
+    const candidates = aliases[(league.name || '').toLowerCase().trim()] || [];
+    for (const c of candidates) {
+      if (tsdbLeagueIdByName[c]) return tsdbLeagueIdByName[c];
+    }
+    return null;
+  };
+
   const ODDS_PAPI_FOOTBALL_KEYS = {
     epl: 'EPL', laliga: 'La Liga', bundesliga: 'Bundesliga', seriea: 'Serie A',
     ligue1: 'Ligue 1', eredivisie: 'Eredivisie', ucl: 'CL', uel: 'EL', mls: 'MLS',
@@ -6383,16 +6426,21 @@ async function runPrematch(emit) {
       // shrunk gemiddelde-goals/match. Wordt als additieve OU-prior signal in
       // het mkP-pad gehangen. Day-cached, +1 TSDB-call per actieve liga/dag.
       // Achter env-flag zodat we op Render aan/uit kunnen zonder redeploy.
+      // v15.0.2 fix: gebruik dynamische TSDB-id resolver i.p.v. api-sports id
+      // — anders geeft fetchLeaguePast leeg terug en blijft baseline=0/0.
       let leagueBaseline = null;
       if (OPERATOR.scraping_enabled && process.env.TSDB_LEAGUE_BASELINE === '1') {
-        try {
-          const agg = require('./lib/integrations/data-aggregator');
-          leagueBaseline = await agg.getLeagueScoringBaseline('football', league.tsdbId || league.id, { line: 2.5 });
-          if (leagueBaseline) {
-            scanTelemetry.tsdbLeagueBaselineHits++;
-            leagueSourceAttribution.thesportsdb.leagueBaseline = true;
-          }
-        } catch { /* baseline mag scan nooit breken */ }
+        const tsdbLeagueId = _resolveTsdbLeagueId(league);
+        if (tsdbLeagueId) {
+          try {
+            const agg = require('./lib/integrations/data-aggregator');
+            leagueBaseline = await agg.getLeagueScoringBaseline('football', tsdbLeagueId, { line: 2.5 });
+            if (leagueBaseline) {
+              scanTelemetry.tsdbLeagueBaselineHits++;
+              leagueSourceAttribution.thesportsdb.leagueBaseline = true;
+            }
+          } catch { /* baseline mag scan nooit breken */ }
+        }
       }
       const leagueSharpOdds = await loadFootballSharpOdds(league);
 

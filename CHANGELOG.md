@@ -2,6 +2,24 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.3] - 2026-04-29
+
+**Hotfix · league baseline TSDB-id mismatch**
+
+Aanleiding: eerste live scan na v15.0.2 (`TSDB_LEAGUE_BASELINE=1` toggled) liet `tsdb_league_baseline=0/applied=0` zien ondanks 8 actieve liga's met fixtures. Root cause: `AF_FOOTBALL_LEAGUES` gebruikt api-sports league-ids (88 = Eredivisie), terwijl TSDB's `fetchLeaguePast` een eigen 4-cijferige `idLeague` (4337 = Eredivisie) verwacht. De fetch returnde elke keer leeg → baseline=null → counter bleef 0.
+
+### Fixed
+
+- **TSDB league-id resolver in voetbal-scan**: één pre-scan `fetchSchedulesByDate(today, 'football')`-call bouwt een name → `idLeague` map uit vandaag's TSDB-fixtures. `_resolveTsdbLeagueId(league)` valt terug op `league.tsdbId`, dan exacte naam-match, dan een kleine alias-tabel voor bekende verschillen tussen api-sports en TSDB league-namen (Eredivisie / Primeira Liga / Champions League / Eliteserien / Saudi Pro / J1 / Egyptian / NB I). Logregel `🛰️ TSDB league-id map: N liga's resolved voor baseline` bevestigt resolution per scan.
+
+### Costs
+
+- +1 TSDB-call per scan (één keer `eventsday.php`, hour-cached). Voorheen 0 calls verspild op 0/0 baseline-resultaten; nu 1 productieve call die meerdere liga's tegelijk resolvet.
+
+### Tests
+
+- Bestaande 896 tests blijven groen (helper en endpoint-paths ongewijzigd, fix is server-side wiring).
+
 ## [15.0.2] - 2026-04-28
 
 **API-utilization · Pick-funnel observability · League scoring baseline · Settlement-coverage diagnose**
