@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.7] - 2026-04-29
+
+**Coverage · executable totals/spreads parser widening**
+
+Aanleiding: live scans lieten `dnb_no_market=19`, `handicap_no_devig=19` en MLB `total skip: geen full-game O/U odds-pair in payload` zien. Een deel hiervan kan echte API-dekking zijn, maar de parser accepteerde full-game totals/spreads vooral op vaste bet-ids. API-Sports gebruikt per sport/league regelmatig andere ids terwijl de market name wél duidelijk `Over/Under`, `Run Line`, `Asian Handicap`, etc. is.
+
+### Changed
+
+- **MLB/full-game totals**: `parseGameOdds()` herkent nu full-game totals naam-gebaseerd (`Over/Under`, `total runs`, `game total`, etc.) ook wanneer de bet-id niet `2` of `3` is.
+- **Runline/spread/handicap**: `parseGameOdds()` en `convertAfOdds()` herkennen full-game spreads naam-gebaseerd (`Run Line`, `Spread`, `Asian Handicap`, etc.) met dezelfde half/F5/period/corner/card/player guards.
+- **Football DNB**: DNB-detectie zoekt nu op `Draw No Bet` naam i.p.v. alleen `id === 12`, zonder synthetische DNB-picks te maken.
+- **Safety guards**: team totals, corners, cards, player props, half/period/F5 blijven uitgesloten van full-game totals/spreads.
+
+### Tests
+
+- Nieuwe parser-regressies voor naam-gebaseerde full-game totals/spreads en derivative-market leak-preventie.
+
 ## [15.0.6] - 2026-04-29
 
 **Observability · BTTS silent-gate telemetry**

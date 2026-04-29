@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.6');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.7');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4829,6 +4829,38 @@ test('odds-parser: parseGameOdds dedupet alle markten op hoogste prijs per booki
   assert.strictEqual(bet365Spread.price, 2.55);
 });
 
+test('odds-parser: parseGameOdds herkent full-game total op naam ook bij niet-2/3 bet-id (v15.0.7)', () => {
+  const parsed = parseGameOdds([{ bookmakers: [{
+    name: 'Bet365',
+    bets: [
+      { id: 99, name: 'Over/Under', values: [
+        { value: 'Over 8.5', odd: '1.91' },
+        { value: 'Under 8.5', odd: '1.95' },
+      ]},
+    ],
+  }] }], 'Dodgers', 'Marlins');
+  assert.strictEqual(parsed.totals.length, 2);
+  assert.ok(parsed.totals.find(o => o.side === 'over' && o.point === 8.5));
+  assert.ok(parsed.totals.find(o => o.side === 'under' && o.point === 8.5));
+});
+
+test('odds-parser: parseGameOdds laat derivative totals niet naar full-game lekken (v15.0.7)', () => {
+  const parsed = parseGameOdds([{ bookmakers: [{
+    name: 'Bet365',
+    bets: [
+      { id: 99, name: 'Team Total Runs Over/Under', values: [
+        { value: 'Over 4.5', odd: '1.91' },
+        { value: 'Under 4.5', odd: '1.95' },
+      ]},
+      { id: 98, name: 'Corners Over/Under', values: [
+        { value: 'Over 8.5', odd: '1.80' },
+        { value: 'Under 8.5', odd: '2.00' },
+      ]},
+    ],
+  }] }], 'Dodgers', 'Marlins');
+  assert.strictEqual(parsed.totals.length, 0);
+});
+
 test('odds-parser: bestFromArr respecteert preferredBookies state', () => {
   setPreferredBookies(['unibet']);
   const best = bestFromArr([
@@ -6218,6 +6250,22 @@ test('odds-parser: convertAfOdds zet api-football payload om naar interne markte
   assert.ok(bk.markets.find(m => m.key === 'totals'));
   assert.ok(bk.markets.find(m => m.key === 'btts'));
   assert.ok(bk.markets.find(m => m.key === 'spreads'));
+});
+
+test('odds-parser: convertAfOdds herkent totals en spreads naam-gebaseerd (v15.0.7)', () => {
+  const rows = convertAfOdds([{
+    name: 'Bet365',
+    bets: [
+      { id: 99, name: 'Over/Under', values: [{ value: 'Over 8.5', odd: '1.91' }, { value: 'Under 8.5', odd: '1.95' }] },
+      { id: 98, name: 'Run Line', values: [{ value: 'Home -1.5', odd: '2.20' }, { value: 'Away +1.5', odd: '1.72' }] },
+    ],
+  }], 'Dodgers', 'Marlins');
+  const totals = rows[0].markets.find(m => m.key === 'totals');
+  const spreads = rows[0].markets.find(m => m.key === 'spreads');
+  assert.ok(totals, 'totals market moet via naam worden herkend');
+  assert.ok(spreads, 'spreads/run-line market moet via naam worden herkend');
+  assert.strictEqual(totals.outcomes[0].point, 8.5);
+  assert.strictEqual(spreads.outcomes[0].point, -1.5);
 });
 
 test('odds-parser: convertAfOdds (v12.5.13) parses Double Chance market', () => {

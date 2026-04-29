@@ -7375,7 +7375,7 @@ async function runPrematch(emit) {
           // api-football bet id 12: "Draw No Bet" (not Asian Handicap which is also id 12 in some contexts)
           const dnbBk = filteredBks.map(fb => {
             // Look for Draw No Bet specifically (different from Asian Handicap)
-            const dnbM = fb.bets?.find(b => b.id === 12 && (b.name||'').toLowerCase().includes('draw no bet'));
+            const dnbM = fb.bets?.find(b => (b.name||'').toLowerCase().includes('draw no bet'));
             if (!dnbM) return null;
             return { name: fb.name, values: dnbM.values || [] };
           }).filter(Boolean);
