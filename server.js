@@ -6249,6 +6249,15 @@ async function runPrematch(emit) {
     // gat is (no_roster/thin_roster) of een echt naam-conflict (name_unmatched).
     tsdbInjuryNoRoster: 0, tsdbInjuryThinRoster: 0,
     tsdbInjuryNameUnmatched: 0, tsdbInjuryMatched: 0,
+    // v15.2.0 Build E: expansion-discovery telemetrie. Telt voetbal-fixtures
+    // wereldwijd die NIET in de 59-liga set zitten, zodat operator volume kan
+    // inschatten voordat we een scan-pad eraan toevoegen.
+    expansionCandidates: 0, expansionLeagues: 0,
+    // v15.2.0 Build A: per-bookie quote count voor OddsPapi cross-source.
+    // Operator wil weten of Bet365/Unibet/Toto/BetCity daadwerkelijk in de
+    // free-tier respons zitten — als niet, kunnen we beslissen over upgrade
+    // naar paid tier. Object {bookie_lc: count} over alle scan-calls heen.
+    oddspapiBookieCounts: Object.create(null),
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
     oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
     bttsMarkets: 0, bttsFormOnly: 0, bttsNoExecutable: 0,
@@ -6451,24 +6460,46 @@ async function runPrematch(emit) {
     epl: 'EPL', laliga: 'La Liga', bundesliga: 'Bundesliga', seriea: 'Serie A',
     ligue1: 'Ligue 1', eredivisie: 'Eredivisie', ucl: 'CL', uel: 'EL', mls: 'MLS',
   };
+  // v15.1.0 Build A: cap verhoogd 2→5 zodat we sharp-anchor over meer leagues
+  // krijgen. OddsPapi free-tier 250/maand = ~8/dag bij 30 scans; 5/scan × 3 scans =
+  // 15/dag past nog steeds (~450/maand) — caller checkt usage.remaining
+  // afzonderlijk en stopt fail-soft als quota dreigt.
+  const ODDSPAPI_SHARP_CALL_CAP = 5;
   let oddspapiSharpCallsThisScan = 0;
   const loadFootballSharpOdds = async (league) => {
     if (!OPERATOR.scraping_enabled) return null;
     if (!ODDS_PAPI_FOOTBALL_KEYS[league.key]) return null;
-    if (oddspapiSharpCallsThisScan >= 2) return null;
+    if (oddspapiSharpCallsThisScan >= ODDSPAPI_SHARP_CALL_CAP) return null;
     try {
       const oddspapi = require('./lib/integrations/sources/oddspapi');
       const usage = oddspapi.getUsage();
       if (!usage.hasKey || usage.degraded || usage.remaining <= 25) return null;
       const agg = require('./lib/integrations/data-aggregator');
+      // v15.1.0 Build A: dezelfde call levert nu zowel sharp-anchor (Pinnacle/
+      // Betfair) ALS execution-quotes (Bet365/Unibet/Toto/BetCity/WilliamHill/Bwin).
+      // Dit geeft dual-source cross-validation én odds-coverage voor fixtures
+      // waar api-sports geen bookmakers in payload heeft. Pinnacle blijft
+      // expliciet eerste in de lijst zodat sharp-detection (regex
+      // /pinnacle|betfair|...) in summarizeSharpAnchor consistent werkt.
       const merged = await agg.getMergedOdds('football', {
         league: ODDS_PAPI_FOOTBALL_KEYS[league.key],
-        bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk',
+        bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk,bet365,unibet,toto,betcity,williamhill,bwin,1xbet',
         markets: 'h2h,totals,spreads',
       });
       oddspapiSharpCallsThisScan++;
       scanTelemetry.oddspapiSharpAnchorCalls++;
       scanTelemetry.oddspapiSharpAnchorQuotes += Array.isArray(merged?.quotes) ? merged.quotes.length : 0;
+      // v15.2.0 Build A: tel per-bookie quote-count zodat operator kan zien
+      // welke execution-bookies daadwerkelijk in de OddsPapi free-tier respons
+      // zitten (Bet365/Unibet/Toto/BetCity etc). Dit is direct observable
+      // bewijs voor de paid-tier upgrade-discussie.
+      if (Array.isArray(merged?.quotes)) {
+        for (const q of merged.quotes) {
+          const b = String(q?.bookie || '').toLowerCase().trim();
+          if (!b) continue;
+          scanTelemetry.oddspapiBookieCounts[b] = (scanTelemetry.oddspapiBookieCounts[b] || 0) + 1;
+        }
+      }
       return merged;
     } catch {
       return null;
@@ -7777,6 +7808,69 @@ async function runPrematch(emit) {
     }
   }
 
+  // ── v15.2.0 Build E: TSDB-driven expansion discovery (env-gated) ──────────
+  // Doel: zichtbaar maken hoeveel voetbal-fixtures er vandaag wereldwijd
+  // zijn die NIET in onze 59-liga set zitten, zodat operator + Codex met
+  // data kunnen beslissen of het de moeite waard is om die te scannen.
+  //
+  // v1: pure observability — telt en logt expansion-fixtures, schrijft GEEN
+  // pick_candidates. Hierdoor zijn er geen scan-loop neveneffecten en kan
+  // Codex de processing-laag (api-sports/odds + OddsPapi-fallback shadow
+  // picks) in een aparte slice toevoegen op basis van de telemetry.
+  //
+  // Activatie: env-flag `TSDB_DISCOVERY_EXPANSION=1`. Default off.
+  if (OPERATOR.scraping_enabled && process.env.TSDB_DISCOVERY_EXPANSION === '1' && Object.keys(tsdbLeagueIdByName).length > 0) {
+    try {
+      const tsdb = require('./lib/integrations/sources/thesportsdb');
+      const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Amsterdam' });
+      const fixtures = await tsdb.fetchSchedulesByDate(today, 'football');
+      // Tracked-league name set (lowercased, trimmed) op basis van AF_FOOTBALL_LEAGUES
+      // + bekende aliases zodat we dezelfde fuzzy-tolerantie hebben als
+      // _resolveTsdbLeagueId hierboven.
+      const trackedAliases = new Set();
+      for (const league of AF_FOOTBALL_LEAGUES) {
+        trackedAliases.add(league.name.toLowerCase().trim());
+      }
+      ['eredivisie', 'dutch eredivisie', 'primeira liga', 'portuguese primeira liga',
+       'champions league', 'uefa champions league', 'eliteserien', 'norwegian eliteserien',
+       'saudi pro league', 'saudi professional league', 'j1 league', 'japanese j1 league',
+       'j-league', 'egyptian premier', 'egyptian premier league', 'nb i hungary',
+       'hungarian nb i', 'hungary nb i'].forEach(a => trackedAliases.add(a));
+
+      const expansionByLeague = Object.create(null);
+      let expansionCandidates = 0;
+      for (const fx of fixtures || []) {
+        const ln = (fx?.leagueName || '').toLowerCase().trim();
+        if (!ln) continue;
+        // Substring-tolerante check: als de fixture-leagueName overlapt met een
+        // tracked alias (in beide richtingen), tellen we hem als gedekt.
+        let isTracked = trackedAliases.has(ln);
+        if (!isTracked) {
+          for (const alias of trackedAliases) {
+            if (alias.length >= 5 && (alias.includes(ln) || ln.includes(alias))) { isTracked = true; break; }
+          }
+        }
+        if (isTracked) continue;
+        expansionCandidates++;
+        expansionByLeague[ln] = (expansionByLeague[ln] || 0) + 1;
+      }
+      scanTelemetry.expansionCandidates = expansionCandidates;
+      scanTelemetry.expansionLeagues = Object.keys(expansionByLeague).length;
+      if (expansionCandidates > 0) {
+        const top3 = Object.entries(expansionByLeague)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name, n]) => `${name} (${n})`)
+          .join(', ');
+        emit({ log: `🔭 Expansion-discovery: ${expansionCandidates} fixtures in ${scanTelemetry.expansionLeagues} niet-tracked leagues · top-3: ${top3}` });
+      } else {
+        emit({ log: `🔭 Expansion-discovery: 0 fixtures buiten tracked-set (alle TSDB-fixtures gedekt)` });
+      }
+    } catch (e) {
+      emit({ log: `⚠️ Expansion-discovery failed: ${e?.message || 'onbekend'}` });
+    }
+  }
+
   // Tag alle prematch picks als 'pre' + sport
   for (const p of picks)     { p.scanType = 'pre'; p.sport = 'football'; }
   for (const p of combiPool) { p.scanType = 'pre'; p.sport = 'football'; }
@@ -7918,10 +8012,20 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · expansion=${tel.expansionCandidates || 0}/${tel.expansionLeagues || 0} leagues · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
     `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
   ];
+  // v15.2.0 Build A: per-bookie OddsPapi quote-breakdown — top-10 zodat operator
+  // ziet of execution-bookies (Bet365/Unibet/Toto/BetCity) daadwerkelijk in de
+  // free-tier respons zitten. Bij volume = 0 voor preferred bookies → upgrade
+  // overweging.
+  const _bookieEntries = Object.entries(tel.oddspapiBookieCounts || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+  if (_bookieEntries.length) {
+    telLines.push(`  📡 OddsPapi bookies: ${_bookieEntries.map(([b, n]) => `${b}=${n}`).join(' · ')}`);
+  }
   emit({ log: telLines.join('\n') });
 
   const weakCount = allCandidates.length - finalPicks.length;

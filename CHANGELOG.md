@@ -2,6 +2,42 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.2.0] - 2026-04-30
+
+**Source-rebalance · OddsPapi multi-bookie + TSDB-discovery telemetry**
+
+Aanleiding: operator-observatie dat we api-sports te zwaar belasten en TSDB onderbenutten. Audit toonde dat onze 59-liga hardcoded set vaak ≥75% leeg is op rustige dagen, terwijl TSDB universeel fixture-discovery levert. Operator-vraag of we TSDB tot main-source kunnen maken: nee (geen odds), maar discovery-laag kan wél worden geflipped + OddsPapi kan dual-purpose draaien (sharp anchor + execution quotes).
+
+### Added
+
+- **Build A · OddsPapi multi-bookie call** (`server.js:6450-6489`): `loadFootballSharpOdds` haalt nu Pinnacle/Betfair (sharp anchor) ÉN Bet365/Unibet/Toto/BetCity/WilliamHill/Bwin/1xBet (execution + cross-source) in dezelfde call op. Cap verhoogd 2→5/scan. Geen extra quota-impact want call-count onveranderd; quotes-volume groeit ~6× (telemetrie zichtbaar). Nieuwe scan-log regel `📡 OddsPapi bookies: pinnacle=N · bet365=M · unibet=K · ...` toont per-bookie response-coverage zodat operator paid-tier upgrade-beslissing op data baseert.
+- **Build E v1 · TSDB-discovery expansion telemetry** (`server.js:7791+`): nieuwe env-flag `TSDB_DISCOVERY_EXPANSION=1` triggert post-scan een 1-call TSDB-schedule check. Telt voetbal-fixtures wereldwijd die NIET in onze 59-liga set zitten + de top-3 leagues per scan. Pure observability voor v1: er worden geen pick_candidates geschreven en geen mkP-calls gedaan. Levert operator + Codex de volume-metric voor de v15.2.x processing-laag (shadow picks via OddsPapi-fallback). Telemetry: `expansion=N/M leagues` in `🛰️ v15 sources` regel.
+- **Per-bookie quote-counter** (`scanTelemetry.oddspapiBookieCounts`): per scan tellen we per OddsPapi-bookie hoeveel quotes binnen kwamen. Bewijst direct of `bet365` / `unibet` / `unibet_nl` / `toto` daadwerkelijk in free-tier respons zitten of dat upgrade ($30-50/mo) nodig is voor execution-coverage.
+
+### Deferred (Codex review · v15.2.x)
+
+- **Build B · TSDB-primary form**: vereist `TSDB_FORM_PRIMARY=1` flag + nieuwe `formSummaryToStatsPrimary()` helper. Codex moet eerst observeren of TSDB-form-events daadwerkelijk rijker zijn dan api-sports W/D/L letters (compare in Build A telemetrie data over 7+ scans).
+- **Build C · TSDB-primary H2H**: idem. Pas tunen na 7+ scans aan field-data, anders blind moven.
+- **Build F · OddsPapi as odds fallback**: alleen relevant zodra Build E v2 (expansion processing) wordt gebouwd. Couples met de pick-generation laag voor non-tracked fixtures. Codex slice `v15.2.1`.
+- **Build E v2 · Expansion processing**: shadow pick_candidates voor expansion-fixtures via OddsPapi sharp-anchor, geïnspireerd door bestaande `runShadowSports` template (server.js:8241+). Cap 30 fixtures/scan, env-flag `TSDB_EXPANSION_SHADOW=1`. Codex slice met operator-toggle na v15.2.0 telemetrie review.
+
+### Niet gewijzigd (bewust)
+
+- **Geen drempel-aanpassingen**. Operator-instructie sinds v15.0.1 §Risks: gates pas verlagen op CLV-bewijs uit settled bets.
+- **Geen sport-promoties**. Tennis/rugby/cricket blijven shadow.
+- **Geen wijziging aan picks.js cascade**. Alle nieuwe paden zijn pre-mkP enrichment of post-loop telemetry.
+
+### Tests
+
+- 925/925 groen (geen wijzigingen aan helpers; nieuwe code is inline scan-loop telemetrie).
+
+### Verificatie
+
+- `node --check server.js` schoon.
+- `npm run audit:high` = 0 vulnerabilities.
+- Met `TSDB_DISCOVERY_EXPANSION=1` op Render → scan-log toont `🔭 Expansion-discovery: N fixtures in M leagues · top-3: ...`
+- Met huidige flags (alle v15.0.12 + v15.2.0) → `📡 OddsPapi bookies: ...` toont welke execution-bookies daadwerkelijk in OddsPapi free-tier response zitten.
+
 ## [15.0.13] - 2026-04-29
 
 **Hotfix · injury cross-check reason-buckets + thin-roster guard**
