@@ -3150,8 +3150,10 @@ async function runBasketball(emit) {
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              // v15.0.9 Bug B parity: maxPrice 3.5 cap voor totals — alt-line
+              // longshot quotes (5.0+) verstoorden de overround sanity-gate.
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
                 { sport: 'basketball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
                 { maxPrice: 3.5 });
@@ -4115,8 +4117,10 @@ async function runHockey(emit) {
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              // v15.0.9 Bug B parity: maxPrice 3.5 cap voor totals — alt-line
+              // longshot quotes (5.0+) verstoorden de overround sanity-gate.
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
                 { sport: 'hockey', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
                 { maxPrice: 3.5 });
@@ -4784,8 +4788,8 @@ async function runBaseball(emit) {
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
               const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + mlbWeatherAdj));
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
                 { sport: 'baseball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
                 { maxPrice: 3.5 });
@@ -4795,7 +4799,16 @@ async function runBaseball(emit) {
               const overEdge = overP * bestOv.price - 1;
               const underEdge = (1-overP) * bestUn.price - 1;
               // v11.2.1: safety-gate vangt mlbWeatherAdj die overP ver van markt kan trekken + fxMeta
+              // v15.0.9 Bug B fix: diagnose-pad bij anomalous overround. Eerdere
+              // scans toonden tot=0.38-0.54 voor MLB totals — half van de gezonde
+              // 1.04+. Mogelijke oorzaken: preferred-bookies offer alleen alt-line
+              // quotes op de mainLine, OF api-football payload heeft alt-line
+              // markten gemengd. Log de gevonden prijzen+bookies in de scan-diag
+              // zodat operator op één scan kan zien wat er fout gaat.
               const mlbOuGate = divergence2WayForSport('baseball', overP, 1-overP, bestOv.price, bestUn.price);
+              if (mlbOuGate?.reason && mlbOuGate.reason.startsWith('overround_out_of_range')) {
+                mlbGameDiag.push(`total ${line} OU debug: bestOv=${bestOv.bookie}@${bestOv.price.toFixed(2)} bestUn=${bestUn.bookie}@${bestUn.price.toFixed(2)} ovN=${ov.length} unN=${un.length} (gate-block: ${mlbOuGate.reason})`);
+              }
               const fxMetaMlbOv = { fixtureId: gameId, marketType: 'total', selectionKey: 'over', line };
               const fxMetaMlbUn = { fixtureId: gameId, marketType: 'total', selectionKey: 'under', line };
 
@@ -5004,8 +5017,9 @@ async function runBaseball(emit) {
               // Pitcher signal op F5 totals: betere pitcher samen → lagere score → under-bias
               const pitcherUnderBias = pitcherSig.valid ? Math.max(0, (4.0 - (mlbMatch?.homePitcher?.era || 4) - (mlbMatch?.awayPitcher?.era || 4) + 4.0) * 0.01) : 0;
               const adjOverP = Math.max(0.05, Math.min(0.95, overP - pitcherUnderBias));
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              // v15.0.9 Bug B parity: F5 totals maxPrice cap.
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               const eOv = bestOv.price > 0 ? adjOverP * bestOv.price - 1 : -1;
               const eUn = bestUn.price > 0 ? (1 - adjOverP) * bestUn.price - 1 : -1;
               // v11.2.1: pitcherUnderBias kan adjOverP trekken; gate tegen markt-consensus
@@ -5448,8 +5462,9 @@ async function runFootballUS(emit) {
               const totIP2 = avgOvIP + avgUnIP;
               // Weather-adjusted overP: regen/wind = minder scoring = under nudge
               const overP = Math.max(0.10, Math.min(0.90, (totIP2 > 0 ? avgOvIP / totIP2 : 0.5) + weatherAdj));
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              // v15.0.9 Bug B parity: NFL totals maxPrice cap.
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
                 { sport: 'american-football', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
                 { maxPrice: 3.5 });
@@ -6055,8 +6070,10 @@ async function runHandball(emit) {
               const avgUnIP = un.reduce((s,o)=>s+1/o.price,0) / un.length;
               const totIP2 = avgOvIP + avgUnIP;
               const overP = totIP2 > 0 ? avgOvIP / totIP2 : 0.5;
-              const bestOv = bestFromArr(ov);
-              const bestUn = bestFromArr(un);
+              // v15.0.9 Bug B parity: maxPrice 3.5 cap voor totals — alt-line
+              // longshot quotes (5.0+) verstoorden de overround sanity-gate.
+              const bestOv = bestFromArr(ov, { maxPrice: 3.5 });
+              const bestUn = bestFromArr(un, { maxPrice: 3.5 });
               _auditChoiceVsAll(ov, bestOv.bookie, bestOv.price,
                 { sport: 'handball', wedstrijd: `${hm} vs ${aw}`, market: 'total', selectionKey: 'over', line },
                 { maxPrice: 3.5 });

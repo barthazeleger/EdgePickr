@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.9] - 2026-04-29
+
+**Bug-fix · Totals maxPrice cap + MLB overround diagnostiek**
+
+Aanleiding: scan v15.0.8 toonde 7 MLB fixtures dropping op `total X divergence gate: over=block under=block (overround_out_of_range (tot=0.382-0.537))`. tot=0.38-0.54 = sum-implied 38-54% terwijl normaal ~104%; betekent dat beide `bestOv.price` en `bestUn.price` rond 5+ liggen — alt-line longshots werden uitgekozen i.p.v. main-line quotes. Ook potentieel verstoorde de overround-gate voor andere sport-totals (basketball, hockey, NFL, F5 baseball, handball) die identiek `bestFromArr` zonder cap aanriepen.
+
+### Fixed
+
+- **`server.js`** — `bestFromArr(ov)` / `bestFromArr(un)` op alle 6 sport-totals call-sites (basketball:3153, hockey:4118, baseball-main:4787, F5-baseball:5016, NFL:5460, handball:6067) krijgen nu `{ maxPrice: 3.5 }` cap. Mainline totals gaan zelden boven 3.5; alt-line longshot quotes worden hierdoor buiten beschouwing gelaten in best-pick selection. Voorkomt dat de overround-gate met 5+ priced quotes wordt gevoed.
+- **MLB totals diagnostiek** — wanneer `mlbOuGate.reason` start met `overround_out_of_range` wordt nu `bestOv.bookie@price + bestUn.bookie@price + ovN/unN` in mlbGameDiag gelogd. Operator ziet bij volgende scan exact welke bookies welke prijzen leverden, voor verdere root-cause-analyse als het symptoom blijft.
+
+### Niet meer vereist na deze fix (verwacht effect)
+
+- MLB totals dropt niet langer op overround-out-of-range tenzij parser daadwerkelijk corrupte data ontvangt. Indien overround-out-of-range nog firet → diagnostic-log toont exacte oorzaak (alt-line of duplicate-bookie of...), volg-fix in v15.0.x op echte data.
+
+### Tests (880 → 901)
+
+Geen nieuwe tests in deze hotfix — bestaande totals-pricing tests dekken pad. v15.0.8 voegde 21 nieuwe tests toe; we erfen 901 lopend totaal.
+
 ## [15.0.8] - 2026-04-29
 
 **Observability · DNB silent-gate telemetry**
