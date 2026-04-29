@@ -6259,6 +6259,11 @@ async function runPrematch(emit) {
     // wereldwijd die NIET in de 59-liga set zitten, zodat operator volume kan
     // inschatten voordat we een scan-pad eraan toevoegen.
     expansionCandidates: 0, expansionLeagues: 0,
+    // v15.3.0 Build E v2: shadow-write counters (env-flag TSDB_EXPANSION_SHADOW=1).
+    expansionShadowWritten: 0,
+    expansionShadowSkipNoSharp: 0,
+    expansionShadowSkipNoOdds: 0,
+    expansionShadowSkipParse: 0,
     // v15.2.0 Build A: per-bookie quote count voor OddsPapi cross-source.
     // Operator wil weten of Bet365/Unibet/Toto/BetCity daadwerkelijk in de
     // free-tier respons zitten — als niet, kunnen we beslissen over upgrade
@@ -7814,17 +7819,19 @@ async function runPrematch(emit) {
     }
   }
 
-  // ── v15.2.0 Build E: TSDB-driven expansion discovery (env-gated) ──────────
-  // Doel: zichtbaar maken hoeveel voetbal-fixtures er vandaag wereldwijd
-  // zijn die NIET in onze 59-liga set zitten, zodat operator + Codex met
-  // data kunnen beslissen of het de moeite waard is om die te scannen.
+  // ── v15.2.0 Build E v1: TSDB-driven expansion discovery (env-gated) ─────────
+  // v15.3.0 Build E v2: shadow-write toegevoegd achter aparte env-flag
+  // `TSDB_EXPANSION_SHADOW=1` (vereist `TSDB_DISCOVERY_EXPANSION=1`).
   //
-  // v1: pure observability — telt en logt expansion-fixtures, schrijft GEEN
-  // pick_candidates. Hierdoor zijn er geen scan-loop neveneffecten en kan
-  // Codex de processing-laag (api-sports/odds + OddsPapi-fallback shadow
-  // picks) in een aparte slice toevoegen op basis van de telemetry.
+  // Activatie:
+  //   - `TSDB_DISCOVERY_EXPANSION=1` → tellen + loggen, geen writes
+  //   - `TSDB_EXPANSION_SHADOW=1`    → ook shadow pick_candidates schrijven
+  //                                    (vereist Pinnacle/Betfair sharp-quote
+  //                                    in pre-loaded OddsPapi data).
   //
-  // Activatie: env-flag `TSDB_DISCOVERY_EXPANSION=1`. Default off.
+  // Doctrine: geen risk-list, geen bias. Alle leagues mogen shadow-tracked
+  // worden zolang er een sharp-quote is. Graduation gebeurt 100% empirisch
+  // via /api/admin/v2/expansion-graduation-candidates met 6-dim gates.
   if (OPERATOR.scraping_enabled && process.env.TSDB_DISCOVERY_EXPANSION === '1' && Object.keys(tsdbLeagueIdByName).length > 0) {
     try {
       const tsdb = require('./lib/integrations/sources/thesportsdb');
@@ -7840,10 +7847,12 @@ async function runPrematch(emit) {
       ['eredivisie', 'dutch eredivisie', 'primeira liga', 'portuguese primeira liga',
        'champions league', 'uefa champions league', 'eliteserien', 'norwegian eliteserien',
        'saudi pro league', 'saudi professional league', 'j1 league', 'japanese j1 league',
-       'j-league', 'egyptian premier', 'egyptian premier league', 'nb i hungary',
+       'j2 league', 'japanese j2 league', 'j-league',
+       'egyptian premier', 'egyptian premier league', 'nb i hungary',
        'hungarian nb i', 'hungary nb i'].forEach(a => trackedAliases.add(a));
 
       const expansionByLeague = Object.create(null);
+      const expansionFixtures = [];
       let expansionCandidates = 0;
       for (const fx of fixtures || []) {
         const ln = (fx?.leagueName || '').toLowerCase().trim();
@@ -7859,6 +7868,7 @@ async function runPrematch(emit) {
         if (isTracked) continue;
         expansionCandidates++;
         expansionByLeague[ln] = (expansionByLeague[ln] || 0) + 1;
+        expansionFixtures.push(fx);
       }
       scanTelemetry.expansionCandidates = expansionCandidates;
       scanTelemetry.expansionLeagues = Object.keys(expansionByLeague).length;
@@ -7871,6 +7881,142 @@ async function runPrematch(emit) {
         emit({ log: `🔭 Expansion-discovery: ${expansionCandidates} fixtures in ${scanTelemetry.expansionLeagues} niet-tracked leagues · top-3: ${top3}` });
       } else {
         emit({ log: `🔭 Expansion-discovery: 0 fixtures buiten tracked-set (alle TSDB-fixtures gedekt)` });
+      }
+
+      // ── Build E v2: shadow-write per expansion-fixture met sharp-anchor ───
+      // Schrijft pick_candidate met `passed_filters=false`,
+      // `rejected_reason='expansion_shadow_paper'`, `shadow=true`. Cap 50/scan
+      // om DB en OddsPapi-quota niet te overbelasten. Vereist Pinnacle of
+      // Betfair quote in pre-loaded OddsPapi cache (anders skip — geen sharp
+      // anchor = geen graduation-data van CLV-betekenis).
+      if (process.env.TSDB_EXPANSION_SHADOW === '1' && _currentModelVersionId && expansionFixtures.length > 0) {
+        const SHADOW_CAP = 50;
+        const targetFixtures = expansionFixtures.slice(0, SHADOW_CAP);
+        let shadowWritten = 0;
+        let shadowSkipNoSharp = 0;
+        let shadowSkipNoOdds = 0;
+        let shadowSkipParse = 0;
+
+        // Eén OddsPapi-call per scan voor expansion-shadow (bovenop bestaande
+        // sharp-cap voor tracked leagues). Vereist healthy quota.
+        let expansionSharpQuotes = null;
+        try {
+          const oddspapi = require('./lib/integrations/sources/oddspapi');
+          const usage = oddspapi.getUsage();
+          if (usage.hasKey && !usage.degraded && usage.remaining > 50) {
+            const aggOp = require('./lib/integrations/data-aggregator');
+            // Generic football scan — geen specifieke league filter, geeft
+            // OddsPapi alle voetbal-events terug (cap door OddsPapi zelf).
+            const merged = await aggOp.getMergedOdds('football', {
+              league: 'soccer',
+              bookmakers: 'pinnacle,betfair,betfair_ex_eu,betfair_ex_uk,bet365,unibet',
+              markets: 'h2h',
+            });
+            expansionSharpQuotes = merged;
+            scanTelemetry.oddspapiSharpAnchorCalls++;
+            scanTelemetry.oddspapiSharpAnchorQuotes += Array.isArray(merged?.quotes) ? merged.quotes.length : 0;
+            if (Array.isArray(merged?.quotes)) {
+              for (const q of merged.quotes) {
+                const b = String(q?.bookie || '').toLowerCase().trim();
+                if (b) scanTelemetry.oddspapiBookieCounts[b] = (scanTelemetry.oddspapiBookieCounts[b] || 0) + 1;
+              }
+            }
+          }
+        } catch { /* fail-soft */ }
+
+        for (const fx of targetFixtures) {
+          try {
+            const eventId = String(fx.eventId || '').trim();
+            if (!eventId) { shadowSkipParse++; continue; }
+            const home = String(fx.homeTeam || '').trim();
+            const away = String(fx.awayTeam || '').trim();
+            if (!home || !away) { shadowSkipParse++; continue; }
+            const kickoffMs = Date.parse(fx.timestamp || `${fx.date || ''}T${fx.time || '00:00:00'}Z`);
+            if (!Number.isFinite(kickoffMs)) { shadowSkipParse++; continue; }
+
+            // Match expansionSharpQuotes op team-namen + kickoff window.
+            const sharpAnchor = summarizeSharpAnchor(expansionSharpQuotes, home, away, kickoffMs);
+            const sample = Array.isArray(sharpAnchor.sample) ? sharpAnchor.sample : [];
+            const sharpQuote = sample.find(q => /pinnacle|betfair/i.test(String(q.bookie || '')));
+            if (!sharpQuote) { shadowSkipNoSharp++; continue; }
+            if (!sharpQuote.bookie || !Number.isFinite(Number(sharpQuote.price)) || Number(sharpQuote.price) <= 1) {
+              shadowSkipNoOdds++; continue;
+            }
+
+            // Selectie: home of away op basis van naam-match in quote.selection.
+            const selection = teamMatchScore(sharpQuote.selection || '', home) >= teamMatchScore(sharpQuote.selection || '', away)
+              ? 'home' : 'away';
+            const fairProb = Math.max(0.01, Math.min(0.99, 1 / Number(sharpQuote.price)));
+            const marktLabel = selection === 'home' ? `🏠 ${home} wint` : `✈️ ${away} wint`;
+
+            // Upsert fixture (zodat de fixtureId resolveable is downstream).
+            await snap.upsertFixture(supabase, {
+              id: eventId, sport: 'football',
+              leagueId: fx.leagueId || null,
+              leagueName: fx.leagueName || 'expansion',
+              season: null,
+              homeTeamName: home, awayTeamName: away,
+              startTime: kickoffMs, status: 'scheduled',
+            }).catch(() => {});
+
+            const runId = await snap.writeModelRun(supabase, {
+              fixtureId: eventId,
+              modelVersionId: _currentModelVersionId,
+              marketType: 'moneyline',
+              line: null,
+              baselineProb: { [selection]: fairProb },
+              modelDelta: {},
+              finalProb: { [selection]: fairProb },
+              debug: {
+                sport: 'football',
+                shadow: true,
+                expansion: true,
+                leagueName: fx.leagueName,
+                sourceAttribution: sourceAttributionBase('football', {
+                  thesportsdb: { schedule: true, expansion: true },
+                  oddspapi: { sharpAnchor: true },
+                }),
+                sharpAnchor,
+              },
+            });
+            if (!runId) { shadowSkipParse++; continue; }
+
+            await snap.writePickCandidate(supabase, {
+              modelRunId: runId,
+              fixtureId: eventId,
+              selectionKey: selection,
+              bookmaker: sharpQuote.bookie,
+              bookmakerOdds: sharpQuote.price,
+              fairProb,
+              edgePct: 0,
+              passedFilters: false,
+              rejectedReason: 'expansion_shadow_paper',
+              signals: ['expansion_shadow:0%', 'sharp_anchor:0%'],
+              shadow: true,
+              finalTop5: false,
+              marketType: 'moneyline',
+              line: null,
+              marktLabel,
+              kickoffMs,
+              sport: 'football',
+              sourceAttribution: sourceAttributionBase('football', {
+                thesportsdb: { schedule: true, expansion: true, leagueName: fx.leagueName },
+                oddspapi: { sharpAnchor: true },
+              }),
+              sharpAnchor,
+              playability: {},
+            });
+            shadowWritten++;
+          } catch (e) {
+            shadowSkipParse++;
+            if (process.env.SNAPSHOT_DEBUG) console.warn('[expansion-shadow]', e?.message || e);
+          }
+        }
+        scanTelemetry.expansionShadowWritten = shadowWritten;
+        scanTelemetry.expansionShadowSkipNoSharp = shadowSkipNoSharp;
+        scanTelemetry.expansionShadowSkipNoOdds = shadowSkipNoOdds;
+        scanTelemetry.expansionShadowSkipParse = shadowSkipParse;
+        emit({ log: `🔭 Expansion-shadow: ${shadowWritten} written · ${shadowSkipNoSharp} skip(no sharp) · ${shadowSkipNoOdds} skip(no odds) · ${shadowSkipParse} skip(parse)` });
       }
     } catch (e) {
       emit({ log: `⚠️ Expansion-discovery failed: ${e?.message || 'onbekend'}` });
@@ -8018,7 +8164,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · expansion=${tel.expansionCandidates || 0}/${tel.expansionLeagues || 0} leagues · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · expansion=${tel.expansionCandidates || 0}/${tel.expansionLeagues || 0} leagues · shadow_written=${tel.expansionShadowWritten || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
     `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
   ];

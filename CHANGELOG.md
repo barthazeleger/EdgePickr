@@ -2,6 +2,51 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.3.0] - 2026-04-30
+
+**Build E v2 · Expansion shadow-write + TSDB-backed settlement + 6-dim graduation evaluator**
+
+Aanleiding: eerste TSDB-discovery scan toonde 127 fixtures in 44 niet-tracked leagues. Operator wil doctrine-pure shadow-everything zonder bias-filter, met empirische graduation op basis van CLV/ROI-data. v15.3.0 bouwt het complete shadow→settle→graduate pad, met expliciete safeguards tegen de v14 BTTS-multiplier bug (single-metric promotion).
+
+### Added
+
+- **Expansion shadow-write** (`server.js:7820+`): nieuwe env-flag `TSDB_EXPANSION_SHADOW=1` triggert shadow pick_candidate writes voor maximaal 50 expansion-fixtures/scan. Vereist Pinnacle/Betfair sharp-anchor in pre-loaded OddsPapi data. Rows worden geschreven met `passed_filters=false`, `rejected_reason='expansion_shadow_paper'`, `shadow=true`, `fixture_id=tsdb_event_id`. Geen risk-list filter — doctrine-puur, alle leagues krijgen kans.
+- **TSDB-backed settlement** (`lib/integrations/sources/thesportsdb.js` + `lib/paper-trading.js`): nieuwe `fetchEventDetail(id)` haalt finished TSDB-events op (lookupevent.php), nieuwe `runExpansionShadowSweep` queryt shadow-rows en settled via TSDB-scores → bestaande `settlePaperTradingCandidate` voor CLV-berekening.
+- **Expansion sweep scheduler** (`lib/runtime/maintenance-schedulers.js`): dagelijks +150min na boot, parallel aan bestaande paper-trading sweep maar via TSDB i.p.v. api-sports.
+- **Graduation evaluator helper** (`lib/graduation-evaluator.js`, NIEUW): pure 6-dim promotion-gate math. Alle 6 moeten passeren voor `graduation_ready=true`:
+  1. n ≥ 30 settled
+  2. avg_clv_pct ≥ +0.5% (échte positie, niet net boven nul)
+  3. roi_pct ≥ -2% (variance-tolerantie, geen structureel verlies)
+  4. positive_clv_rate ≥ 50% (consistentie, niet 1 huge winner)
+  5. preferred_bookie_coverage ≥ 50% (≥3 preferred bookies in payload)
+  6. recent_n ≥ 20 in laatste 4 weken (geen stale signals)
+- **`GET /api/admin/v2/expansion-graduation-candidates`**: hergebruikt evaluator-helper, toont per-liga gate-status met failures highlighted.
+- **Graduation scheduler + notification** (`maintenance-schedulers.js`): dagelijks +180min na boot evalueert; nieuwe ready-leagues worden `expansion_graduation_ready` notification + persisted in `calib.graduation_notified` voor dedup.
+- **Operator quickstart** (`docs/OPERATOR_QUICKSTART.md`): live-updated kort scrollje met env-flags, endpoints, niet-doen-lijst, troubleshoot. Vervangt zichzelf bij elke release.
+
+### Changed
+
+- Tracked-aliases set in expansion-discovery (`server.js:7837+`): J2 League aliases toegevoegd zodat de v15.2.1-toevoeging consistent gefilterd wordt.
+- Scan-log `🛰️ v15 sources` regel toont nu `expansion=N/M leagues · shadow_written=K`.
+
+### Deferred (Codex review-eis)
+
+- **Auto-promote naar `AF_FOOTBALL_LEAGUES`**: vereist TSDB-leagueName → api-sports-league-id mapping die niet betrouwbaar automatisch is. Operator krijgt notification + manueel-toevoeg-instructie via OPERATOR_QUICKSTART.md sectie 5.
+- **Auto-demotie**: nog niet gebouwd. Codex slice met real-money tracking nodig.
+- **Market-multiplier autotune** (BTTS-bug regio): expliciet niet aangeraakt deze release. Codex moet eerst de bestaande learning-loop reviewen op equivalente single-metric bias vóór nieuwe safeguards landen.
+
+### Tests
+
+- 933/933 groen (was 925, +8 voor graduation-evaluator BTTS-bug pattern, gold-liga ready, thin-sample, stale-recency, thin-coverage, defaults check, sweep dependency-validation).
+- Specifiek anti-regressie test: 60 losses met clv=-2.5% en hoge n moet NIET promoten — voorkomt BTTS-bug in graduation-pipeline.
+
+### Verificatie
+
+- `node --check server.js lib/paper-trading.js lib/graduation-evaluator.js lib/runtime/maintenance-schedulers.js lib/integrations/sources/thesportsdb.js lib/routes/admin-inspect.js` schoon.
+- `npm run audit:high` 0 vulnerabilities.
+- Met `TSDB_EXPANSION_SHADOW=1` op Render → scan-log toont `🔭 Expansion-shadow: N written · ...`.
+- Na 4-8 weken shadow-data → `/api/admin/v2/expansion-graduation-candidates` toont eerste graduation-ready notifications.
+
 ## [15.2.1] - 2026-04-30
 
 **Config-fix · J2 League toegevoegd op basis van expansion-discovery data**

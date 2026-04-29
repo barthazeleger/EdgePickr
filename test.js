@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.2.1');
+  assert.strictEqual(appMeta.APP_VERSION, '15.3.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9264,6 +9264,129 @@ test('injury-cross-check: _lastName helper extraheert achternaam correct', () =>
   assert.strictEqual(injuryCheck._lastName('cristiano ronaldo'), 'ronaldo');
   assert.strictEqual(injuryCheck._lastName('m salah'), 'salah');
   assert.strictEqual(injuryCheck._lastName(''), '');
+});
+
+// ── GRADUATION EVALUATOR (v15.3.0) ────────────────────────────────────────────
+console.log('\n  Graduation evaluator (v15.3.0):');
+
+const { evaluateGraduation, DEFAULT_GATES, DEFAULT_PREFERRED_BOOKIES } = require('./lib/graduation-evaluator');
+
+function _gradRow({
+  league = 'test_league',
+  result = 'W',
+  odds = 1.95,
+  clv = 1.0,
+  settled_at = new Date().toISOString(),
+  bookmaker = 'pinnacle',
+  preferred_bookies_in_anchor = 4,
+} = {}) {
+  const sample = [];
+  const all = ['pinnacle', 'bet365', 'unibet', 'toto', 'betcity', '888sport'];
+  for (let i = 0; i < preferred_bookies_in_anchor && i < all.length; i++) {
+    sample.push({ bookie: all[i], market: '1X2', selection: 'home', price: odds });
+  }
+  return {
+    id: Math.floor(Math.random() * 1e9),
+    fixture_id: 'evt_' + Math.floor(Math.random() * 1e9),
+    markt_label: '🏠 Home wint',
+    bookmaker, bookmaker_odds: odds,
+    result, clv_pct: clv, settled_at,
+    source_attribution: { thesportsdb: { leagueName: league } },
+    sharp_anchor: { sample },
+  };
+}
+
+test('graduation: empty input → 0 candidates', () => {
+  const r = evaluateGraduation([]);
+  assert.deepStrictEqual(r.candidates, []);
+  assert.strictEqual(r.summary.graduationReadyCount, 0);
+});
+
+test('graduation: BTTS-bug pattern — hoge n maar verlies → NIET ready', () => {
+  // 60 losses, hoge n maar avg_clv negatief en ROI ver negatief.
+  const rows = Array.from({ length: 60 }, (_, i) =>
+    _gradRow({ league: 'btts_trap', result: 'L', odds: 2.10, clv: -2.5, settled_at: new Date(Date.now() - i * 86400000 / 2).toISOString() })
+  );
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'btts_trap');
+  assert.strictEqual(c.graduation_ready, false, 'high-n loss-trap mag NOOIT promoten');
+  assert.ok(c.missing_gates.includes('avg_clv_pct'), 'avg_clv_pct gate moet missing zijn');
+  assert.ok(c.missing_gates.includes('roi_pct'), 'roi_pct gate moet missing zijn');
+});
+
+test('graduation: positieve liga met alle 6 gates → ready', () => {
+  const now = Date.now();
+  const rows = [];
+  for (let i = 0; i < 35; i++) {
+    rows.push(_gradRow({
+      league: 'gold_liga',
+      result: i < 22 ? 'W' : 'L',  // ~63% win-rate
+      odds: 2.00, clv: i < 28 ? 2.0 : -0.5,  // 80% positive CLV, avg ~1.5%
+      settled_at: new Date(now - i * 86400000 * 0.6).toISOString(),  // alles binnen 4w
+      preferred_bookies_in_anchor: 5,
+    }));
+  }
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'gold_liga');
+  assert.strictEqual(c.graduation_ready, true, `gold_liga moet ready zijn, missing=${c.missing_gates.join(',')}`);
+  assert.strictEqual(c.missing_gates.length, 0);
+});
+
+test('graduation: positieve CLV maar dunne sample (n=15) → NIET ready', () => {
+  const rows = Array.from({ length: 15 }, () =>
+    _gradRow({ league: 'thin_sample', result: 'W', odds: 2.0, clv: 3.0 })
+  );
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'thin_sample');
+  assert.strictEqual(c.graduation_ready, false);
+  assert.ok(c.missing_gates.includes('n'));
+});
+
+test('graduation: stale data (alles >8w oud → 0 in window, scheduler filtert pre-evaluator)', () => {
+  // Helper-side: rows met settled_at >8w worden via Supabase-query gefilterd.
+  // Hier testen we recent_n: rows binnen window maar oud van de 4w-recent cutoff.
+  const oldTs = new Date(Date.now() - 6 * 7 * 86400000).toISOString();
+  const rows = Array.from({ length: 35 }, () =>
+    _gradRow({ league: 'stale_clv_pos', result: 'W', odds: 2.0, clv: 2.0, settled_at: oldTs, preferred_bookies_in_anchor: 4 })
+  );
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'stale_clv_pos');
+  assert.strictEqual(c.graduation_ready, false);
+  assert.ok(c.missing_gates.includes('recent_n'),
+    `stale data moet recent_n gate falen, kreeg missing=${c.missing_gates.join(',')}`);
+});
+
+test('graduation: thin preferred-bookie coverage → NIET ready', () => {
+  // Alle metrics goed maar slechts 1 preferred bookie in sharp-anchor.
+  const rows = Array.from({ length: 35 }, () =>
+    _gradRow({ league: 'thin_coverage', result: 'W', odds: 2.0, clv: 2.0, preferred_bookies_in_anchor: 1 })
+  );
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'thin_coverage');
+  assert.strictEqual(c.graduation_ready, false);
+  assert.ok(c.missing_gates.includes('preferred_bookie_coverage'));
+});
+
+test('graduation: gates en preferred-bookies zijn bevroren constants', () => {
+  assert.strictEqual(DEFAULT_GATES.min_n, 30);
+  assert.strictEqual(DEFAULT_GATES.min_avg_clv_pct, 0.5);
+  assert.strictEqual(DEFAULT_GATES.min_roi_pct, -2.0);
+  assert.ok(DEFAULT_PREFERRED_BOOKIES.includes('bet365'));
+  assert.ok(DEFAULT_PREFERRED_BOOKIES.includes('unibet'));
+});
+
+// ── EXPANSION-SHADOW SWEEP (v15.3.0) ──────────────────────────────────────────
+console.log('\n  Expansion-shadow sweep (v15.3.0):');
+
+const { runExpansionShadowSweep } = require('./lib/paper-trading');
+
+test('expansion-sweep: helper is geëxporteerd en valideert dependencies', async () => {
+  // Zonder fetchTsdbEvent → returnt zero-stats fail-soft (geen throw).
+  const r1 = await runExpansionShadowSweep({ supabase: { from: () => ({}) } });
+  assert.deepStrictEqual(r1, { checked: 0, settled: 0, skipped: 0, notFinished: 0, noEvent: 0 });
+  // Zonder supabase → returnt zero-stats fail-soft.
+  const r2 = await runExpansionShadowSweep({ fetchTsdbEvent: async () => null });
+  assert.strictEqual(r2.checked, 0);
 });
 
 // ── ENDPOINT: tsdb-utilization (v15.0.12) ─────────────────────────────────────
