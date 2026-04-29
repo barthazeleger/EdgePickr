@@ -1289,6 +1289,12 @@ const AF_FOOTBALL_LEAGUES = [
   { id:128, key:'argentina',    name:'Primera División',    ha:0.06, season:new Date().getFullYear() },
   { id:307, key:'saudi',        name:'Saudi Pro League',    ha:0.05, season:CURRENT_SEASON },
   { id:98,  key:'j1league',     name:'J1 League',           ha:0.04, season:new Date().getFullYear() },
+  // v15.2.1: J2 League toegevoegd. Eerste expansion-discovery scan (30 april)
+  // toonde 20 J2-fixtures buiten onze tracked-set. Same infrastructure als J1
+  // (api-sports rijke coverage, Bet365/Unibet hebben odds). Config-fix, geen
+  // nieuwe venture. Andere expansion-kandidaten (Zambia, Georgian Liga 3, etc)
+  // gaan via Build E v2 shadow-pick processing met paper-trading-graduatie.
+  { id:99,  key:'j2league',     name:'J2 League',           ha:0.04, season:new Date().getFullYear() },
   // ── Azië & Oceanië (minder efficiënt geprijsd) ─────────────────────────
   { id:169, key:'china_super',   name:'Chinese Super League',  ha:0.05, season:new Date().getFullYear() },
   { id:292, key:'korea',         name:'K League 1',            ha:0.05, season:new Date().getFullYear() },

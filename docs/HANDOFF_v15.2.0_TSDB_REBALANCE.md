@@ -74,6 +74,19 @@ Telemetry-counters: `expansionCandidates`, `expansionLeagues` in `scanTelemetry`
 2. Returnt `{quotes, source: 'oddspapi'}` die kan worden gevoed aan een lichte versie van mkP.
 3. Telemetry: `expansionOddsFromOddspapi` / `expansionOddsFromApiSports`.
 
+### v15.2.1 update (Claude follow-up tijdens operator-toggle)
+
+Operator activeerde `TSDB_DISCOVERY_EXPANSION=1` op Render. Eerste expansion-scan (30 april donderdag, rustdag voor onze tracked-set) toonde:
+
+```
+🔭 Expansion-discovery: 127 fixtures in 44 niet-tracked leagues · top-3:
+japanese j2 league (20), zambia super league (8), georgian liga 3 (8)
+```
+
+**Beslissing**: J2 League direct toegevoegd aan `AF_FOOTBALL_LEAGUES` (id=99) als config-fix, niet als nieuwe venture. Reden: same infrastructure als al-tracked J1, dus geen graduation-risico. Andere 43 leagues (Zambia/Georgia/etc) wachten op Build E v2 shadow-processing.
+
+Codex review-vraag voor jou: kijk of je nog andere "config-fix" kandidaten ziet — leagues waar we ÉÉN tier hebben (J1, La Liga, Bundesliga, Serie A, Eredivisie, Liga MX, Brasileirao, Argentine Primera, MLS) en waar de directe peer (J2, La Liga 2, Bundesliga 2, Serie B, Eerste Divisie ✅, Liga MX Expansión, Série B, Primera Nacional, USL Championship) ontbreekt. Sommige zijn al toegevoegd (zoals Eerste Divisie); cross-check nodig. Niet meteen alle toevoegen — alleen die waar (a) we de tier al voor de hoofdcompetitie tracken, EN (b) bookie-coverage op preferred set bewezen is.
+
 ### Build E v2 — Expansion processing (de echte coverage-uitbreiding)
 
 **Doel:** voor elke expansion-fixture met odds, schrijf shadow pick_candidate (zoals `runShadowSports` voor tennis/rugby/cricket).

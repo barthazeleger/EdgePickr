@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.2.1] - 2026-04-30
+
+**Config-fix · J2 League toegevoegd op basis van expansion-discovery data**
+
+Aanleiding: eerste `TSDB_DISCOVERY_EXPANSION=1` scan toonde 127 expansion-fixtures in 44 niet-tracked leagues, met top-3 = `japanese j2 league (20), zambia super league (8), georgian liga 3 (8)`. Van die 44 is J2 een uitzondering: same infrastructure als de al-tracked J1 (api-sports rijke coverage, Bet365/Unibet hebben odds), dus geen nieuwe venture maar een config-omissie.
+
+### Added
+
+- **J2 League** (`server.js:1294`): toegevoegd aan `AF_FOOTBALL_LEAGUES` met `id=99`, `key=j2league`, `ha=0.04`, `season=calendar-year`. Loopt door bestaande pre-fetch + scan-pipeline zoals J1, geen architectuurwijziging. Verwacht +5-7 api-sports calls/scan op rustdagen waar J2 wel speelt (Japan donderdagen). Past ruim binnen 7.500/maand quota.
+
+### Niet gewijzigd (bewust)
+
+- **Geen andere expansion-leagues toegevoegd** (Zambia, Georgian Liga 3, etc). Die horen via Build E v2 shadow-pick processing — paper-trading-graduatie na 30+ settled bets per liga is doctrine-aligned (zie tennis/rugby/cricket pattern). Codex slice v15.2.x.
+
+### Verificatie
+
+- 925/925 tests groen.
+- Bij eerstvolgende donderdag-scan zou `J2 League: N wedstrijden` regel verschijnen + (op spelldagen) +5-7 api-sports calls in het totaal.
+
 ## [15.2.0] - 2026-04-30
 
 **Source-rebalance · OddsPapi multi-bookie + TSDB-discovery telemetry**
