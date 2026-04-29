@@ -2,6 +2,27 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.0.13] - 2026-04-29
+
+**Hotfix · injury cross-check reason-buckets + thin-roster guard**
+
+Aanleiding: eerste live scan na v15.0.12 (`TSDB_INJURY_VALIDATION=1`) toonde `tsdb_inj_checks=7/mismatch=61` — 8.7 mismatches per fixture-team-paar, ~90% mismatch-rate. Root cause: voor exotische liga's (Saudi/Egypt/NB I) returnt TSDB regelmatig sparse of empty rosters; de v15.0.12 helper telde die als hard mismatches → telemetrie was puur ruis i.p.v. data-quality signaal.
+
+### Changed
+
+- **`lib/signals/injury-cross-check.js`**: reason-buckets toegevoegd (`matched`, `name_unmatched`, `no_roster`, `thin_roster`, `malformed`). `mismatchPct` rekent nu **alleen** `name_unmatched` als noemer — `no_roster`/`thin_roster` zijn TSDB-coverage gaten, geen data-quality signaal. Threshold `THIN_ROSTER_THRESHOLD = 15` bewaakt dunne rosters expliciet.
+- **Fuzzy matching uitgebreid**: nieuwe `_lastName` + `_firstInitial` helpers + last-name index met first-initial validatie. Vangt "C. Ronaldo" ↔ "Cristiano Ronaldo", "M. Salah" ↔ "Mohamed Salah", accent-varianten "Müller" ↔ "Muller". First-initial-check voorkomt false-positives op gemeenschappelijke achternamen (Smith, Jansen).
+- **`server.js` scan-telemetrie**: nieuwe counters `tsdbInjuryNoRoster`, `tsdbInjuryThinRoster`, `tsdbInjuryNameUnmatched`, `tsdbInjuryMatched`. Scan-log toont nu `tsdb_inj_checks=N (matched=X · name_unmatched=Y · no_roster=Z · thin_roster=W)` zodat operator direct ziet of mismatch-volume coverage- of name-matching probleem is.
+
+### Tests
+
+- 12 unit tests voor de helper (was 5 in v15.0.12). Nieuwe cases: thin_roster bucket, last-name+first-initial match, accent-normalisatie, mixed bucket scenario, malformed handling, `_lastName` helper.
+
+### Niet gewijzigd
+
+- Geen pick-impact (helper is en blijft alleen telemetrie).
+- Bestaande env-flag `TSDB_INJURY_VALIDATION=1` blijft schakelaar; bij 0 doet niets veranderen.
+
 ## [15.0.12] - 2026-04-29
 
 **Diepe TSDB Premium benutting · 5 nieuwe builds + Codex handoff**

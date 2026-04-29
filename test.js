@@ -3427,7 +3427,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.0.12');
+  assert.strictEqual(appMeta.APP_VERSION, '15.0.13');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9138,48 +9138,132 @@ test('lineup-strength: signal-string bevat lineup keyword', () => {
   assert.match(r.signal, /lineup_strength/);
 });
 
-// ── INJURY CROSS-CHECK (v15.0.12) ────────────────────────────────────────────
-console.log('\n  Signals/Injury cross-check (v15.0.12):');
+// ── INJURY CROSS-CHECK (v15.0.12 + v15.0.13 reason-buckets) ──────────────────
+console.log('\n  Signals/Injury cross-check (v15.0.12 / v15.0.13):');
 
 const injuryCheck = require('./lib/signals/injury-cross-check');
+
+// Helper: bouw een vol roster (≥THIN_ROSTER_THRESHOLD spelers) zodat de
+// thin-roster guard niet triggert. Tests die expliciet dunne rosters willen
+// testen, gebruiken kleinere arrays.
+function _fullRoster(extra = []) {
+  const base = Array.from({ length: 20 }, (_, i) => ({
+    name: `Filler ${i} Player`, playerId: String(100 + i),
+  }));
+  return [...base, ...extra];
+}
 
 test('injury-cross-check: empty input geeft total=0', () => {
   const r = injuryCheck.crossCheckInjuries([], []);
   assert.strictEqual(r.total, 0);
   assert.strictEqual(r.matched.length, 0);
   assert.strictEqual(r.unmatched.length, 0);
+  assert.strictEqual(r.reasons.matched, 0);
 });
 
-test('injury-cross-check: geen roster → alle injuries unmatched met no_roster', () => {
+test('injury-cross-check: geen roster → no_roster bucket, mismatchPct=0 (geen signal)', () => {
   const inj = [{ player: 'Mohamed Salah' }];
   const r = injuryCheck.crossCheckInjuries(inj, []);
   assert.strictEqual(r.total, 1);
   assert.strictEqual(r.unmatched.length, 1);
   assert.strictEqual(r.unmatched[0].reason, 'no_roster');
-  assert.strictEqual(r.mismatchPct, 100);
+  assert.strictEqual(r.reasons.no_roster, 1);
+  assert.strictEqual(r.mismatchPct, 0,
+    'mismatchPct moet 0 zijn bij no_roster — TSDB-coverage gat, geen data-quality signaal');
 });
 
-test('injury-cross-check: exacte naam-match werkt', () => {
+test('injury-cross-check: thin roster (<15 spelers) → thin_roster bucket, mismatchPct=0', () => {
+  const inj = [{ player: 'Salah' }, { player: 'Ramos' }];
+  const thinRoster = [
+    { name: 'Mohamed Salah', playerId: '1' },
+    { name: 'Sergio Ramos', playerId: '2' },
+    { name: 'Random Player', playerId: '3' },
+  ];
+  const r = injuryCheck.crossCheckInjuries(inj, thinRoster);
+  assert.strictEqual(r.reasons.thin_roster, 2,
+    'thin roster (<15) moet alle injuries naar thin_roster bucket sturen');
+  assert.strictEqual(r.mismatchPct, 0,
+    'mismatchPct mag thin_roster niet meetellen — dat is coverage, geen signal');
+});
+
+test('injury-cross-check: exacte naam-match werkt op vol roster', () => {
   const inj = [{ player: 'Mohamed Salah' }];
-  const roster = [{ name: 'Mohamed Salah', playerId: '1' }];
+  const roster = _fullRoster([{ name: 'Mohamed Salah', playerId: '1' }]);
   const r = injuryCheck.crossCheckInjuries(inj, roster);
   assert.strictEqual(r.matched.length, 1);
+  assert.strictEqual(r.reasons.matched, 1);
   assert.strictEqual(r.unmatched.length, 0);
 });
 
-test('injury-cross-check: fuzzy substring match werkt voor naamvarianten', () => {
+test('injury-cross-check: fuzzy substring match — "M. Salah" ↔ "Mohamed Salah"', () => {
   const inj = [{ player: 'M. Salah' }];
-  const roster = [{ name: 'Mohamed Salah', playerId: '1' }];
+  const roster = _fullRoster([{ name: 'Mohamed Salah', playerId: '1' }]);
   const r = injuryCheck.crossCheckInjuries(inj, roster);
   assert.strictEqual(r.matched.length, 1, 'M. Salah moet matchen op Mohamed Salah');
 });
 
-test('injury-cross-check: speler ontbreekt in roster → unmatched not_in_roster', () => {
+test('injury-cross-check: last-name + first-initial match — "C. Ronaldo" ↔ "Cristiano Ronaldo"', () => {
+  const inj = [{ player: 'C. Ronaldo' }];
+  const roster = _fullRoster([{ name: 'Cristiano Ronaldo', playerId: '1' }]);
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.matched.length, 1, 'C. Ronaldo moet via last-name+initial matchen');
+});
+
+test('injury-cross-check: alleen achternaam — "Salah" ↔ "Mohamed Salah"', () => {
+  const inj = [{ player: 'Salah' }];
+  const roster = _fullRoster([{ name: 'Mohamed Salah', playerId: '1' }]);
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.matched.length, 1);
+});
+
+test('injury-cross-check: accenten worden genormaliseerd — "Müller" ↔ "Muller"', () => {
+  const inj = [{ player: 'Thomas Müller' }];
+  const roster = _fullRoster([{ name: 'Thomas Muller', playerId: '1' }]);
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.matched.length, 1, 'accent-normalisatie moet matchen');
+});
+
+test('injury-cross-check: name_unmatched bucket — speler echt niet in vol roster', () => {
   const inj = [{ player: 'Onbekende Speler' }];
-  const roster = [{ name: 'Andere Speler', playerId: '1' }];
+  const roster = _fullRoster([{ name: 'Andere Speler', playerId: '1' }]);
   const r = injuryCheck.crossCheckInjuries(inj, roster);
   assert.strictEqual(r.unmatched.length, 1);
-  assert.strictEqual(r.unmatched[0].reason, 'not_in_roster');
+  assert.strictEqual(r.unmatched[0].reason, 'name_unmatched');
+  assert.strictEqual(r.reasons.name_unmatched, 1);
+  assert.strictEqual(r.mismatchPct, 100,
+    'enkel injury echt niet gevonden → mismatchPct 100% (data-quality signaal)');
+});
+
+test('injury-cross-check: malformed input wordt gebucketed', () => {
+  const inj = [{ player: '' }, { player: '123' }];
+  const roster = _fullRoster();
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.reasons.malformed, 2);
+});
+
+test('injury-cross-check: mixed bucket scenario', () => {
+  // 1 match, 1 name_unmatched, 1 malformed → mismatchPct = 1/2 (excl malformed?
+  // nee, helper telt malformed mee in noemer omdat het signal-relevant is).
+  const inj = [
+    { player: 'Mohamed Salah' },          // match
+    { player: 'Onbekende' },              // name_unmatched
+    { player: '' },                        // malformed
+  ];
+  const roster = _fullRoster([{ name: 'Mohamed Salah', playerId: '1' }]);
+  const r = injuryCheck.crossCheckInjuries(inj, roster);
+  assert.strictEqual(r.reasons.matched, 1);
+  assert.strictEqual(r.reasons.name_unmatched, 1);
+  assert.strictEqual(r.reasons.malformed, 1);
+  // signalRelevant = matched(1) + name_unmatched(1) + malformed(1) = 3
+  // mismatchPct = name_unmatched(1) / 3 = 33.3%
+  assert.strictEqual(r.mismatchPct, 33.3);
+});
+
+test('injury-cross-check: _lastName helper extraheert achternaam correct', () => {
+  assert.strictEqual(injuryCheck._lastName('mohamed salah'), 'salah');
+  assert.strictEqual(injuryCheck._lastName('cristiano ronaldo'), 'ronaldo');
+  assert.strictEqual(injuryCheck._lastName('m salah'), 'salah');
+  assert.strictEqual(injuryCheck._lastName(''), '');
 });
 
 // ── ENDPOINT: tsdb-utilization (v15.0.12) ─────────────────────────────────────

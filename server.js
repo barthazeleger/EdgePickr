@@ -6245,6 +6245,10 @@ async function runPrematch(emit) {
     tsdbVenueHits: 0, tsdbVenueApplied: 0,
     tsdbLineupHits: 0, tsdbLineupApplied: 0,
     tsdbInjuryMismatchCount: 0, tsdbInjuryChecksRun: 0,
+    // v15.0.13: bucket-breakdown zodat operator weet of mismatch een TSDB-coverage
+    // gat is (no_roster/thin_roster) of een echt naam-conflict (name_unmatched).
+    tsdbInjuryNoRoster: 0, tsdbInjuryThinRoster: 0,
+    tsdbInjuryNameUnmatched: 0, tsdbInjuryMatched: 0,
     oddspapiSharpAnchorCalls: 0, oddspapiSharpAnchorFixtures: 0,
     oddspapiSharpAnchorUnmatched: 0, oddspapiSharpAnchorQuotes: 0,
     bttsMarkets: 0, bttsFormOnly: 0, bttsNoExecutable: 0,
@@ -6781,6 +6785,12 @@ async function runPrematch(emit) {
               if (result.unmatched.length > 0) {
                 scanTelemetry.tsdbInjuryMismatchCount += result.unmatched.length;
               }
+              // v15.0.13: bucket-breakdown.
+              const r = result.reasons || {};
+              scanTelemetry.tsdbInjuryNoRoster += r.no_roster || 0;
+              scanTelemetry.tsdbInjuryThinRoster += r.thin_roster || 0;
+              scanTelemetry.tsdbInjuryNameUnmatched += r.name_unmatched || 0;
+              scanTelemetry.tsdbInjuryMatched += r.matched || 0;
             }
           } catch { /* injury cross-check mag scan nooit breken */ }
         }
@@ -7908,7 +7918,7 @@ async function runPrematch(emit) {
     `  🥊 knockout: ${tel.knockoutMatches} (1e leg ${tel.knockout1stLeg}, 2e leg ${tel.knockout2ndLeg})`,
     `  🏆 aggregaat: ${tel.aggregateFetched} fetched uit ${tel.knockout2ndLeg} 2e legs · leider thuis=${tel.aggregateLeaderHome} uit=${tel.aggregateLeaderAway} gelijk=${tel.aggregateSquare}`,
     `  🌱 new-season: ${tel.earlySeasonMatches} wedstrijden in ronde 1-4`,
-    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0}/mismatch=${tel.tsdbInjuryMismatchCount || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
+    `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
     `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
   ];
