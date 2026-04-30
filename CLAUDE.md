@@ -33,7 +33,7 @@ Zie `docs/REPO_STRUCTURE.md` voor de volledige indeling. Kernpunten:
 - Gedetailleerde commit messages met WHAT/WHY/IMPACT.
 
 ### Geen deploys rond scan-tijden
-07:30, 14:00, 21:00 Amsterdam — Render-deploys breken actieve scans af.
+11:00, 14:30, 18:30 Amsterdam — Render-deploys breken actieve scans af. (Sinds v15.4.2: data-gedreven herziening op 60d kickoff-distributie. Pre-v15.4.2 was 07:30/14:00/21:00 — die mistten Sat 13:30 PL en liepen synchroon met evening peak.)
 
 ### Testen
 - `npm test` moet groen zijn vóór elke push.

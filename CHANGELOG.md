@@ -2,6 +2,42 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.2] - 2026-04-30
+
+**Schedule-only · scan-tijden 07:30/14:00/21:00 → 11:00/14:30/18:30 (data-gedreven)**
+
+Aanleiding: operator-vraag of de huidige scan-windows optimaal zijn voor de football-zware mix. Analyse op 60d fixture-distributie (alleen public.fixtures, kickoff_hour_nl × dow):
+- 07:30 NL had nul kickoffs in de volgende 4u → puur data-refresh zonder placement-relevantie.
+- 14:00 NL miste Sat 13:30 PL early-kickoff (30min te laat).
+- 21:00 NL liep synchroon met de evening-peak (Tue 20:00 = 40 fix, Sat 16:00 = 90 fix dow=6, multi-day 20:00 = 148 fix totaal). Picks bij die 21:00-scan waren niet meer plaatsbaar voor de grootste cluster van de week.
+
+Nieuwe windows zijn elk 1.5–2.5h vóór een kickoff-peak:
+- **11:00** vangt Sat 13:30 PL early (2.5h pre), Sun 12:30 starters, weekday morning baseline
+- **14:30** vangt Sat 16:00 peak (134 fix, 1.5h pre), Sun 17:00 PL evening (2.5h pre)
+- **18:30** vangt Sat/Sun 20:00 evening peak (148 fix, 1.5h pre), UCL/UEL 21:00 (2.5h pre), PL Mon Night 20:00, Liga 21:00
+
+Doctrine-keuze 3 i.p.v. 4 windows: marginale waarde van een 4e scan is laag totdat lineup-strength signal (`TSDB_LINEUP_STRENGTH=1`) actief is. Pad A wil 200 disciplined bets, niet 300 chaotische. 3→4 is reversibel als post-v15.5 soak-data het justifies.
+
+### Changed
+- **Admin user `scanTimes` setting** (Supabase DB direct): `["07:30","14:00","21:00"]` → `["11:00","14:30","18:30"]`. Wordt door scheduler op deploy-restart automatisch opgepakt via `lib/runtime/scan-schedulers.js::scheduleDailyScan()`.
+- **`DEFAULT_SCAN_TIMES`** in scan-schedulers.js: fallback van `['07:30']` (singleton) naar `['11:00','14:30','18:30']` zodat een nieuwe deploy zonder admin-user-config dezelfde canonical doctrine krijgt.
+- **`CLAUDE.md` no-deploy windows**: 07:30/14:00/21:00 → 11:00/14:30/18:30 met rationale waarom.
+
+### Niet gewijzigd
+- Geen scan-flow code geraakt — alleen tijden + fallback.
+- `lib/runtime/check-open-bets.js` kickoff-window polling (CLV-anchor capture) is niet aan scan-tijd gekoppeld; CLV-meting blijft ongewijzigd.
+
+### Tests
+- 956/956 groen (geen test-aanpassingen nodig — alleen schedule-string config).
+
+### Verificatie
+- `node --check lib/runtime/scan-schedulers.js` schoon.
+- `npm run audit:high` 0 vulns.
+- Bij eerstvolgende Render-deploy logt scheduler `📅 Admin scan-scheduler: 11:00, 14:30, 18:30 (scanEnabled=true)`.
+
+### Post-deploy actie
+Geen migratie. Render-deploy alleen. Mid-day deploy is veilig omdat de oude scan-windows (07:30 al gepasseerd, 14:00 nog niet maar wordt vervangen) niet meer canonical zijn.
+
 ## [15.4.1] - 2026-04-30
 
 **Hotfix · dropdown-clear bewaart inbox-tab + version-pin sync**
