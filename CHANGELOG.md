@@ -2,6 +2,25 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.3] - 2026-04-30
+
+**Hotfix · tracker score volgt stake-tier (was: pure-kelly recompute)**
+
+Aanleiding: operator-rapport eerste v15.4 pick (Aston Villa @ 2.70, mid-bucket, 0.3U). Pick-output toonde 5/10, tracker toonde 7/10 voor dezelfde bet. Modal-edit (odds 2.70→2.60→2.70 + bookie-switch Bet365→Unibet) triggerde de v12.4.2 score-recompute path die de bug ontmaskerde.
+
+### Fixed
+- **`index.html` modal-log score recompute**: pre-fix gebruikte `epApi.kellyFor(prob, newOdds) * 0.5` met **pure** Kelly (hardcoded 0.5 fraction). Dat negeerde alle scan-time dampening (KELLY_FRACTION=0.35 in early_caution stake-regime, audit-dampen 0.6 voor probGapSuspect picks, execution-gate multipliers, v15.4 high-odds-cap). Voor Aston Villa: pure kelly = 0.0788, hk = 0.0394 → score 7. Werkelijke gedempte hk landde ≤ 0.015 → 0.3U / score 5.
+- **Nieuwe formule**: score = stake-tier(units), 1-1 mapping aligned met `lib/model-math.js::kellyToUnits`. units=0.3→5, 0.5→6, 0.75→7, 1.0→8, 1.5→9, 2.0→10. Doctrine-citation: `lib/model-math.js:366` "score-display volgt stake-tier, niet andersom".
+
+### Why dit beter is
+- Score reflecteert daadwerkelijke stake (= wat je écht hebt geplaatst), niet model-theoretical.
+- Modal-edit van odds → units worden door modal aangepast → score volgt mee zonder aparte recompute.
+- Geen mismatch meer tussen pick-output en tracker voor dezelfde pick.
+- Backwards-compat: bestaande logged bets in DB houden hun oude score-waarde (één-off Aston Villa-bet bij operator op score=7 staat — geen retroactieve update).
+
+### Tests
+- 956/956 groen (geen test-aanpassingen — pure JS UI-logica, geen helper-export).
+
 ## [15.4.2] - 2026-04-30
 
 **Schedule-only · scan-tijden 07:30/14:00/21:00 → 11:00/14:30/18:30 (data-gedreven)**

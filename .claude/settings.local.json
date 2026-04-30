@@ -24,7 +24,11 @@
       "Bash(git commit *)",
       "Bash(git push *)",
       "mcp__claude_ai_Supabase__list_projects",
-      "mcp__claude_ai_Supabase__execute_sql"
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(node --check lib/runtime/scan-schedulers.js lib/app-meta.js)",
+      "Skill(schedule)",
+      "Bash(uuidgen)",
+      "Bash(grep -nE \"Math\\\\.round.*kelly|Math\\\\.round.*\\\\b\\(7|10\\)|score.*Math|/10|\\\\\\\\\\\\${.*}/10\" /Users/maxperian/projects/edgepickr/index.html)"
     ]
   }
 }

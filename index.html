@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.4.2</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.4.3</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -655,7 +655,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.4.2</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.4.3</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -4289,26 +4289,23 @@ async function logModalBet() {
       wedstrijd: match,
       markt: document.getElementById('m-markt').value,
       odds, units, tip: document.getElementById('m-bookie').value || 'Bet365', uitkomst: 'Open', notities: '',
-      // v12.4.2: score recomputen uit huidige m-odds + modalPick.prob, niet
-      // hard-coded uit modalPick.kelly. Voorheen toonde de modal via
-      // EPAdvice.computeModalAdvice de NIEUWE score (bv. 8/10 na +6.7%
-      // odds-stijging 1.94 → 2.07) maar saved tracker de ORIGINELE
-      // pre-edit score (6/10). Operator-rapport NHL TT-pick. Reuse van
-      // EPAdvice helpers garandeert match met modal-display.
+      // v15.4.3: score volgt stake-tier 1-1 (doctrine lib/model-math.js:366).
+      // Voorheen (v12.4.2) recomputeerde modal-log de score uit pure
+      // prob×odds kelly met hardcoded 0.5 fraction, wat de scan-time
+      // dampening (KELLY_FRACTION, audit-dampen, execution-gate) negeerde.
+      // Resultaat: pick-output toonde 5/10 (op gedempte hk → 0.3U) maar
+      // tracker toonde 7/10 (pure kelly bij 0.42×2.70). Stake-tier mapping
+      // garandeert dat tracker-score altijd matcht met daadwerkelijk
+      // geloggede units — ongeacht of user de odds heeft aangepast.
       score: (() => {
-        if (!modalPick) return null;
-        const newOdds = parseFloat(document.getElementById('m-odds').value) || 0;
-        const prob = (modalPick.prob || 0) / 100;
-        if (!prob || !newOdds || newOdds <= 1) return null;
-        const epApi = (typeof window !== 'undefined' && window.EPAdvice) ? window.EPAdvice : null;
-        if (!epApi || typeof epApi.kellyFor !== 'function' || typeof epApi.scoreFromHk !== 'function') {
-          // Fallback: pre-v12.4.2 hard-coded formule met modalPick.kelly
-          // (geen modal-update, maar geen crash bij ontbrekende EPAdvice).
-          const hk = modalPick.kelly || 0;
-          return hk>0.10?10:hk>0.07?9:hk>0.05?8:hk>0.03?7:hk>0.015?6:5;
-        }
-        const hk = epApi.kellyFor(prob, newOdds) * 0.5;
-        return epApi.scoreFromHk(hk);
+        const u = Number(units);
+        if (!Number.isFinite(u) || u <= 0) return modalPick?.score ?? null;
+        if (u >= 2.0)  return 10;
+        if (u >= 1.5)  return 9;
+        if (u >= 1.0)  return 8;
+        if (u >= 0.75) return 7;
+        if (u >= 0.5)  return 6;
+        return 5;
       })(),
       // v10.7.26: stuur signals mee zodat Signal Performance dashboard data krijgt
       signals: modalPick?.signals || [],
