@@ -28,7 +28,9 @@
       "Bash(node --check lib/runtime/scan-schedulers.js lib/app-meta.js)",
       "Skill(schedule)",
       "Bash(uuidgen)",
-      "Bash(grep -nE \"Math\\\\.round.*kelly|Math\\\\.round.*\\\\b\\(7|10\\)|score.*Math|/10|\\\\\\\\\\\\${.*}/10\" /Users/maxperian/projects/edgepickr/index.html)"
+      "Bash(grep -nE \"Math\\\\.round.*kelly|Math\\\\.round.*\\\\b\\(7|10\\)|score.*Math|/10|\\\\\\\\\\\\${.*}/10\" /Users/maxperian/projects/edgepickr/index.html)",
+      "Bash(awk -F: '$2 > 8687 && $2 < 9000')",
+      "Bash(node --check lib/runtime/scan-schedulers.js server.js)"
     ]
   }
 }

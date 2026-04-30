@@ -2,6 +2,38 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.4] - 2026-04-30
+
+**Scan-complete push + late doctrine-fix push_subscriptions.user_id**
+
+Aanleiding: operator-rapport "geen melding op telefoon na scan, wel in Safari". Diagnose:
+1. **Missende feature**: `scheduleScanAtHour` schreef wel `cron_tick` notification-rij in DB maar belde nooit `sendPushToAll` na een succesvolle scan. Operator kreeg dus geen actief push-signaal voor "scan klaar".
+2. **Doctrine-bug v10.10.22**: server.js `loadPushSubs` filterde op `r.user_id` om cross-user push-leak te voorkomen, maar de migratie om de `user_id` kolom toe te voegen aan `push_subscriptions` was nooit gedraaid. `sendPushToUser` was sinds v10.10.22 stille no-op (filter op `undefined === uuid` matcht nooit).
+
+### Added
+- **Scan-complete push** (`lib/runtime/scan-schedulers.js`): na elke succesvolle `runFullScan` fire't `sendPushToAll({ title: '🎯 Scan {label} klaar', body: '{N} picks · open EdgePickr' })`. Pick-count via `getLastPrematchPicks` accessor (geinjecteerd vanuit server.js zoals andere factory-invocations doen). Frequentie cap: 3 pushes/dag (vaste cron windows = 11:00/14:30/18:30) — niet pump-y. Push silent-fail bij error zodat scan-flow nooit breekt.
+- **Migratie `push_subscriptions.user_id`** (`docs/migrations-archive/v15.4.4_push_subscriptions_user_id.sql`): `ADD COLUMN IF NOT EXISTS user_id UUID DEFAULT NULL` + partial index `idx_push_subscriptions_user`. Migratie is reeds via Supabase MCP toegepast op `mntfhhzanoyhgfavozhg`.
+
+### Changed
+- **`server.js::sendPushToUser`**: NULL `user_id` rows worden nu als legacy/shared behandeld (matchen op alle userId-filters) zodat single-operator setups geen stille push-uitval krijgen op pre-migration subscriptions. Multi-user scenario: filter blijft strict (`s.user_id == null || s.user_id === userId`) — NULL = shared, exact match = persoonlijk, andere user_id = skip.
+- **Optionele dep `getLastPrematchPicks`** in `createScanSchedulers`. Bij ontbreken valt push body terug op generic "Open EdgePickr voor de output."
+
+### Wat de operator nu kan zien
+- Per scan-completion: pushmelding op alle subscribed devices (Safari Mac, Safari iPhone als PWA op home-screen geïnstalleerd, Chrome/Android, etc.).
+- Body varieert: 0 picks → "Geen picks gevonden", 1+ → "{N} pick(s) klaar — open EdgePickr".
+
+### Tests
+- 956/956 groen.
+
+### Verificatie
+- `node --check lib/runtime/scan-schedulers.js server.js` schoon.
+- `npm run audit:high` 0 vulns.
+- Bij eerstvolgende cron-scan (18:30 NL) logt scheduler `📡 Scan om 18:30 klaar` gevolgd door push naar alle endpoints.
+
+### Post-deploy actie
+- Migratie is al toegepast (via MCP).
+- **Operator-side**: voor iPhone Safari moet de PWA op het home-screen geïnstalleerd zijn (iOS 16.4+ vereiste), anders levert iOS de push niet af aan Notification Center. Stappen: open EdgePickr in Safari iPhone → Share → Add to Home Screen → open vanaf home-screen → grant push permission → herlaad.
+
 ## [15.4.3] - 2026-04-30
 
 **Hotfix · tracker score volgt stake-tier (was: pure-kelly recompute)**

@@ -423,11 +423,15 @@ async function sendPushToAll(payload) {
 }
 
 // v10.10.22: per-user push — stuurt alleen naar subscriptions van die user.
+// v15.4.4: NULL user_id rows zijn legacy/shared (pre-v15.4.4-migration). Behandel
+// als matchend zodat single-operator setups die nog niet gemigreerd hebben niet
+// stille push-uitval krijgen. Voor multi-user is de filter via != null + ===
+// userId nog steeds correct (cross-user leak voorkomen).
 async function sendPushToUser(userId, payload) {
   if (!userId) return sendPushToAll(payload);
   const subs = await loadPushSubs();
   const dead = [];
-  const userSubs = subs.filter(s => s.user_id === userId);
+  const userSubs = subs.filter(s => s.user_id == null || s.user_id === userId);
   for (const sub of userSubs) {
     try { await webpush.sendNotification(sub, JSON.stringify(payload)); }
     catch (e) { if (e.statusCode === 404 || e.statusCode === 410) dead.push(sub.endpoint); }
@@ -9782,6 +9786,10 @@ const scanSchedulers = createScanSchedulers({
   getScanRunning: () => scanRunning,
   setScanRunning: (v) => { scanRunning = v; },
   userScanTimers,
+  // v15.4.4: pick-count voor scan-complete push payload. Inline accessor zoals
+  // bij andere factory-invocations (lastPrematchPicks is een top-level `let`,
+  // dus directe referentie zou per scan-completion een stale snapshot pakken).
+  getLastPrematchPicks: () => lastPrematchPicks,
 });
 const scheduleScanAtHour = scanSchedulers.scheduleScanAtHour;
 const scheduleDailyScan = scanSchedulers.scheduleDailyScan;
