@@ -535,7 +535,17 @@ app.use((req, res, next) => {
   if (normalized === '/' || ALLOWED_EXTENSIONS.has(ext) || ALLOWED_FILES.has(normalized)) return next();
   return res.status(404).send('Not found');
 });
-app.use(express.static(path.join(__dirname)));
+// v15.4.6: no-cache + must-revalidate voor /js/* en /sw.js. Auth.js bevat
+// push-subscription resync logic (v15.4.5) die op iOS PWA via stale HTTP-cache
+// kon blijven hangen. Headers + ?v=APP_VERSION op de script-tag samen forceren
+// re-validatie elke deploy. HTML/CSS/images blijven default cacheable.
+app.use(express.static(path.join(__dirname), {
+  setHeaders: (res, filePath) => {
+    if (/\.(js)$/.test(filePath) || filePath.endsWith('/sw.js')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  },
+}));
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
 const UNIT_EUR   = 25;
@@ -2037,6 +2047,32 @@ async function enrichWithApiSports(emit, activeSoccerKeys = null) {
   }
   const injCount = Object.values(afCache.injuries).reduce((s,v) => s + Object.keys(v).length, 0);
   emit({ log: `✅ ⚽ Blessures voetbal: ${injCount} teams met geblesseerde spelers (${callsUsed} calls)` });
+
+  // v15.4.6 diagnostic: api-sports /injuries returnt SEIZOENS-data, niet
+  // alleen huidige uitvallers. Dat verklaart counts van 100+ per team. Voor
+  // v15.4.7 willen we filteren op "currently active" status — eerst empirisch
+  // verzamelen welke status-strings api-sports daadwerkelijk teruggeeft zodat
+  // de filter gericht wordt en geen valide data wegfiltert. Eén regel per scan,
+  // truncated bij >30 unieke types zodat scan-log niet ontspoort.
+  try {
+    const typeCounts = Object.create(null);
+    for (const teamMap of Object.values(afCache.injuries)) {
+      for (const arr of Object.values(teamMap)) {
+        for (const inj of (arr || [])) {
+          const t = String(inj?.type || '').trim() || '(empty)';
+          typeCounts[t] = (typeCounts[t] || 0) + 1;
+        }
+      }
+    }
+    const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length) {
+      const top = sorted.slice(0, 30).map(([t, n]) => `"${t}"=${n}`).join(' · ');
+      const more = sorted.length > 30 ? ` · +${sorted.length - 30} more` : '';
+      emit({ log: `🩺 Injury type-diagnostic (v15.4.6 collect-fase): ${top}${more}` });
+    }
+  } catch (e) {
+    console.warn('[injury-diagnostic] crashed:', e?.message || e);
+  }
 
   // ── STAP 3: Aankomende fixtures met scheidsrechter (top leagues) ─────────
   // FIX: keys matchen nu AF_FOOTBALL_LEAGUES.key (was 'soccer_' prefix die niet bestond).
@@ -6982,7 +7018,11 @@ async function runPrematch(emit) {
           const poisson = calcGoalProbs(hmAttack, hmDefense, awAttack, awDefense, leagueAvgGF);
           poissonOverP = poisson.over25;
           poissonBttsP = poisson.bttsYes;
-          poissonNote = ` | 📊 Poisson xG: ${poisson.homeExpG}-${poisson.awayExpG}, O2.5: ${(poisson.over25*100).toFixed(0)}%, BTTS: ${(poisson.bttsYes*100).toFixed(0)}%`;
+          // v15.4.6 (UI-transparantie F): expliciete home/away labels op de
+          // Poisson xG-output. Voorheen gaf "1.05-1.15" geen indicatie wie
+          // home/away was — operator moest gokken op volgorde. Met emoji
+          // duidelijk: 🏠 home, ✈️ away.
+          poissonNote = ` | 📊 Poisson xG: 🏠 ${poisson.homeExpG} vs ${poisson.awayExpG} ✈️, O2.5: ${(poisson.over25*100).toFixed(0)}%, BTTS: ${(poisson.bttsYes*100).toFixed(0)}%`;
         }
 
         // ── Congestion detection (Europese cups) ────────────────────

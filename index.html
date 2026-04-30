@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.4.5</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.4.6</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -655,7 +655,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.4.5</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.4.6</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -1411,7 +1411,7 @@
 </div>
 
 <script src="/js/lang.js"></script>
-<script src="/js/auth.js"></script>
+<script src="/js/auth.js?v=15.4.6"></script>
 <script src="/lib/modal-advice.js"></script>
 
 <script>
@@ -1624,8 +1624,22 @@ function renderPicks(el, picks) {
       const contrib = a.signal_contrib || 0;
       const dampen = a.stake_dampen && a.stake_dampen < 1.0;
       const baseHtml = a.base_prob != null ? `base: ${a.base_prob}% · ` : '';
-      const dampenHtml = dampen
-        ? ` <span style="color:#fbbf24;font-weight:600">· stake −${Math.round((1 - a.stake_dampen) * 100)}% (base-onzekerheid)</span>`
+      // v15.4.6 (UI-transparantie G): toon óók execution-gate dampening naast
+      // audit-dampen. Voorheen wist operator wel dat stake gedempt was via
+      // base-onzekerheid (auditDampen 0.6) maar niet dat exec-gate er nóg
+      // een fractie afhaalde. Combined view: beide multipliers zichtbaar +
+      // resulterende kelly-fractie. Helpt vraag "waarom 0.3U en niet 1.0U"
+      // beantwoorden zonder server-side debug.
+      const execMult = (p.executionAudit && Number.isFinite(p.executionAudit.combined_multiplier)
+                          && p.executionAudit.combined_multiplier < 1.0)
+        ? p.executionAudit.combined_multiplier : null;
+      const execReasons = (p.executionAudit && Array.isArray(p.executionAudit.reasons))
+        ? p.executionAudit.reasons.slice(0, 3).join(', ') : '';
+      const dampenParts = [];
+      if (dampen) dampenParts.push(`audit ×${a.stake_dampen.toFixed(2)} (base-onzekerheid)`);
+      if (execMult != null) dampenParts.push(`exec-gate ×${execMult.toFixed(2)}${execReasons ? ` (${execReasons})` : ''}`);
+      const dampenHtml = dampenParts.length
+        ? ` <span style="color:#fbbf24;font-weight:600" title="Stake-multipliers die op de kelly-fractie zijn toegepast: audit-dampen kicks in bij base-divergentie zonder signaal-ondersteuning, execution-gate bij stale lines / overround / thin market.">· stake gedempt: ${dampenParts.join(' · ')}</span>`
         : '';
       // v12.5.0: conviction-route badge. Pick is door loosened ep-gap (2pp
       // i.p.v. 3pp) gekomen op basis van high-conviction signal-stack

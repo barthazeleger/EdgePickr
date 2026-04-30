@@ -2,6 +2,38 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.6] - 2026-04-30
+
+**Injury type-diagnostic + UI-transparantie F+G + JS cache-bust**
+
+Aanleiding: grill-sessie operator-vraag "weegt het systeem importance van geblesseerde spelers?" Antwoord: nee, alleen count-diff. Onderzoek toonde dat api-sports `/injuries` SEIZOENS-data terugstuurt (Forest 160x records voor halve finale = alle blessure-incidents sinds augustus, niet "currently out"). Bug, geen feature. Fix moet vóór v15.5/v15.6 zodat drift-meting schone signal-data heeft.
+
+Plus operator-rapport: na v15.4.5 deploy + iPhone PWA-reinstall nog steeds geen nieuwe push subscription rij. Hypothese: HTTP cache van auth.js op iOS Safari. Cache-bust + no-cache headers voor /js/*.
+
+### Added
+- **Injury type-diagnostic emit** (`server.js:2039+`): één scan-log regel per football-scan met top-30 unique status-strings + counts. Doel: empirisch verzamelen welke types api-sports daadwerkelijk teruggeeft zodat de v15.4.7 status-filter gericht wordt en geen valide data wegfiltert. Truncated bij >30 unique types.
+- **UI-transparantie F: Poisson xG home/away labels** (`server.js:6985`): format van `Poisson xG: 1.05-1.15` naar `Poisson xG: 🏠 1.05 vs 1.15 ✈️`. Operator weet nu zonder volgorde-gokken wie home/away is.
+- **UI-transparantie G: stake-dampening breakdown** (`index.html:1620+`): naast `audit ×0.6 (base-onzekerheid)` toont de pick-analyse nu óók `exec-gate ×0.5 (stale_line, overround)` wanneer execution-gate dempte. Beantwoordt "waarom 0.3U en niet 1.0U" zonder server-side debug.
+
+### Changed
+- **`server.js` express.static**: `Cache-Control: no-cache, must-revalidate` voor `.js` bestanden + `/sw.js`. HTML/CSS/images blijven default cacheable. Voorkomt dat iOS PWA stale auth.js (= push-resync code uit v15.4.5) blijft serveren uit cache.
+- **`index.html`**: `?v=15.4.6` query-string op `/js/auth.js` script-tag. Belt-and-suspenders met de no-cache headers — query-string forceert nieuwe URL elke version-bump, headers forceren revalidatie.
+
+### Niet gewijzigd
+- Geen filter-implementatie nog. Eerst data verzamelen (v15.4.7 ship binnen ~1-2 dagen na v15.4.6 deploy zodra unique status-strings bekend zijn).
+- Geen scan-flow wijziging — `r.player?.type` wordt nog steeds opgeslagen zoals voorheen, alleen extra emit toegevoegd.
+
+### Tests
+- 956/956 groen.
+
+### Verificatie
+- Bij eerstvolgende football-scan: scan-log toont `🩺 Injury type-diagnostic (v15.4.6 collect-fase): "Missing Fixture"=N · "Doubtful"=M · ...`
+- Bij eerstvolgende pick met execution-gate dampening: pick-analyse toont breakdown.
+- iPhone PWA force-quit + heropen: nieuwe `apple_push` rij verschijnt in `push_subscriptions` (cache-bust forceert nieuwe auth.js → registerPushNotifications → POST naar server).
+
+### Volgende stap
+v15.4.7 zal de gerichte injury-status filter implementeren zodra de diagnostic 1-2 dagen data heeft verzameld. Daarna v15.5 (CLV-meting overhaul) als gating-conditie ≥7d v15.4-soak gehaald is.
+
 ## [15.4.5] - 2026-04-30
 
 **Hotfix · push subscription resync (auth.js cached-bypass)**
