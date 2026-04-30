@@ -73,17 +73,25 @@ async function registerPushNotifications() {
       window.location.reload();
     });
 
-    const existing = await reg.pushManager.getSubscription();
-    if (existing) return; // al geregistreerd
-    // Haal VAPID key op
-    const { publicKey } = await api('/api/push/vapid-key').then(r => r?.json()) || {};
-    if (!publicKey) return;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey),
-    });
+    // v15.4.5: subscription-state ALTIJD resyncen naar server. Voorheen
+    // exit'e de flow op `existing` zonder POST — gevolg: na iOS PWA
+    // uninstall+reinstall (Apple revoked oude endpoint, browser cached nieuwe)
+    // bleef de DB hangen op stale rijen en nieuwe iPhone-PWA endpoints
+    // werden nooit gesynced. /api/push/subscribe doet upsert op endpoint,
+    // dus herhaalde POSTs zijn idempotent en kosten één extra request per
+    // page-load. Rate-limit (10/IP/uur) is ruim genoeg voor normaal gebruik.
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      // Geen browser-side subscription → vraag VAPID key + subscribe.
+      const { publicKey } = await api('/api/push/vapid-key').then(r => r?.json()) || {};
+      if (!publicKey) return;
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
     await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
-    console.log('Push notifications geregistreerd');
+    console.log('Push notifications gesynchroniseerd');
   } catch (e) { console.warn('Push registratie mislukt:', e); }
 }
 

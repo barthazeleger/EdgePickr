@@ -2,6 +2,33 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.5] - 2026-04-30
+
+**Hotfix · push subscription resync (auth.js cached-bypass)**
+
+Aanleiding: na v15.4.4 deploy + iPhone PWA-reinstall kwam de scan-complete push niet door op operator's iPhone. Diagnose via DB: 18:30 cron ran (cron_tick + scan_end logged), 3 push_subscriptions rows aanwezig maar nieuwste van 14 april — geen nieuwe iPhone-subscription ondanks PWA-reinstall.
+
+Root cause in `js/auth.js::registerPushNotifications`:
+```js
+const existing = await reg.pushManager.getSubscription();
+if (existing) return;  // ← exit zonder POST naar /api/push/subscribe
+```
+Bij iOS PWA uninstall+reinstall behoudt de browser-side de oude PushSubscription object cached. `getSubscription()` returnt die → flow exit'e zonder server-resync. Apple revoked daarbij de oude endpoint maar onze DB wist daar niets van — sendPushToAll fire'de naar stale endpoints die met 410 Gone faalden, iPhone kreeg niks.
+
+### Fixed
+- **`js/auth.js`**: subscription-state wordt nu altijd naar server gepost. `/api/push/subscribe` doet upsert op endpoint dus herhaalde POSTs zijn idempotent. Eén extra request per page-load is geen probleem; rate-limit (10/IP/uur) is ruim genoeg voor normaal gebruik. Bij ontbrekende browser-side subscription → fetch VAPID + subscribe + POST. Bij bestaande subscription → direct POST om DB te resyncen.
+
+### Wat de operator nu moet doen
+- Sluit EdgePickr PWA op iPhone volledig (force-quit) en heropen vanaf home-screen → registerPushNotifications draait → nieuwe subscription wordt naar server gepost.
+- Server-DB krijgt nieuwe iPhone-endpoint rij.
+- Bij eerstvolgende cron-scan (vandaag 18:30 al gepasseerd; morgen 11:00 NL) zou push moeten landen op iPhone.
+
+### Tests
+- 956/956 groen.
+
+### Verificatie
+- Na deploy: kan via `SELECT * FROM push_subscriptions ORDER BY created_at DESC LIMIT 5` checken of er een nieuwe rij verschijnt na iPhone-PWA reload.
+
 ## [15.4.4] - 2026-04-30
 
 **Scan-complete push + late doctrine-fix push_subscriptions.user_id**
