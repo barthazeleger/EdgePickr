@@ -122,6 +122,6 @@ Codex' veto-bevoegdheid is in `CLAUDE.md` vastgelegd. Open ontwerp-vragen per re
 | `0/59 leagues actief` | Tijdvenster + speel-kalender. Niet automatisch een bug — TSDB-livescore + expansion-discovery laten zien of er wereldwijd wel fixtures zijn |
 | `oddspapi=off` | Admin source-toggles. v15.0.4 fixt default-on bij eerste boot |
 | Geen `🔭 Expansion-discovery` regel | `TSDB_DISCOVERY_EXPANSION=1` op Render staan? |
-| `expansion=N/M` maar `shadow_written=0` | Check de `OddsPapi keys: ...` regel: `none-matched` = OddsPapi heeft geen coverage voor die specifieke expansion-leagues. Operator-actie: leagues met sample handmatig toevoegen aan SPORT_KEY_MAP in `lib/integrations/sources/oddspapi.js`, of paid-tier overwegen voor brede coverage |
+| `expansion=N/M` maar `shadow_written=0` | Check de `OddsPapi keys: ...` regel: `none-matched` = geen sport-key match uit `/sports` voor deze expansion-leagues. Operator-actie: eerst alias/matching uitbreiden in het expansion-shadow block of aparte expansion-key-map; daarna pas paid-tier overwegen als `/sports` de league echt niet aanbiedt |
 | Geen graduation-notification ondanks veel shadow rows | Check `/api/admin/v2/expansion-graduation-candidates` → zie welke gates falen |
 | Tests rood lokaal | `npm test` na `npm install`. CI is groen op master |

@@ -2984,6 +2984,20 @@ test('computeMultiplierFromStats (G12): shared helper voor live + rebuild-calib'
   assert.strictEqual(computeMultiplierFromStats({}), 1.0);
 });
 
+test('computeMultiplierFromStats: unit-genormaliseerde stats zijn stake-size invariant', () => {
+  const { computeMultiplierFromStats } = require('./lib/learning-loop');
+  const smallUnit = computeMultiplierFromStats({ n: 100, profit: 600, profitUnits: 24, staked: 2500 });
+  const bigUnit = computeMultiplierFromStats({ n: 100, profit: 1200, profitUnits: 24, staked: 5000 });
+  assert.strictEqual(smallUnit, bigUnit, 'zelfde unit-P/L mag niet anders wegen door grotere euro-unit');
+  assert.ok(smallUnit > 1.17 && smallUnit < 1.19, `+0.24U/bet moet rond oude +€6@€25 gedrag blijven (${smallUnit})`);
+});
+
+test('computeProfitUnitsFromBet: gebruikt unit_at_time vóór raw euro P/L', () => {
+  const { computeProfitUnitsFromBet } = require('./lib/learning-loop');
+  assert.strictEqual(computeProfitUnitsFromBet({ wl: 12, unit_at_time: 24 }, 12), 0.5);
+  assert.strictEqual(computeProfitUnitsFromBet({ wl: -50, inzet: 100, units: 2 }, -50), -1);
+});
+
 test('formatDropReasons (G10): sigCount-distributie verrijking — telemetrie voor v12.5.0 pivot-effect', () => {
   // Operator-rapport scan: ep_too_close_to_market=3, ep_below_min=2.
   // v12.5.3 toont per drop-reason gemiddelde sigCount + ≥6-bucket. Doctrine:
@@ -3427,7 +3441,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.3.1');
+  assert.strictEqual(appMeta.APP_VERSION, '15.3.2');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -9365,6 +9379,34 @@ test('graduation: thin preferred-bookie coverage → NIET ready', () => {
   const c = r.candidates.find(x => x.leagueName === 'thin_coverage');
   assert.strictEqual(c.graduation_ready, false);
   assert.ok(c.missing_gates.includes('preferred_bookie_coverage'));
+});
+
+test('graduation: preferred coverage leest playability boven sharp-only sample', () => {
+  const rows = Array.from({ length: 35 }, () =>
+    _gradRow({ league: 'covered_liga', result: 'W', odds: 2.0, clv: 2.0, preferred_bookies_in_anchor: 1 })
+  ).map(r => ({
+    ...r,
+    playability: { preferredBookieCoverage: { count: 4, required: 3, rate: 66.7, bookies: ['bet365', 'unibet', 'toto', 'betcity'] } },
+  }));
+  const r = evaluateGraduation(rows);
+  const c = r.candidates.find(x => x.leagueName === 'covered_liga');
+  assert.strictEqual(c.graduation_ready, true, `coverage uit playability moet sharp-only sample overrulen, missing=${c.missing_gates.join(',')}`);
+});
+
+test('v15-runtime: draw h2h quote wordt niet als home/away shadow-selectie gebruikt', () => {
+  const { selectTwoWaySharpQuote, preferredCoverageFromBookies } = require('./lib/v15-runtime');
+  const sample = [
+    { bookie: 'Pinnacle', market: 'h2h', selection: 'Draw', price: 3.4 },
+    { bookie: 'Betfair', market: 'h2h', selection: 'Ajax', price: 1.8 },
+  ];
+  const selected = selectTwoWaySharpQuote(sample, 'Ajax', 'PSV');
+  assert.strictEqual(selected.selection, 'home');
+  assert.strictEqual(selected.quote.selection, 'Ajax');
+  const onlyDraw = selectTwoWaySharpQuote([{ bookie: 'Pinnacle', selection: 'Draw', price: 3.2 }], 'Ajax', 'PSV');
+  assert.strictEqual(onlyDraw, null, 'draw-only sample mag geen home fallback worden');
+  const coverage = preferredCoverageFromBookies(['Pinnacle', 'Bet365', 'Unibet', 'Toto'], ['Bet365', 'Unibet', 'Toto', 'BetCity'], 3);
+  assert.strictEqual(coverage.pass, true);
+  assert.strictEqual(coverage.count, 3);
 });
 
 test('graduation: gates en preferred-bookies zijn bevroren constants', () => {

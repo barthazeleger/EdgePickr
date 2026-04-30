@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.3.2] - 2026-04-30
+
+**Hotfix · Expansion-shadow correctness + unit-safe market learning**
+
+### Fixed
+
+- **Expansion shadow side-selection** (`server.js`, `lib/v15-runtime.js`): Pinnacle/Betfair draw-quotes worden niet meer als home/away paper-bet weggeschreven. Shadow rows accepteren alleen quotes waarvan `selection` echt fuzzy matcht met home of away.
+- **Preferred coverage graduation gate** (`lib/graduation-evaluator.js`): coverage wordt nu uit expliciete `playability.preferredBookieCoverage` / `source_attribution.oddspapi.preferredCoverage` gelezen, zodat sharp-only samples niet langer de executable-bookie coverage vertekenen.
+- **Market multiplier learning** (`lib/learning-loop.js`, `lib/bets-data.js`, `lib/routes/admin-backfill.js`): nieuwe settlements en rebuilds slaan unit-genormaliseerde `profitUnits`/`staked` op; multiplier-tuning gebruikt die unitbasis wanneer compleet aanwezig, met fallback naar legacy euro-P/L voor oude calib-state.
+- **Operator quickstart**: `none-matched` advies wijst nu naar expansion-key aliasing/matching in plaats van `SPORT_KEY_MAP`, omdat de v15.3.1 matching-path die map niet gebruikt.
+
+### Verificatie
+
+- Nieuwe regressietests voor draw-quote filtering, preferred coverage uit playability, en unit-size invariant multiplier-math.
+- Tests 937/937 groen.
+- `npm run audit:high` → 0 vulnerabilities.
+
 ## [15.3.1] - 2026-04-30
 
 **Hotfix · OddsPapi sport-key resolution voor expansion-shadow**

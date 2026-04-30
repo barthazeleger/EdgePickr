@@ -62,6 +62,8 @@ const {
   mergeStatsWithFallback,
   collectBookmakerOutcomeQuotes,
   summarizeSharpAnchor,
+  selectTwoWaySharpQuote,
+  preferredCoverageFromBookies,
   isLiveFixture,
   sourceAttributionBase,
   formSummaryToStats,
@@ -7979,17 +7981,17 @@ async function runPrematch(emit) {
             // Match expansionSharpQuotes op team-namen + kickoff window.
             const sharpAnchor = summarizeSharpAnchor(expansionSharpQuotes, home, away, kickoffMs);
             const sample = Array.isArray(sharpAnchor.sample) ? sharpAnchor.sample : [];
-            const sharpQuote = sample.find(q => /pinnacle|betfair/i.test(String(q.bookie || '')));
-            if (!sharpQuote) { shadowSkipNoSharp++; continue; }
+            const sideQuote = selectTwoWaySharpQuote(sample, home, away);
+            if (!sideQuote?.quote) { shadowSkipNoSharp++; continue; }
+            const sharpQuote = sideQuote.quote;
             if (!sharpQuote.bookie || !Number.isFinite(Number(sharpQuote.price)) || Number(sharpQuote.price) <= 1) {
               shadowSkipNoOdds++; continue;
             }
 
-            // Selectie: home of away op basis van naam-match in quote.selection.
-            const selection = teamMatchScore(sharpQuote.selection || '', home) >= teamMatchScore(sharpQuote.selection || '', away)
-              ? 'home' : 'away';
+            const selection = sideQuote.selection;
             const fairProb = Math.max(0.01, Math.min(0.99, 1 / Number(sharpQuote.price)));
             const marktLabel = selection === 'home' ? `🏠 ${home} wint` : `✈️ ${away} wint`;
+            const preferredCoverage = preferredCoverageFromBookies(sharpAnchor.bookies || [], getPreferredBookies(), 3);
 
             // Upsert fixture (zodat de fixtureId resolveable is downstream).
             await snap.upsertFixture(supabase, {
@@ -8016,7 +8018,7 @@ async function runPrematch(emit) {
                 leagueName: fx.leagueName,
                 sourceAttribution: sourceAttributionBase('football', {
                   thesportsdb: { schedule: true, expansion: true },
-                  oddspapi: { sharpAnchor: true },
+                  oddspapi: { sharpAnchor: true, preferredCoverage },
                 }),
                 sharpAnchor,
               },
@@ -8043,10 +8045,10 @@ async function runPrematch(emit) {
               sport: 'football',
               sourceAttribution: sourceAttributionBase('football', {
                 thesportsdb: { schedule: true, expansion: true, leagueName: fx.leagueName },
-                oddspapi: { sharpAnchor: true },
+                oddspapi: { sharpAnchor: true, preferredCoverage },
               }),
               sharpAnchor,
-              playability: {},
+              playability: { preferredBookieCoverage: preferredCoverage },
             });
             shadowWritten++;
           } catch (e) {
@@ -8559,10 +8561,12 @@ async function runShadowSports(emit) {
         const kickoffMs = Date.parse(ev.commenceTime || ev.startTime || ev.date || '');
         const sharpAnchor = summarizeSharpAnchor(mergedOdds, home, away, kickoffMs);
         const sample = Array.isArray(sharpAnchor.sample) ? sharpAnchor.sample : [];
-        const quote = sample.find(q => /pinnacle|betfair/i.test(String(q.bookie || ''))) || sample[0];
+        const sideQuote = selectTwoWaySharpQuote(sample, home, away);
+        const quote = sideQuote?.quote;
         if (!quote || !quote.bookie || !Number.isFinite(Number(quote.price))) continue;
-        const selection = teamMatchScore(quote.selection || '', home) >= teamMatchScore(quote.selection || '', away) ? 'home' : 'away';
+        const selection = sideQuote.selection;
         const fairProb = Math.max(0.01, Math.min(0.99, 1 / Number(quote.price)));
+        const preferredCoverage = preferredCoverageFromBookies(sharpAnchor.bookies || [], getPreferredBookies(), 3);
         await snap.upsertFixture(supabase, {
           id: fixtureId, sport, leagueId: null, leagueName: ev.league || ev.leagueName || 'shadow',
           season: null, homeTeamName: home, awayTeamName: away,
@@ -8575,7 +8579,7 @@ async function runShadowSports(emit) {
           baselineProb: { [selection]: fairProb },
           modelDelta: {},
           finalProb: { [selection]: fairProb },
-          debug: { sport, shadow: true, sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true } }), sharpAnchor },
+          debug: { sport, shadow: true, sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true, preferredCoverage } }), sharpAnchor },
         });
         if (!runId) continue;
         await snap.writePickCandidate(supabase, {
@@ -8596,9 +8600,9 @@ async function runShadowSports(emit) {
           marktLabel: selection === 'home' ? `🏠 ${home} wint` : `✈️ ${away} wint`,
           kickoffMs: Number.isFinite(kickoffMs) ? kickoffMs : null,
           sport,
-          sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true } }),
+          sourceAttribution: sourceAttributionBase(sport, { thesportsdb: { schedule: true }, oddspapi: { sharpAnchor: true, preferredCoverage } }),
           sharpAnchor,
-          playability: { executable: false, reason: 'shadow_sport_not_promoted' },
+          playability: { executable: false, reason: 'shadow_sport_not_promoted', preferredBookieCoverage: preferredCoverage },
         });
         written++;
       }
