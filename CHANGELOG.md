@@ -2,6 +2,23 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.1] - 2026-04-30
+
+**Hotfix · dropdown-clear bewaart inbox-tab + version-pin sync**
+
+Aanleiding: Operator-feedback direct na v15.4.0 deploy: "Wis alles" in de notif-dropdown wist non-persistente rijen permanent uit de `notifications` tabel. Bijwerking: Inbox-tab leest dezelfde tabel via `/api/model-feed` en liep mee leeg, waardoor het audit-log verloren ging. Aparte fix: v15.4.0 hotfix was eerder gepushed (`08a734f`) maar zonder version-pin update — Render toonde 15.4.0 i.p.v. 15.4.1.
+
+### Fixed
+- **Dropdown-clear semantiek** (`index.html`): "Wis alles" roept nu `PUT /api/inbox-notifications/read` aan + zet localStorage `notifDropdownClearedAt` timestamp. `loadNotifications` filtert dropdown-render op `created_at > timestamp`. Inbox-tab leest van `/api/model-feed` zonder filter, dus daar blijft alles staan als audit-trail.
+- **Version-pin sync**: APP_VERSION 15.4.0→15.4.1 in `lib/app-meta.js`, `package.json`, `package-lock.json`, `index.html` (2 plekken), `README.md`, `docs/PRIVATE_OPERATING_MODEL.md`, `test.js` assertion.
+
+### Tests
+- 956/956 groen.
+
+### Verificatie
+- Geen schema-veranderingen, geen scan-pad code geraakt — frontend-only patch.
+- Refresh in browser na deploy is genoeg, geen migratie nodig.
+
 ## [15.4.0] - 2026-04-30
 
 **Pad A · Variance-bom-gate + Operator-inbox + Coverage-audit + per-odds-bucket telemetrie**

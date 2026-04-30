@@ -6,7 +6,25 @@
       "Bash(git reset *)",
       "Bash(sed \"s/',.*$//\")",
       "WebFetch(domain:thedatadb.readme.io)",
-      "WebFetch(domain:the-odds-api.com)"
+      "WebFetch(domain:the-odds-api.com)",
+      "WebFetch(domain:skills.sh)",
+      "Bash(npx *)",
+      "Bash(pkill -f \"skills add\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//private/tmp/skills-mp/**)",
+      "Bash(mkdir -p ~/.claude/skills/grill-me)",
+      "Bash(cp -r /tmp/skills-mp/skills/productivity/grill-me/. ~/.claude/skills/grill-me/)",
+      "Read(//Users/maxperian/.claude/skills/**)",
+      "Bash(chmod +x *)",
+      "Bash(awk 'NR>=2700 && NR<=2720' /Users/maxperian/projects/edgepickr/server.js)",
+      "Bash(node --check lib/picks.js lib/notifications.js lib/jobs/coverage-audit.js lib/runtime/maintenance-schedulers.js lib/bets-data.js lib/routes/admin-signals.js scripts/odds-bucket-audit.js server.js)",
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__execute_sql"
     ]
   }
 }
