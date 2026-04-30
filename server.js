@@ -6279,6 +6279,14 @@ async function runPrematch(emit) {
     bttsDataBlocked: 0, bttsGateBlocked: 0, bttsEdgeBelow: 0,
     dnbMarkets: 0, dnbNoExecutable: 0, dnbOddsRange: 0,
     dnbGateBlocked: 0, dnbEdgeBelow: 0,
+    // v15.4 variance-bom-gate (PLAN §5.1, Codex finding #2): blocks per
+    // bucket = pre-pick drops door per-bucket MIN_EP-bump. capped per bucket
+    // = picks waar kelly verlaagd is naar 0.5U max (alleen high). Counter
+    // wordt gemuteerd door mkP via createPickContext({ varianceGateCounter }).
+    varianceGate: {
+      blocks: { low: 0, mid: 0, high: 0 },
+      capped: { low: 0, mid: 0, high: 0 },
+    },
   };
 
   // ── Calibratie ───────────────────────────────────────────────────────────
@@ -6381,7 +6389,13 @@ async function runPrematch(emit) {
       _footballConvictionByFML.get(key).add(fixtureMeta.selectionKey);
     }
   };
-  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(1.60, calib.epBuckets || {}, 'football', { onCandidate: _footballOnCandidate });
+  // v15.4: varianceGateCounter wordt gemuteerd door mkP (per-bucket blocks +
+  // high-odds caps). Hiermee wordt scanTelemetry.varianceGate live gevuld
+  // tijdens de football scan zonder extra accumulatie-laag.
+  const { picks, combiPool, mkP, dropReasons, dropSigCounts } = buildPickFactory(
+    1.60, calib.epBuckets || {}, 'football',
+    { onCandidate: _footballOnCandidate, varianceGateCounter: scanTelemetry.varianceGate }
+  );
   const MIN_EDGE = 0.055;
   let totalEvents = 0;
   let apiCallsUsed = AF_FOOTBALL_LEAGUES.length; // 1 call/league gebruikt in pre-fetch
@@ -8215,6 +8229,10 @@ async function runPrematch(emit) {
     `  🛰️ v15 sources: tsdb_live_skips=${tel.tsdbLivescoreSkips} · tsdb_form_hits=${tel.tsdbFormHits} · tsdb_standings_rows=${tel.tsdbStandingsFallbackHits} · tsdb_league_baseline=${tel.tsdbLeagueBaselineHits || 0}/applied=${tel.tsdbLeagueBaselineApplied || 0} · tsdb_venue=${tel.tsdbVenueHits || 0}/applied=${tel.tsdbVenueApplied || 0} · tsdb_lineup=${tel.tsdbLineupHits || 0}/applied=${tel.tsdbLineupApplied || 0} · tsdb_inj_checks=${tel.tsdbInjuryChecksRun || 0} (matched=${tel.tsdbInjuryMatched || 0} · name_unmatched=${tel.tsdbInjuryNameUnmatched || 0} · no_roster=${tel.tsdbInjuryNoRoster || 0} · thin_roster=${tel.tsdbInjuryThinRoster || 0}) · expansion=${tel.expansionCandidates || 0}/${tel.expansionLeagues || 0} leagues · shadow_written=${tel.expansionShadowWritten || 0} · oddspapi_calls=${tel.oddspapiSharpAnchorCalls} · oddspapi_quotes=${tel.oddspapiSharpAnchorQuotes || 0} · sharp_anchor_fixtures=${tel.oddspapiSharpAnchorFixtures} · sharp_anchor_unmatched=${tel.oddspapiSharpAnchorUnmatched || 0}`,
     `  ⚽ BTTS: markets=${tel.bttsMarkets || 0} · form_only=${tel.bttsFormOnly || 0} · no_exec=${tel.bttsNoExecutable || 0} · data_block=${tel.bttsDataBlocked || 0} · gate_block=${tel.bttsGateBlocked || 0} · edge_low=${tel.bttsEdgeBelow || 0}`,
     `  ⚽ DNB: markets=${tel.dnbMarkets || 0} · no_exec=${tel.dnbNoExecutable || 0} · odds_range=${tel.dnbOddsRange || 0} · gate_block=${tel.dnbGateBlocked || 0} · edge_low=${tel.dnbEdgeBelow || 0}`,
+    // v15.4 variance-bom-gate (PLAN §5.1, Codex finding #2). blocks = pre-pick
+    // drops door per-bucket MIN_EP-bump. capped = picks waar kelly verlaagd is
+    // naar 0.5U max in high-bucket. low/mid alleen blocks (geen cap).
+    `  🚧 variance-gate: blocked=${(tel.varianceGate?.blocks?.low || 0)}/${(tel.varianceGate?.blocks?.mid || 0)}/${(tel.varianceGate?.blocks?.high || 0)} capped=${(tel.varianceGate?.capped?.low || 0)}/${(tel.varianceGate?.capped?.mid || 0)}/${(tel.varianceGate?.capped?.high || 0)} (low/mid/high)`,
   ];
   // v15.2.0 Build A: per-bookie OddsPapi quote-breakdown — top-10 zodat operator
   // ziet of execution-bookies (Bet365/Unibet/Toto/BetCity) daadwerkelijk in de
@@ -8433,6 +8451,16 @@ const maintenanceSchedulers = createMaintenanceSchedulers({
   autoTuneSignalsByClv, loadSignalWeights,
   getCurrentModelVersionId: () => _currentModelVersionId,
   getUnitEur: () => UNIT_EUR,
+  // v15.4: leagues map voor coverage-audit + APP_RELEASE_DATE voor slice-readiness.
+  getLeagues: () => ({
+    football:            AF_FOOTBALL_LEAGUES,
+    basketball:          NBA_LEAGUES,
+    hockey:              NHL_LEAGUES,
+    baseball:            BASEBALL_LEAGUES,
+    'american-football': NFL_LEAGUES,
+    handball:            HANDBALL_LEAGUES,
+  }),
+  getAppReleaseDate: () => require('./lib/app-meta').APP_RELEASE_DATE,
 });
 const scheduleRetentionCleanup = maintenanceSchedulers.scheduleRetentionCleanup;
 const scheduleAutotune = maintenanceSchedulers.scheduleAutotune;
@@ -8443,6 +8471,8 @@ const scheduleAutoRetraining = maintenanceSchedulers.scheduleAutoRetraining;
 const scheduleConvictionDoctrineReview = maintenanceSchedulers.scheduleConvictionDoctrineReview;
 const scheduleConvictionShadowSweep = maintenanceSchedulers.scheduleConvictionShadowSweep;
 const scheduleSettlementEnrichment = maintenanceSchedulers.scheduleSettlementEnrichment;
+const scheduleCoverageAudit = maintenanceSchedulers.scheduleCoverageAudit;
+const scheduleSliceReadiness = maintenanceSchedulers.scheduleSliceReadiness;
 // markFinalTop5 als forward-let elders gedeclareerd (v12.5.2) — assign hier:
 markFinalTop5 = maintenanceSchedulers.markFinalTop5;
 const checkUnitSizeChange = maintenanceSchedulers.checkUnitSizeChange;
@@ -9276,6 +9306,11 @@ app.listen(PORT, () => {
   // v15.0.12: TSDB event-stats enrichment voor settled bets (voedt v15.0.13+
   // calibration-modellen met dominance-data). Achter env-flag.
   scheduleSettlementEnrichment();
+
+  // v15.4: coverage-audit (welke ligas leverden picks 90d) + slice-readiness
+  // (zodra v15.4 ≥7d in productie staat → operator_action notif voor v15.5).
+  scheduleCoverageAudit();
+  scheduleSliceReadiness();
 
   // v12.2.14 (D1): rescheduleer pending pre-kickoff/CLV jobs uit DB en
   // zet sweep-loop op (cleanup completed > 7d, mark overdue > 1u).

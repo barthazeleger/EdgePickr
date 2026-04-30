@@ -2623,8 +2623,13 @@ test('buildPickFactory (v15): resolveMinEp laat per-markt floor sturen zonder co
     sport: 'football',
     resolveMinEp: ({ marketType }) => marketType === 'btts' ? 0.50 : 0.52,
   });
+  // odd=2.20 → mid-bucket (v15.4 +0.01 bump). resolveMinEp 0.50 + bump 0.01
+  // → effective floor 0.51. Default 0.52 + bump 0.01 → 0.53. boost=0.06 →
+  // ep=0.5145, in window (0.51, 0.53): passes BTTS-floor maar zou onder
+  // default-floor zakken — bewijst dat de override nog steeds werkt naast
+  // de v15.4 bucket-bump.
   mkP(
-    'A vs B', 'EPL', '🔥 BTTS Ja', 2.20, 'test', 50, 0.05, null, 'Bet365',
+    'A vs B', 'EPL', '🔥 BTTS Ja', 2.20, 'test', 50, 0.06, null, 'Bet365',
     Array.from({ length: 6 }, (_, i) => `sig${i}:+0.5%`),
     null,
     { fixtureId: 1, marketType: 'btts', selectionKey: 'yes', line: null }
@@ -3441,7 +3446,7 @@ test('calibration store (D4): zonder supabase-client schrijft save naar file (te
 });
 
 test('release metadata: app-meta en package.json voeren dezelfde versie', () => {
-  assert.strictEqual(appMeta.APP_VERSION, '15.3.2');
+  assert.strictEqual(appMeta.APP_VERSION, '15.4.0');
   assert.strictEqual(pkg.version, appMeta.APP_VERSION);
   const lock = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
   assert.strictEqual(lock.version, appMeta.APP_VERSION);
@@ -4963,8 +4968,9 @@ test('mkP bumpt drop-reason: ep_too_close_to_market bij ep ≤ ip + 0.03', () =>
 
 test('mkP bumpt drop-reason: no_signals bij sigCount === 0 (boost vereist)', () => {
   const f = _bpf(1.60, {}, 'football');
-  // boost 0.05 zorgt dat ep > ip + 0.03 én k > 0.015 → no_signals is enige drop-reden
-  f.mkP('A vs B', 'L', 'Test', 2.10, 'r', 55, 0.05, null, 'Bet365', []);
+  // odd=2.10 → mid-bucket (v15.4 bump +0.01 → bucketMinEp=0.53). boost=0.06
+  // → ep=0.5362 > 0.53 én k > 0.015 → no_signals is enige drop-reden.
+  f.mkP('A vs B', 'L', 'Test', 2.10, 'r', 55, 0.06, null, 'Bet365', []);
   assert.strictEqual(f.dropReasons.no_signals, 1);
 });
 
@@ -12866,6 +12872,234 @@ test('integration: GET /version returns { version } from app-meta', async () => 
   const res = await callRoute(router, { method: 'GET', path: '/version' });
   assert.strictEqual(res.statusCode, 200);
   assert.strictEqual(res.body.version, '11.3.25-test');
+});
+
+// ── v15.4 · Variance-bom-gate + Operator-inbox + Coverage-audit ─────────────
+console.log('\n  v15.4 · Variance-bom-gate + Operator-inbox + Coverage-audit:');
+
+const {
+  oddsBucket: v154_oddsBucket,
+  ODDS_BUCKET_MIN_EP_BUMP: V154_BUMP,
+  HIGH_ODDS_KELLY_CAP_UNITS: V154_CAP,
+  HIGH_ODDS_EXCEPTION_THRESHOLD: V154_THRESHOLD,
+} = require('./lib/picks');
+const v154_notifications = require('./lib/notifications');
+const v154_coverageAudit = require('./lib/jobs/coverage-audit');
+
+test('v15.4 oddsBucket: 1.50 / 1.99 / 2.00 → low', () => {
+  assert.strictEqual(v154_oddsBucket(1.50), 'low');
+  assert.strictEqual(v154_oddsBucket(1.99), 'low');
+  assert.strictEqual(v154_oddsBucket(2.00), 'low');
+});
+
+test('v15.4 oddsBucket: 2.01 / 2.50 / 3.00 → mid', () => {
+  assert.strictEqual(v154_oddsBucket(2.01), 'mid');
+  assert.strictEqual(v154_oddsBucket(2.50), 'mid');
+  assert.strictEqual(v154_oddsBucket(3.00), 'mid');
+});
+
+test('v15.4 oddsBucket: 3.01 / 4.00 / 10.00 → high', () => {
+  assert.strictEqual(v154_oddsBucket(3.01), 'high');
+  assert.strictEqual(v154_oddsBucket(4.00), 'high');
+  assert.strictEqual(v154_oddsBucket(10.00), 'high');
+});
+
+test('v15.4 oddsBucket: invalid input returns null', () => {
+  assert.strictEqual(v154_oddsBucket(0), null);
+  assert.strictEqual(v154_oddsBucket(-1), null);
+  assert.strictEqual(v154_oddsBucket('abc'), null);
+  assert.strictEqual(v154_oddsBucket(null), null);
+});
+
+test('v15.4 variance-gate constants: per-bucket bumps + cap unit', () => {
+  assert.strictEqual(V154_BUMP.low, 0.00);
+  assert.strictEqual(V154_BUMP.mid, 0.01);
+  assert.strictEqual(V154_BUMP.high, 0.02);
+  assert.strictEqual(V154_CAP, '0.5U');
+  assert.strictEqual(V154_THRESHOLD, 1.50);
+});
+
+test('v15.4 variance-gate: high-bucket pick blocked door MIN_EP+0.02 bump', () => {
+  // odd=4.0 → ip=0.25, MIN_EP=0.52, bumpedMinEp=0.54.
+  // boost=0.289 → ep=0.539 < 0.54 → block. low-bucket bumpedMinEp=0.52
+  // zou ep=0.539 niet blokkeren — bewijst dat de bump werkt.
+  const counter = { blocks: { low: 0, mid: 0, high: 0 }, capped: { low: 0, mid: 0, high: 0 } };
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football', varianceGateCounter: counter });
+  mkP('A vs B', 'EPL', '🏠 A wint', 4.0, 'test', 25, 0.289, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 0, 'high-bucket pick onder MIN_EP+0.02 moet blokken');
+  assert.strictEqual(counter.blocks.high, 1, 'blocks.high counter moet 1 zijn');
+});
+
+test('v15.4 variance-gate: mid-bucket pick blocked door MIN_EP+0.01 bump', () => {
+  // odd=2.50 → ip=0.40, bumpedMinEp=0.53.
+  // boost=0.129 → ep=0.529 < 0.53 → block.
+  const counter = { blocks: { low: 0, mid: 0, high: 0 }, capped: { low: 0, mid: 0, high: 0 } };
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football', varianceGateCounter: counter });
+  mkP('A vs B', 'EPL', '🏠 A wint', 2.50, 'test', 40, 0.129, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 0, 'mid-bucket pick onder MIN_EP+0.01 moet blokken');
+  assert.strictEqual(counter.blocks.mid, 1);
+  assert.strictEqual(counter.blocks.high, 0);
+});
+
+test('v15.4 variance-gate: low-bucket pick passes wanneer ep > MIN_EP', () => {
+  // odd=1.80 → ip=0.555, bumpedMinEp=0.52 (geen bump). boost=0.05 → ep=0.605.
+  // ep > ip+0.02 (0.575) ✓, kelly>0 ✓, 6 signals → epGap=0.02, dataConf=1.0.
+  // Expect pick in picks[].
+  const counter = { blocks: { low: 0, mid: 0, high: 0 }, capped: { low: 0, mid: 0, high: 0 } };
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football', varianceGateCounter: counter });
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.80, 'test', 56, 0.05, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 1, 'low-bucket pick met ep>MIN_EP moet doorgaan');
+  assert.strictEqual(counter.blocks.low, 0);
+});
+
+test('v15.4 variance-gate: high-odds-cap verlaagt units naar 0.5U onder threshold', () => {
+  // odd=3.50 → ip=0.286, bumpedMinEp=0.54. boost=0.264 → ep=0.55.
+  // ep×(odd-1) = 0.55×2.5 = 1.375 < 1.50 → cap actief. Kelly raw = 0.18 → '2.0U' → '0.5U' na cap.
+  const counter = { blocks: { low: 0, mid: 0, high: 0 }, capped: { low: 0, mid: 0, high: 0 } };
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football', varianceGateCounter: counter });
+  mkP('A vs B', 'EPL', '🏠 A wint', 3.50, 'test', 29, 0.264, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 1);
+  assert.strictEqual(picks[0].units, '0.5U', 'high-odds pick onder threshold moet gecapt zijn');
+  assert.strictEqual(counter.capped.high, 1);
+});
+
+test('v15.4 variance-gate: high-odds exception laat pick door zonder cap', () => {
+  // odd=3.50, ep=0.70 → 0.70×2.5 = 1.75 > 1.50 → exception, geen cap.
+  // boost=0.414 → ep=0.70. Kelly (0.70×2.5 - 0.30)/2.5 = 0.58 → hk=0.29 → '2.0U'.
+  const counter = { blocks: { low: 0, mid: 0, high: 0 }, capped: { low: 0, mid: 0, high: 0 } };
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football', varianceGateCounter: counter });
+  mkP('A vs B', 'EPL', '🏠 A wint', 3.50, 'test', 29, 0.414, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 1);
+  assert.notStrictEqual(picks[0].units, '0.5U', 'sterke high-odds pick mag full kelly behouden');
+  assert.strictEqual(counter.capped.high, 0, 'capped.high moet 0 blijven bij exception');
+});
+
+test('v15.4 variance-gate: zonder counter doet mkP geen telemetrie-side-effects', () => {
+  // backwards-compat: oude call-sites die geen varianceGateCounter meegeven
+  // moeten blijven werken zonder crash.
+  const { picks, mkP } = buildPickFactory(1.6, {}, { sport: 'football' });
+  mkP('A vs B', 'EPL', '🏠 A wint', 1.80, 'test', 56, 0.05, null, 'Bet365',
+    ['form:+1%','h2h:+1%','home_adv:+0.5%','rest:+0.5%','lineup:+0.5%','standings:+0.5%']);
+  assert.strictEqual(picks.length, 1, 'mkP zonder counter mag niet crashen');
+});
+
+test('v15.4 sendOperatorNotification: rejects invalid category', async () => {
+  const result = await v154_notifications.sendOperatorNotification({
+    supabase: { from: () => ({ insert: () => ({ select: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }) }) },
+    category: 'not_a_real_category', type: 'x', title: 't', body: 'b',
+  });
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.error, 'invalid_category');
+});
+
+test('v15.4 sendOperatorNotification: success path met geldige category', async () => {
+  let receivedPayload = null;
+  const supabase = {
+    from: () => ({
+      insert: (payload) => ({
+        select: () => ({
+          maybeSingle: () => { receivedPayload = payload; return Promise.resolve({ data: { id: 'mock-id' }, error: null }); },
+        }),
+      }),
+    }),
+  };
+  const result = await v154_notifications.sendOperatorNotification({
+    supabase, category: 'coverage_insight', type: 'coverage_insight',
+    title: 'Coverage', body: 'X dormant',
+  });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.id, 'mock-id');
+  assert.strictEqual(receivedPayload.category, 'coverage_insight');
+  assert.strictEqual(receivedPayload.type, 'coverage_insight');
+});
+
+test('v15.4 sendOperatorNotification: schema-tolerant fallback bij ontbrekende category-kolom', async () => {
+  let firstCall = true;
+  let lastPayload = null;
+  const supabase = {
+    from: () => ({
+      insert: (payload) => ({
+        select: () => ({
+          maybeSingle: () => {
+            lastPayload = payload;
+            if (firstCall) {
+              firstCall = false;
+              return Promise.resolve({ data: null, error: { message: 'column "category" does not exist' } });
+            }
+            return Promise.resolve({ data: { id: 'fallback-id' }, error: null });
+          },
+        }),
+      }),
+    }),
+  };
+  const result = await v154_notifications.sendOperatorNotification({
+    supabase, category: 'operator_action', type: 'slice_readiness', title: 't', body: 'b',
+  });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.fellBack, true);
+  assert.strictEqual(lastPayload.category, undefined, 'fallback insert mag geen category bevatten');
+});
+
+test('v15.4 shouldPushForCategory: alleen operator_action en red_flag triggeren push', () => {
+  assert.strictEqual(v154_notifications.shouldPushForCategory('operator_action'), true);
+  assert.strictEqual(v154_notifications.shouldPushForCategory('red_flag'), true);
+  assert.strictEqual(v154_notifications.shouldPushForCategory('coverage_insight'), false);
+  assert.strictEqual(v154_notifications.shouldPushForCategory('phase_progress'), false);
+  assert.strictEqual(v154_notifications.shouldPushForCategory('auto_promotion'), false);
+  assert.strictEqual(v154_notifications.shouldPushForCategory('not_real'), false);
+  assert.strictEqual(v154_notifications.shouldPushForCategory(null), false);
+});
+
+test('v15.4 OPERATOR_CATEGORIES: 8 canonical categorieën uit PLAN §6', () => {
+  const expected = ['operator_action','phase_progress','auto_promotion','auto_demotion','unit_change','red_flag','coverage_insight','data_source_audit'];
+  assert.deepStrictEqual([...v154_notifications.OPERATOR_CATEGORIES], expected);
+});
+
+test('v15.4 coverage-audit classifyLeagues: matched-by-id en matched-by-name correct', () => {
+  const leagues = {
+    football: [
+      { id: 39,  key: 'epl',         name: 'Premier League' },
+      { id: 140, key: 'laliga',      name: 'La Liga' },
+      { id: 999, key: 'foo',         name: 'Foo League' }, // dormant
+    ],
+    hockey: [
+      { id: 57, key: 'nhl', name: 'NHL Regular Season' }, // matched-by-name
+    ],
+  };
+  const seenLeagueIds = new Set([39, 140]);
+  const seenLeagueNames = new Set(['nhl regular season']);
+  const result = v154_coverageAudit.classifyLeagues({ leagues, seenLeagueIds, seenLeagueNames });
+  assert.strictEqual(result.totalCount, 4);
+  assert.strictEqual(result.activeCount, 3);
+  assert.strictEqual(result.dormant.length, 1);
+  assert.strictEqual(result.dormant[0].name, 'Foo League');
+  assert.strictEqual(result.dormant[0].sport, 'football');
+});
+
+test('v15.4 coverage-audit classifyLeagues: lege leagues map → 0/0 dormant', () => {
+  const result = v154_coverageAudit.classifyLeagues({ leagues: {}, seenLeagueIds: new Set(), seenLeagueNames: new Set() });
+  assert.strictEqual(result.totalCount, 0);
+  assert.strictEqual(result.activeCount, 0);
+  assert.deepStrictEqual(result.dormant, []);
+});
+
+test('v15.4 coverage-audit formatDormantSummary: top-12 + +N meer', () => {
+  const dormantLeagues = Array.from({ length: 17 }, (_, i) => ({
+    name: `Liga ${i + 1}`, key: `lg${i}`, id: 100 + i, sport: 'football',
+  }));
+  const summary = v154_coverageAudit.formatDormantSummary({
+    daysWindow: 90, leaguesTotal: 50, leaguesActive: 33, dormantLeagues,
+  });
+  assert.ok(summary.includes('33/50'), 'samenvatting moet active/total tonen');
+  assert.ok(summary.includes('+5 meer'), 'voor 17 dormant moet "+5 meer" tonen');
+  assert.ok(summary.includes('Liga 1'));
+  assert.ok(summary.includes('Liga 12'));
+  assert.ok(!summary.includes('Liga 13'));
 });
 
 // ── SUMMARY ──────────────────────────────────────────────────────────────────

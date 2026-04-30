@@ -125,7 +125,7 @@
         <div class="scan-panel scan-panel-pm" style="max-width:100%;width:100%;padding:32px 28px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
             <div>
-              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.3.2</span></div>
+              <div style="font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.45);margin-bottom:8px">EdgePickr · v<span id="scan-version">15.4.0</span></div>
               <div style="font-size:26px;font-weight:800;line-height:1.2;letter-spacing:-.02em" data-i18n-html="scan_headline">Vind de beste bets van dit moment</div>
               <div style="font-size:13px;color:rgba(255,255,255,0.55);margin-top:10px;line-height:1.7" data-i18n-html="scan_desc">
                 Pre-match · Live xG · H2H · Opstellingen · Standen · Predictions<br>
@@ -531,6 +531,7 @@
     </div>
     <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm inbox-filter active" data-filter="all" onclick="filterInbox('all',this)">Alles</button>
+      <button class="btn btn-ghost btn-sm inbox-filter" data-filter="operator" onclick="filterInbox('operator',this)" style="border:1px solid var(--accent);color:var(--accent);font-weight:700">🧭 Operator</button>
       <button class="btn btn-ghost btn-sm inbox-filter" data-filter="action" onclick="filterInbox('action',this)" style="border:1px solid var(--accent);color:var(--accent);font-weight:700">🚨 Acties</button>
       <button class="btn btn-ghost btn-sm inbox-filter" data-filter="insight" onclick="filterInbox('insight',this)">💡 Inzichten</button>
       <button class="btn btn-ghost btn-sm inbox-filter" data-filter="recommendation" onclick="filterInbox('recommendation',this)">🎯 Advies</button>
@@ -654,7 +655,7 @@
       <div class="card-hd">
         <div>
           <div class="card-title" style="font-size:17px" data-i18n="card_how_it_works">🎯 EdgePickr — hoe het werkt</div>
-          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.3.2</span> · <span data-i18n="info_date">april 2026</span></div>
+          <div class="card-sub"><span data-i18n="info_subtitle">Private operator betting terminal</span> · <span id="app-version-str">versie 15.4.0</span> · <span data-i18n="info_date">april 2026</span></div>
         </div>
         <div style="font-size:24px">🤖</div>
       </div>
@@ -4846,6 +4847,9 @@ let inboxFilter = 'all';
 function buildInboxFeedFromPayload(d) {
   const notificationEntries = (d?.notifications || []).map(n => ({
     type: n.type || 'system',
+    // v15.4: operator-categorie doorgeven zodat filterInbox('operator', ...)
+    // de 8 PLAN §6 categorieën kan filteren los van legacy type-mapping.
+    category: n.category || null,
     date: n.created_at,
     note: `${n.title || 'Notificatie'}${n.body ? `\n${n.body}` : ''}`,
     isNotification: true,
@@ -5066,10 +5070,19 @@ function renderInboxFeed(log) {
     if (t === 'market_calibration' || t === 'ep_calibration' || t === 'signal_tuning') return 'calibration';
     return 'calibration'; // fallback
   };
-  const filtered = inboxFilter === 'all' ? log : log.filter(e => typeCategory(e.type) === inboxFilter);
+  // v15.4: operator-filter matcht expliciet de 8 PLAN §6 categorieën via
+  // notifications.category. Legacy filters blijven type-gebaseerd zodat
+  // pre-v15.4 rijen blijven werken.
+  const OPERATOR_CATEGORIES = new Set(['operator_action','phase_progress','auto_promotion','auto_demotion','unit_change','red_flag','coverage_insight','data_source_audit']);
+  const matchesFilter = (e) => {
+    if (inboxFilter === 'all') return true;
+    if (inboxFilter === 'operator') return e.category && OPERATOR_CATEGORIES.has(e.category);
+    return typeCategory(e.type) === inboxFilter;
+  };
+  const filtered = log.filter(matchesFilter);
 
   if (!filtered.length) {
-    const filterNames = { all:'berichten', insight:'inzichten', recommendation:'adviezen', milestone:'milestones', calibration:'calibratie updates', system:'systeemmeldingen' };
+    const filterNames = { all:'berichten', operator:'operator-meldingen', insight:'inzichten', recommendation:'adviezen', milestone:'milestones', calibration:'calibratie updates', system:'systeemmeldingen' };
     feed.innerHTML = `<div style="color:var(--muted);padding:32px 0;text-align:center">
       <div style="font-size:28px;margin-bottom:8px">📭</div>
       <div>Nog geen ${filterNames[inboxFilter] || 'berichten'} — het systeem leert na elke settled bet.</div>

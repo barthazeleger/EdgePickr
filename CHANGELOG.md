@@ -2,6 +2,44 @@
 
 Alle noemenswaardige wijzigingen aan EdgePickr. Formaat: [Keep a Changelog](https://keepachangelog.com/nl/1.1.0/), nieuwste eerst.
 
+## [15.4.0] - 2026-04-30
+
+**Pad A · Variance-bom-gate + Operator-inbox + Coverage-audit + per-odds-bucket telemetrie**
+
+Aanleiding: PLAN_v15.4-v15.7_PAD_A.md §5.1. Voor Pad A (edge-bewijs) is variance-control in mkP de eerste van vier slices. High-odds picks waren tot nu toe ongedempte variance-bommen — geen per-bucket telemetrie, geen kelly-cap, geen feedback-lus om +1pp/+2pp MIN_EP-drempels op te baseren. Codex review-aanscherping #2 (2026-04-30): zonder per-bucket data zijn die drempels educated guesses. v15.4 plaatst de gate én de meet-laag in productie zodat v15.5+ op echte +CLV-bewijs kunnen tunen.
+
+### Added
+- **Variance-bom-gate** (`lib/picks.js`): `oddsBucket(odd)` helper (`low ≤2.0` / `mid 2.0-3.0` / `high >3.0`) + per-bucket MIN_EP-bump (low+0pp / mid+1pp / high+2pp) bovenop bestaande `resolveMinEp` per-markt floor. Hoge-odds picks krijgen daarnaast een 0.5U kelly-cap tenzij `ep × (odd-1) > 1.50` (zeldzame strong-edge outliers).
+- **Variance-gate telemetry** (`server.js` scanTelemetry + scan-log): nieuwe `🚧 variance-gate: blocked=L/M/H capped=L/M/H` regel splitst pre-pick blocks per bucket en kelly-caps op `high`. Counter wordt door `mkP` zelf gemuteerd via `createPickContext({ varianceGateCounter })`, zodat call-sites één gedeeld object kunnen doorgeven zonder boilerplate.
+- **Operator-inbox helper** (`lib/notifications.js`, NIEUW): `sendOperatorNotification({ category, type, title, body, sendPush })` schrijft naar `notifications.category` (PLAN §6 8-categorieën). Schema-tolerant: pre-migratie schema valt schoon terug door category te strippen. Push-routing: alleen `operator_action` + `red_flag` triggeren push, rest stil in inbox.
+- **Coverage-audit** (`lib/jobs/coverage-audit.js`, NIEUW + `lib/runtime/maintenance-schedulers.js`): dagelijks +30min na boot. Telt welke van de geconfigureerde ligas (alle 6 sporten) in laatste 90d picks produceerden via `pick_candidates` ⇒ `fixtures.league_id/league_name`. Dormant lijst landt als `coverage_insight` notificatie in operator-inbox (read-only, geen actie). 24u-cooldown voorkomt dagelijkse spam-update.
+- **Slice-readiness scheduler voor v15.5** (`maintenance-schedulers.js`): zodra v15.4 ≥7d in productie staat én geen `kill_switch`/`heartbeat_miss` notificaties in laatste 24u → post `operator_action` notif: *"v15.5 ready to ship · trigger /ship v15.5"*. Dedup persistent via `calib.slice_readiness_v15_5_notified`.
+- **Per-odds-bucket audit script** (`scripts/odds-bucket-audit.js`, NIEUW): retrospectief per bucket {n, ROI%, avg CLV%, positive CLV rate} over rolling 30/90/365d. Standalone — leest alleen `bets`-tabel, geen scan-state. Schema-tolerant fallback naar runtime-bucket-derivatie via `lib/picks::oddsBucket()` voor pre-v15.4 history zonder backfill.
+- **`bets.odds_bucket`** kolom (migratie + `lib/bets-data.js`): write-time afgeleid uit execution-odds zodat audit-queries niet elk row hoeven te re-deriveren. Schema-tolerant tier-fallback strip.
+- **Operator filter-pill** (`index.html` inbox-tab): nieuwe `🧭 Operator` filter matcht expliciet de 8 PLAN §6 categorieën via `notifications.category`. Bestaande filters blijven type-gebaseerd (legacy-veilig). `/api/model-feed` selecteert nu `category` mee + accepteert operator-rijen ook als `isPersistentInboxNotificationType` ze niet zou whitelisten.
+
+### Changed
+- **`lib/picks.js` mkP**: oude `if (ep < minEp) drop ep_below_min` is nu bucket-aware (`bucketBump` opgeteld). Nieuwe `varianceGate.blocks[bucket]` counter wordt per blocked pick gemuteerd. Backwards-compat: zonder `varianceGateCounter` doet mkP geen telemetrie-side-effects (bestaande tests blijven schoon).
+- **`HIGH_ODDS_EXCEPTION_THRESHOLD = 1.50`** (`lib/picks.js`): cap-uitzondering vereist nu `ep × (odd-1) > 1.50`. Doctrinale keuze tot Pad A done is: cap-default-aan voor odd > 3.0, alleen exceptionele model-edge laat full kelly door.
+- **Twee bestaande tests** (`test.js` BTTS-floor + no_signals drop): boost-parameter herijkt zodat ep boven nieuwe bucket-bumped MIN_EP komt — semantiek van beide tests blijft intact, alleen het werkpunt verschuift met v15.4 bump.
+
+### Tests
+- **956/956 groen** (was 937, +19 voor v15.4): oddsBucket boundary-cases (4 tests), variance-gate constants, mid/high block, low pass, high-cap actief + exception, geen counter side-effects, sendOperatorNotification reject/success/schema-fallback (3 async tests), shouldPushForCategory routing, OPERATOR_CATEGORIES integriteit, classifyLeagues match-by-id/name + lege map, formatDormantSummary top-12 +N meer.
+- Twee oudere tests (BTTS resolveMinEp, no_signals drop) bijgewerkt voor v15.4 bucket-bump werkpunt.
+
+### Verificatie
+- `node --check lib/picks.js lib/notifications.js lib/jobs/coverage-audit.js lib/runtime/maintenance-schedulers.js lib/bets-data.js lib/routes/admin-signals.js scripts/odds-bucket-audit.js server.js` schoon.
+- `npm test` 956/956 groen.
+- `npm run audit:high` 0 vulnerabilities.
+- Bij eerstvolgende football-scan toont scan-log `🚧 variance-gate: blocked=L/M/H capped=L/M/H (low/mid/high)`.
+- Eerste coverage-audit verschijnt +30min na boot in operator-inbox als `coverage_insight` met dormant-liga lijst.
+
+### Post-deploy actie
+- Migraties moeten handmatig tegen Supabase worden uitgevoerd vóór de eerste v15.4 scan zodat `notifications.category` en `bets.odds_bucket` bestaan:
+  - `node scripts/migrate.js docs/migrations-archive/v15.4.0_notifications_category.sql`
+  - `node scripts/migrate.js docs/migrations-archive/v15.4.0_bets_odds_bucket.sql`
+- Zonder migratie blijft alles schoon-fail-back: helper-laag valt schema-tolerant terug op insert zonder de nieuwe kolom, bet-write tier-2 strip strip `odds_bucket`. Operator-inbox UI toont `coverage_insight`-rijen pas nadat de category-kolom live is.
+
 ## [15.3.2] - 2026-04-30
 
 **Hotfix · Expansion-shadow correctness + unit-safe market learning**
