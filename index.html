@@ -4368,12 +4368,29 @@ function notifTimeAgo(iso) {
   return `${Math.round(h/24)}d`;
 }
 
+// v15.4.1: dropdown-only clear. Voorheen wiste "Wis alles" non-persistente
+// rijen permanent uit `notifications` (DB), waardoor de inbox-tab óók leeg
+// raakte. Nieuwe semantiek: dropdown is "wat is er nieuw sinds de vorige keer
+// dat je 'm geleegd hebt" en wordt zuiver client-side gefilterd via een
+// localStorage timestamp. Inbox-tab leest van /api/model-feed en blijft alles
+// bewaren als audit-trail.
+function _readDropdownClearedAt() {
+  return parseInt(localStorage.getItem('notifDropdownClearedAt') || '0', 10) || 0;
+}
+function _writeDropdownClearedAt(ts) {
+  try { localStorage.setItem('notifDropdownClearedAt', String(ts)); } catch {}
+}
+
 async function clearAllNotifs(e) {
   e?.stopPropagation();
-  if (!confirm('Alle notificaties wissen?')) return;
+  if (!confirm('Dropdown wissen? (Inbox-tab bewaart alles)')) return;
   try {
-    await api('/api/inbox-notifications', { method: 'DELETE' });
-    // v10.8.1/.8: ook model-alerts dismiss met expiry-aware storage
+    // Markeer alles als read zodat de badge schoon valt + zet timestamp die
+    // de dropdown alleen nieuwere items laat tonen.
+    await api('/api/inbox-notifications/read', { method: 'PUT' });
+    _writeDropdownClearedAt(Date.now());
+    // Calibration-alerts (oude bron uit /api/notifications) hebben geen inbox-
+    // equivalent; behoud localStorage-dismiss zodat ze niet terugkomen.
     const allAlerts = notifAlerts || [];
     const now = Date.now();
     const newEntries = allAlerts.map(a => ({ key: a.date || a.id || a.msg, ts: now })).filter(x => x.key);
@@ -4418,18 +4435,29 @@ async function loadNotifications() {
       api('/api/inbox-notifications').then(r => r?.json()).catch(() => null),
     ]);
 
+    // v15.4.1: dropdown-only clear timestamp. Items met datum vóór dit moment
+    // worden verborgen uit de dropdown maar blijven in de inbox-tab staan.
+    const dropdownClearedAt = _readDropdownClearedAt();
+    const afterCleared = (iso) => {
+      if (!dropdownClearedAt) return true;
+      const ms = new Date(iso || 0).getTime();
+      return Number.isFinite(ms) && ms > dropdownClearedAt;
+    };
+
     // Calibration alerts (old source)
     // v10.8.1/.8: filter dismissed model updates (localStorage met expiry).
     const dismissedSet = new Set(_readDismissedAlerts().map(x => x.key));
     const allAlerts = calibResp?.alerts || [];
-    notifAlerts = allAlerts.filter(a => !dismissedSet.has(a.date || a.id || a.msg));
+    notifAlerts = allAlerts
+      .filter(a => !dismissedSet.has(a.date || a.id || a.msg))
+      .filter(a => afterCleared(a.date));
     const seenTs = parseInt(localStorage.getItem('modelLogSeen') || '0');
     const unseenModel = notifAlerts.filter(a => a.modelUpdate && new Date(a.date).getTime() > seenTs);
     const urgentCount = notifAlerts.filter(a => a.type === 'error' || a.type === 'warn').length;
 
-    // Inbox notifications (new Supabase source)
-    const inboxNotifs = inboxResp?.notifications || [];
-    const inboxUnread = inboxResp?.unread || 0;
+    // Inbox notifications (new Supabase source) — gefilterd op dropdown-clear.
+    const inboxNotifs = (inboxResp?.notifications || []).filter(n => afterCleared(n.created_at));
+    const inboxUnread = inboxNotifs.filter(n => !n.read).length;
 
     const badgeN = urgentCount + unseenModel.length + inboxUnread;
     const badge = document.getElementById('notif-badge');
